@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+from uuid import uuid4
 
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.tools import ToolRegistry, create_default_registry
+from myagent.tracing import JsonlTraceStore, TraceStore
 
 MAX_TOOL_ITERATIONS = 8
 
@@ -21,12 +23,14 @@ class AgentLoop:
         provider: BaseProvider | None = None,
         context_builder: ContextBuilder | None = None,
         tool_registry: ToolRegistry | None = None,
+        trace_store: TraceStore | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
         self.context_builder = context_builder or ContextBuilder()
         self.tool_registry = tool_registry or create_default_registry()
+        self.trace_store = trace_store or JsonlTraceStore()
         self.max_tool_iterations = max_tool_iterations
         self._history: dict[str, list[Message]] = {}
         self._lock = asyncio.Lock()
@@ -50,16 +54,54 @@ class AgentLoop:
 
     async def process_message(self, inbound: InboundMessage) -> OutboundMessage:
         """Generate and publish an outbound response for one inbound message."""
+        turn_id = uuid4().hex
+        self._trace(
+            inbound.session_key,
+            turn_id,
+            "user_message",
+            {
+                "channel": inbound.channel,
+                "chat_id": inbound.chat_id,
+                "content": inbound.content,
+            },
+        )
         history = self._history_for(inbound.session_key)
         messages = self.context_builder.build_messages(inbound, history)
+        self._trace(
+            inbound.session_key,
+            turn_id,
+            "context_built",
+            {
+                "message_count": len(messages),
+                "roles": [message.get("role") for message in messages],
+            },
+        )
         try:
-            content = await self._generate_with_tools(messages, inbound)
+            content = await self._generate_with_tools(messages, inbound, turn_id)
         except Exception as exc:
             content = f"Error: {exc}"
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "error",
+                {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
         outbound = OutboundMessage(
             channel=inbound.channel,
             chat_id=inbound.chat_id,
             content=content,
+        )
+        self._trace(
+            inbound.session_key,
+            turn_id,
+            "final_answer",
+            {
+                "content_preview": _preview(content),
+                "content_length": len(content),
+            },
         )
         await self.bus.publish_outbound(outbound)
         history.extend(
@@ -70,35 +112,87 @@ class AgentLoop:
         )
         return outbound
 
-    async def _generate_with_tools(self, messages: list[Message], inbound: InboundMessage) -> str:
+    async def _generate_with_tools(
+        self,
+        messages: list[Message],
+        inbound: InboundMessage,
+        turn_id: str,
+    ) -> str:
         """Generate a response, allowing the provider to call registered tools."""
         if not hasattr(self.provider, "generate_response"):
+            self._trace_llm_request(inbound.session_key, turn_id, 1, len(messages), 0)
             return await self.provider.generate(messages)
 
         tools = self.tool_registry.get_definitions()
         if not tools:
+            self._trace_llm_request(inbound.session_key, turn_id, 1, len(messages), 0)
             return await self.provider.generate(messages)
 
         working_messages = list(messages)
-        for _ in range(self.max_tool_iterations):
+        for iteration in range(1, self.max_tool_iterations + 1):
+            self._trace_llm_request(
+                inbound.session_key,
+                turn_id,
+                iteration,
+                len(working_messages),
+                len(tools),
+            )
             response = await self.provider.generate_response(working_messages, tools=tools)
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "llm_response",
+                {
+                    "iteration": iteration,
+                    "content_preview": _preview(response.content),
+                    "tool_call_count": len(response.tool_calls),
+                    "tool_names": [tool_call.name for tool_call in response.tool_calls],
+                },
+            )
             if not response.tool_calls:
                 return response.content
 
             working_messages.append(_assistant_tool_call_message(response))
             for tool_call in response.tool_calls:
                 await self._publish_tool_status(inbound, tool_call)
-                result = await self._execute_tool_call(tool_call)
+                result = await self._execute_tool_call(tool_call, inbound.session_key, turn_id)
                 working_messages.append(_tool_result_message(tool_call, result))
 
         return "工具调用次数已达到上限，暂时还没有生成最终回答。"
 
-    async def _execute_tool_call(self, tool_call: ToolCall) -> str:
+    async def _execute_tool_call(
+        self,
+        tool_call: ToolCall,
+        session_key: str,
+        turn_id: str,
+    ) -> str:
         """Run one requested tool call through the registry."""
+        self._trace(
+            session_key,
+            turn_id,
+            "tool_call",
+            {
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "arguments": tool_call.arguments,
+            },
+        )
         try:
-            return await self.tool_registry.execute(tool_call.name, tool_call.arguments)
+            result = await self.tool_registry.execute(tool_call.name, tool_call.arguments)
         except Exception as exc:
-            return f"Error executing tool {tool_call.name}: {exc}"
+            result = f"Error executing tool {tool_call.name}: {exc}"
+        self._trace(
+            session_key,
+            turn_id,
+            "tool_result",
+            {
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_call.name,
+                "result_preview": _preview(result),
+                "result_length": len(result),
+            },
+        )
+        return result
 
     async def _publish_tool_status(self, inbound: InboundMessage, tool_call: ToolCall) -> None:
         """Publish a user-visible status message before running a tool."""
@@ -131,6 +225,39 @@ class AgentLoop:
 
     def _history_for(self, session_key: str) -> list[Message]:
         return self._history.setdefault(session_key, [])
+
+    def _trace(
+        self,
+        session_key: str,
+        turn_id: str,
+        event: str,
+        data: dict[str, object] | None = None,
+    ) -> None:
+        """Record a trace event without letting trace failures affect chat."""
+        try:
+            self.trace_store.record(session_key, turn_id, event, data)
+        except Exception:
+            pass
+
+    def _trace_llm_request(
+        self,
+        session_key: str,
+        turn_id: str,
+        iteration: int,
+        message_count: int,
+        tool_count: int,
+    ) -> None:
+        """Record a compact provider request event."""
+        self._trace(
+            session_key,
+            turn_id,
+            "llm_request",
+            {
+                "iteration": iteration,
+                "message_count": message_count,
+                "tool_count": tool_count,
+            },
+        )
 
 
 def _assistant_tool_call_message(response: ProviderResponse) -> Message:
@@ -179,3 +306,11 @@ def _format_tool_arguments(arguments: dict[str, object]) -> str:
             text = f"{text[:57]}..."
         parts.append(f"{key}={text}")
     return " ".join(parts)
+
+
+def _preview(text: str, limit: int = 300) -> str:
+    """Return a compact single-line preview for trace files."""
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return f"{compact[: limit - 3]}..."
