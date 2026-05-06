@@ -9,6 +9,7 @@ from myagent.agent.context import ContextBuilder, Message
 from myagent.memory import JsonlMemoryStore, MemoryEntry, MemoryRecall
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
+from myagent.skills import SkillRegistry
 from myagent.tools import ToolRegistry, create_default_registry
 from myagent.tracing import JsonlTraceStore, TraceStore
 
@@ -26,13 +27,16 @@ class AgentLoop:
         tool_registry: ToolRegistry | None = None,
         trace_store: TraceStore | None = None,
         memory_store: JsonlMemoryStore | None = None,
+        skill_registry: SkillRegistry | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
         self.memory_store = memory_store or JsonlMemoryStore()
+        self.skill_registry = skill_registry or SkillRegistry.from_directory()
         self.context_builder = context_builder or ContextBuilder(
-            memory_recall=MemoryRecall(self.memory_store)
+            memory_recall=MemoryRecall(self.memory_store),
+            skill_registry=self.skill_registry,
         )
         self.tool_registry = tool_registry or create_default_registry()
         self.trace_store = trace_store or JsonlTraceStore()

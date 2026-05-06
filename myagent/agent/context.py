@@ -5,6 +5,7 @@ from typing import Any
 
 from myagent.bus import InboundMessage
 from myagent.memory import MemoryEntry, MemoryRecall
+from myagent.skills import SkillRegistry
 
 Message = dict[str, Any]
 
@@ -25,6 +26,7 @@ class ContextBuilder:
         self,
         identity: str | None = None,
         memory_recall: MemoryRecall | None = None,
+        skill_registry: SkillRegistry | None = None,
     ) -> None:
         self.identity = identity or (
             "You are MyAgent, a lightweight ReAct agent runtime for learning "
@@ -32,6 +34,7 @@ class ContextBuilder:
             "current limitations."
         )
         self.memory_recall = memory_recall
+        self.skill_registry = skill_registry
 
     def build_sections(self, memories: list[MemoryEntry] | None = None) -> list[ContextSection]:
         """Return system prompt sections in first-stage priority order."""
@@ -44,6 +47,15 @@ class ContextBuilder:
                     name="Memory",
                     content="\n".join(f"- {memory.content}" for memory in memories),
                     priority=20,
+                )
+            )
+        skills_content = self.format_skills()
+        if skills_content:
+            sections.append(
+                ContextSection(
+                    name="Available Skills",
+                    content=skills_content,
+                    priority=30,
                 )
             )
         return sections
@@ -75,3 +87,9 @@ class ContextBuilder:
         if self.memory_recall is None:
             return []
         return self.memory_recall.recall(query)
+
+    def format_skills(self) -> str:
+        """Format available skills for the system prompt."""
+        if self.skill_registry is None:
+            return ""
+        return self.skill_registry.format_for_context()

@@ -1,0 +1,677 @@
+# Skills 模块设计
+
+## 职责
+
+Skills 负责让 MyAgent 发现和使用本地的能力说明文档。
+
+一句话版本：
+
+```text
+Skills 扫描 skills/*/SKILL.md，提取摘要注入 ContextBuilder，让模型知道当前有哪些可用能力。
+```
+
+它属于 `Capability Layer`，但第一版更接近“提示词能力扩展”，不是 Python 插件系统。
+
+## 为什么需要它
+
+现在 MyAgent 已经有：
+
+- 基础对话
+- 工具调用
+- Trace
+- Memory
+
+但如果我们希望 MyAgent 在特定任务上表现更稳定，只靠通用 system prompt 不够。
+
+比如后续我们可能希望有：
+
+```text
+skills/interview/SKILL.md
+skills/code-review/SKILL.md
+skills/project-docs/SKILL.md
+```
+
+每个 skill 说明：
+
+- 什么时候应该使用它
+- 它擅长什么
+- 回答时要遵守什么流程
+- 需要读取哪些补充材料
+
+Skills 的价值是把这些能力模块化，而不是把所有提示词都塞进一个超长 system prompt。
+
+## 参考 NanoBot 的取舍
+
+NanoBot 的 skill 机制更完整，通常包含：
+
+- skill metadata
+- trigger rules
+- lazy loading
+- skill registry
+- active skills
+- context budget
+- 和工具/MCP 的联动
+
+MyAgent 第一阶段只保留：
+
+- 扫描 `skills/*/SKILL.md`
+- 提取 name / description
+- 提取 summary
+- 注入 `# Available Skills`
+- 暂时不自动加载全文
+
+暂不实现：
+
+- LLM 自动选择 skill
+- active skills
+- skill 全文按需加载
+- skill 内工具注册
+- skill marketplace
+- 复杂 trigger 规则
+- token budget
+
+这样能先跑通：
+
+```text
+本地能力文档 -> SkillRegistry -> ContextBuilder -> LLM
+```
+
+## Skill 文件结构
+
+第一版约定每个 skill 是一个目录：
+
+```text
+skills/<skill-name>/SKILL.md
+```
+
+示例：
+
+```text
+skills/interview/SKILL.md
+```
+
+推荐格式：
+
+```markdown
+---
+name: interview
+description: Help MyAgent answer in an interview-oriented way.
+---
+
+# Interview Skill
+
+## Description
+
+Help MyAgent answer in an interview-oriented way.
+
+## When To Use
+
+Use when the user asks about interview preparation, project explanation, resume polishing, or mock interview questions.
+
+## Instructions
+
+- Prefer structured answers.
+- Explain tradeoffs.
+- Connect answers to MyAgent's architecture when relevant.
+```
+
+第一版解析规则保持简单：
+
+- 如果存在 YAML frontmatter，优先读取 `name` 和 `description`
+- `# ...` 作为 skill name
+- `## Description` 下第一段作为 description
+- 如果没有 Description，就取文件前几行作为 summary
+- skill id 来自目录名
+
+YAML frontmatter 是公开 agent skill 示例里常见的写法，MyAgent 第一版可以兼容它，但不要求完整 YAML 解析器；只需要识别简单的 `name` / `description` 即可。
+
+## 数据结构
+
+建议新增：
+
+```text
+myagent/skills/
+  __init__.py
+  entries.py
+  loader.py
+  registry.py
+```
+
+### SkillEntry
+
+字段：
+
+```text
+id: str
+name: str
+description: str
+path: Path
+```
+
+第一版只需要这些字段。
+
+后续可以扩展：
+
+```text
+triggers
+full_content
+priority
+metadata
+```
+
+### SkillLoader
+
+负责从文件系统读取 `SKILL.md`：
+
+```text
+load_skill(path) -> SkillEntry
+scan(root="skills") -> list[SkillEntry]
+```
+
+如果 `skills/` 不存在，返回空列表。
+
+### SkillRegistry
+
+负责管理扫描结果：
+
+```text
+list_skills() -> list[SkillEntry]
+format_for_context() -> str
+```
+
+第一版不需要复杂注册逻辑，只要能扫描并格式化即可。
+
+## ContextBuilder 接入
+
+ContextBuilder 增加可选：
+
+```text
+skill_registry
+```
+
+构建 system prompt 时，如果存在 skills，就注入：
+
+```text
+# Available Skills
+
+- interview: Interview Skill - Help MyAgent answer in an interview-oriented way.
+- project-docs: Project Docs Skill - Help maintain project documentation.
+```
+
+注意：
+
+```text
+第一版只注入摘要，不注入全文。
+```
+
+原因：
+
+- 避免 prompt 太长。
+- 先让模型知道“有哪些 skill”。
+- 后续再做按需加载全文。
+
+## 与 AgentLoop 的关系
+
+AgentLoop 默认创建 SkillRegistry 并交给 ContextBuilder。
+
+流程：
+
+```text
+AgentLoop init
+  -> scan skills/
+  -> ContextBuilder(skill_registry=...)
+process_message
+  -> ContextBuilder builds system prompt with Available Skills
+```
+
+Skills 不直接参与 tool calling。
+
+第一版它只是上下文能力提示。
+
+## 与 Memory 的区别
+
+Memory 是用户长期事实。
+
+Skills 是系统能力说明。
+
+区别：
+
+```text
+Memory: 用户是谁、偏好是什么、长期目标是什么
+Skills: MyAgent 会什么、遇到某类任务应该怎么做
+```
+
+两者都会进入 ContextBuilder，但来源和用途不同。
+
+## 与 MCP 的关系
+
+Skills 不是 MCP。
+
+Skills 是本地 prompt/document 能力说明。
+
+MCP 是外部工具协议。
+
+后续可以组合：
+
+```text
+Skill 告诉模型什么时候应该使用某类能力
+MCP 提供实际可调用工具
+```
+
+但第一版 Skills 不注册工具。
+
+## 第一阶段范围
+
+第一阶段实现：
+
+- `SkillEntry`
+- 扫描 `skills/*/SKILL.md`
+- 解析 name 和 description
+- SkillRegistry 格式化 Available Skills
+- ContextBuilder 注入 skills section
+- 测试覆盖
+- 三个示例 skill
+
+当前示例：
+
+```text
+skills/interview-prep/SKILL.md
+skills/code-review/SKILL.md
+skills/commit-message/SKILL.md
+```
+
+这三个 skill 用于测试扫描和上下文注入：
+
+- `interview-prep`：面试准备和项目讲解
+- `code-review`：代码审查
+- `commit-message`：提交信息生成
+
+## 暂不实现
+
+第一阶段暂不实现：
+
+- LLM 自动选择 active skill
+- skill 全文按需加载
+- skill trigger 复杂规则
+- skill 内工具注册
+- skill 优先级
+- skill 热更新
+- skill 子命令
+- skill marketplace
+- token budget
+
+## 测试点
+
+建议新增：
+
+```text
+tests/test_skills.py
+tests/test_context_builder.py
+```
+
+测试内容：
+
+1. 没有 `skills/` 目录时返回空列表。
+2. 能扫描 `skills/*/SKILL.md`。
+3. 能从一级标题读取 skill name。
+4. 能从 `## Description` 读取 description。
+5. SkillRegistry 能格式化 Available Skills。
+6. ContextBuilder 能注入 Available Skills section。
+
+## 手动测试方式
+
+创建：
+
+```text
+skills/interview-prep/SKILL.md
+```
+
+运行：
+
+```text
+python -m myagent
+```
+
+然后问：
+
+```text
+你现在有哪些 skills？
+```
+
+预期模型能从 system prompt 里知道当前有哪些可用 skill。
+
+## 面试表达
+
+可以这样讲：
+
+> 我把 Skills 设计成一种本地提示词能力扩展，而不是 Python 插件系统。每个 skill 是一个 `SKILL.md`，启动时扫描摘要并注入 ContextBuilder，让模型知道当前有哪些领域能力。第一版只注入摘要，避免上下文太长；后续可以根据模型判断再按需加载 skill 全文，升级成 active skill 机制。
+
+如果面试官问“Skills 和工具有什么区别”，可以回答：
+
+> Tool 是可执行能力，比如读文件、查目录、调用 MCP；Skill 是行为指导，告诉模型遇到某类任务应该采用什么策略。Skill 不一定执行动作，它更像可插拔的提示词知识包。
+
+## 后续扩展方向
+
+后续可以增强：
+
+- active skill selection
+- 按需加载完整 `SKILL.md`
+- trigger rules
+- skill priority
+- skill metadata
+- skill trace
+- skill CLI 子命令
+- skill + MCP 联动
+- token-aware skill injection
+- skills marketplace
+
+## 第二次迭代重点
+
+第一版 Skills 只做：
+
+```text
+扫描 skills/*/SKILL.md
+-> 注入 name / description / path
+-> 让模型知道有哪些可用能力
+```
+
+但这还不是完整的 skill 调用机制。
+
+第二次迭代需要重点完善：
+
+```text
+模型或 AgentLoop 如何加载完整 SKILL.md？
+```
+
+目前有两个可选方向：
+
+### 方向一：借助已有 read_file 工具
+
+第一版在 `# Available Skills` 里注入 path：
+
+```text
+- code-review
+  Description: Review code changes for bugs...
+  Path: skills/code-review/SKILL.md
+```
+
+模型如果判断需要使用该 skill，可以调用已有工具：
+
+```text
+read_file(path="skills/code-review/SKILL.md")
+```
+
+优点：
+
+- 实现成本低
+- 复用 ToolRegistry
+- 用户能看到正在调用工具
+
+缺点：
+
+- 依赖模型自己判断何时读取
+- 不够稳定
+- 可能忘记读取完整 skill
+
+### 方向二：实现 SkillSelector / Active Skills
+
+AgentLoop 或独立模块先判断当前用户问题适合哪些 skill：
+
+```text
+user message
+  -> SkillSelector
+  -> selected skill ids
+  -> load full SKILL.md
+  -> ContextBuilder injects # Active Skills
+  -> Provider
+```
+
+优点：
+
+- 更稳定
+- 更像成熟 Agent 系统
+- 能控制注入哪些 skill 全文
+
+缺点：
+
+- 需要额外设计 selector
+- 要考虑 token budget
+- 要处理多 skill 冲突
+
+### 当前结论
+
+这个增强不在第一版实现。
+
+先把第一版扫描和摘要注入跑通，第二次迭代再设计：
+
+```text
+SkillSelector
+Active Skills section
+Full SKILL.md lazy loading
+```
+
+这会是 Skills 模块从“能力列表提示”升级为“可激活能力机制”的关键一步。
+
+## 第一阶段实现记录
+
+本阶段已经完成 Skills 第一版：扫描本地 skill 摘要并注入 ContextBuilder。
+
+新增/修改文件：
+
+```text
+myagent/skills/__init__.py
+myagent/skills/entries.py
+myagent/skills/loader.py
+myagent/skills/registry.py
+myagent/agent/context.py
+myagent/agent/loop.py
+skills/interview-prep/SKILL.md
+skills/code-review/SKILL.md
+skills/commit-message/SKILL.md
+tests/test_skills.py
+tests/test_context_builder.py
+tests/test_agent_skills.py
+```
+
+### 代码阅读顺序
+
+建议按这个顺序看：
+
+1. `myagent/skills/entries.py`
+2. `myagent/skills/loader.py`
+3. `myagent/skills/registry.py`
+4. `myagent/agent/context.py`
+5. `myagent/agent/loop.py`
+6. `tests/test_agent_skills.py`
+
+### SkillLoader
+
+`SkillLoader` 默认扫描：
+
+```text
+skills/*/SKILL.md
+```
+
+支持两种信息来源：
+
+1. YAML frontmatter：
+
+```yaml
+---
+name: code-review
+description: Review code changes for bugs, regressions, missing tests, and maintainability risks.
+---
+```
+
+2. Markdown fallback：
+
+```text
+# Code Review
+
+## Description
+
+Review code changes...
+```
+
+如果都没有，就使用目录名和文件前几行作为 fallback。
+
+### SkillRegistry
+
+`SkillRegistry` 保存扫描到的 skill，并格式化为 ContextBuilder 可注入的文本。
+
+示例：
+
+```text
+- code-review
+  Name: code-review
+  Description: Review code changes for bugs, regressions, missing tests, and maintainability risks.
+  Path: skills/code-review/SKILL.md
+```
+
+注意这里会注入 `Path`。
+
+第一版模型不会自动“调用 skill”，但它能看到 path；如果需要读取完整 skill，可以通过已有 `read_file` 工具读取该路径。
+
+### ContextBuilder 接入
+
+ContextBuilder 新增：
+
+```python
+skill_registry=SkillRegistry(...)
+```
+
+如果存在 skills，会注入：
+
+```text
+# Available Skills
+
+...
+```
+
+没有 skills 时不注入这个 section。
+
+### AgentLoop 默认行为
+
+AgentLoop 默认执行：
+
+```python
+SkillRegistry.from_directory()
+```
+
+也就是扫描项目根目录下的：
+
+```text
+skills/
+```
+
+然后把 registry 交给 ContextBuilder。
+
+### 示例 Skills
+
+当前内置三个示例：
+
+```text
+skills/interview-prep/SKILL.md
+skills/code-review/SKILL.md
+skills/commit-message/SKILL.md
+```
+
+它们主要用于：
+
+- 手动测试
+- 自动化测试
+- 展示 Skills 文件格式
+
+### 手动测试
+
+运行：
+
+```text
+python -m myagent
+```
+
+输入：
+
+```text
+你现在有哪些 skills？请列出 name、description、path。
+```
+
+预期能看到：
+
+```text
+interview-prep
+code-review
+commit-message
+```
+
+以及对应：
+
+```text
+skills/.../SKILL.md
+```
+
+如果想验证读取完整 skill，可以输入：
+
+```text
+请先读取 skills/code-review/SKILL.md，然后严格按照这个 skill 的 Output Shape 来审查 Memory 模块。
+```
+
+这时应该能看到工具状态：
+
+```text
+正在调用工具：read_file path=skills/code-review/SKILL.md
+```
+
+### Spinner 说明
+
+第一版 Skills 不会在 spinner 里显示：
+
+```text
+正在调用 skill：code-review
+```
+
+原因是它还不是显式 action。
+
+它只是 system prompt 里的 `# Available Skills` section。
+
+只有当模型使用 `read_file` 读取完整 `SKILL.md` 时，才会显示工具调用状态。
+
+### 测试说明
+
+新增/更新测试：
+
+```text
+tests/test_skills.py
+tests/test_context_builder.py
+tests/test_agent_skills.py
+```
+
+覆盖内容：
+
+- skills 目录不存在时返回空列表
+- 扫描 `skills/*/SKILL.md`
+- 解析 frontmatter name / description
+- fallback 到 Markdown 一级标题和 Description section
+- SkillRegistry 格式化 Available Skills
+- ContextBuilder 注入 Available Skills section
+- AgentLoop 默认把 skills 注入 system prompt
+
+验证结果：
+
+```text
+python -m pytest
+67 passed
+```
+
+### 当前边界
+
+当前 Skills 已经能让模型知道有哪些能力摘要，但还没有：
+
+- active skill selection
+- 自动加载完整 SKILL.md
+- skill trace
+- skill 子命令
+- token budget
+- skill trigger 规则
+
+这些留到第二次迭代。

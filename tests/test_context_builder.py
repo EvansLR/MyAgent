@@ -4,6 +4,8 @@ import shutil
 from myagent.agent import ContextBuilder
 from myagent.bus import InboundMessage
 from myagent.memory import JsonlMemoryStore, MemoryRecall
+from myagent.skills import SkillRegistry
+from myagent.skills.entries import SkillEntry
 
 
 def make_message(content: str = "hello") -> InboundMessage:
@@ -61,3 +63,26 @@ def test_context_builder_includes_recalled_memory() -> None:
 
     assert "# Memory" in messages[0]["content"]
     assert "我正在准备 Java 后端面试。" in messages[0]["content"]
+
+
+def test_context_builder_includes_available_skills() -> None:
+    skill_registry = SkillRegistry(
+        [
+            SkillEntry(
+                id="code-review",
+                name="code-review",
+                description="Review code changes.",
+                path=Path("skills/code-review/SKILL.md"),
+            )
+        ]
+    )
+    builder = ContextBuilder(
+        identity="Test identity.",
+        skill_registry=skill_registry,
+    )
+
+    messages = builder.build_messages(make_message("你有哪些 skills？"))
+
+    assert "# Available Skills" in messages[0]["content"]
+    assert "code-review" in messages[0]["content"]
+    assert "skills/code-review/SKILL.md" in messages[0]["content"]

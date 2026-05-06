@@ -4,6 +4,7 @@ import shutil
 
 from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus
+from myagent.memory import JsonlMemoryStore
 from myagent.providers import EchoProvider
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.tools import create_default_registry
@@ -38,6 +39,7 @@ async def test_agent_loop_records_basic_trace_events() -> None:
         bus,
         provider=EchoProvider(),
         trace_store=JsonlTraceStore(root),
+        memory_store=JsonlMemoryStore(root / "memory.jsonl"),
     )
 
     await bus.publish_inbound(make_message("hello"))
@@ -122,6 +124,7 @@ async def test_agent_loop_records_error_trace_event() -> None:
         bus,
         provider=TraceFailingProvider(),
         trace_store=JsonlTraceStore(root),
+        memory_store=JsonlMemoryStore(root / "memory.jsonl"),
     )
 
     await bus.publish_inbound(make_message("hello"))
