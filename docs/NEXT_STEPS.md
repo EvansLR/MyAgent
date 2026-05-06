@@ -121,9 +121,10 @@ python -m myagent
 
 当前最直接的下一步是：
 
-1. 用户在终端手动测试 SubAgent。
-2. 如果效果可以，继续选择下一个模块方向。
-3. 如果测试中发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
+1. 按 `docs/PHASE2_REVIEW_PLAN.md` 进入第二版模块复盘。
+2. 第一轮先校准 Project Docs / Roadmap，避免旧文档误导后续开发。
+3. 之后按 Config、MessageBus、CLI Channel、AgentLoop、LLM Provider、ContextBuilder、ToolRegistry、Trace、Memory、Skills、MCP、SubAgent 依次复盘。
+4. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
 
 可选后续方向：
 
