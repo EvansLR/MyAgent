@@ -3,18 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from myagent.bus import InboundMessage
 from myagent.config import Settings
 from myagent.providers import EchoProvider, OpenAICompatibleProvider, create_provider
-
-
-def make_message(content: str = "hello") -> InboundMessage:
-    return InboundMessage(
-        channel="cli",
-        sender_id="local-user",
-        chat_id="default",
-        content=content,
-    )
 
 
 def test_settings_reads_myagent_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,7 +158,7 @@ async def test_openai_provider_generates_text_from_fake_client() -> None:
         client=FakeClient(completions),
     )
 
-    result = await provider.generate(make_message("hello"))
+    result = await provider.generate([{"role": "user", "content": "hello"}])
 
     assert result == "real reply"
     assert completions.calls == 1
@@ -181,7 +171,7 @@ async def test_openai_provider_retries_then_succeeds() -> None:
         client=FakeClient(completions),
     )
 
-    result = await provider.generate(make_message("hello"))
+    result = await provider.generate([{"role": "user", "content": "hello"}])
 
     assert result == "real reply"
     assert completions.calls == 2

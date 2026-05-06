@@ -76,7 +76,7 @@ Model API
 对应数据流：
 
 ```text
-InboundMessage
+Messages
   ↓
 AgentLoop
   ↓ provider.generate()
@@ -94,12 +94,12 @@ OutboundMessage
 第一阶段统一接口：
 
 ```text
-generate(message: InboundMessage) -> str
+generate(messages: list[dict[str, str]]) -> str
 ```
 
-这个接口很薄，刚好满足当前 AgentLoop。
+这个接口很薄，刚好满足当前 AgentLoop 和 ContextBuilder。
 
-后续接入 ContextBuilder、tools 后，会升级为：
+后续接入 tools 后，会升级为：
 
 ```text
 generate(messages, tools=None) -> ProviderResponse
@@ -281,7 +281,7 @@ You are MyAgent, a concise and helpful assistant.
 AgentLoop 依赖 provider 接口：
 
 ```text
-await provider.generate(inbound)
+await provider.generate(messages)
 ```
 
 AgentLoop 不直接依赖 OpenAI SDK。
@@ -352,7 +352,7 @@ tests/test_llm_provider.py
    - auto 模式有 key 使用 OpenAICompatibleProvider。
 
 5. `test_openai_provider_generates_text_from_fake_client`
-   - 使用 fake client 测试 provider 能提取 assistant content。
+   - 使用 fake client 测试 provider 能接收 messages 并提取 assistant content。
 
 6. `test_openai_provider_retries_then_succeeds`
    - 第一次失败、第二次成功时能返回结果。
@@ -486,7 +486,7 @@ MYAGENT_API_KEY -> OPENAI_API_KEY -> myagent.json
 它规定第一阶段 provider 只需要实现：
 
 ```text
-generate(message: InboundMessage) -> str
+generate(messages: list[Message]) -> str
 ```
 
 AgentLoop 只依赖这个接口。
@@ -666,7 +666,7 @@ python -m myagent
 6. auto 模式有 key 返回 OpenAICompatibleProvider。
 7. openai 模式无 key 会报错。
 8. 未知 provider mode 会报错。
-9. fake client 能验证 OpenAI provider 提取 assistant content。
+9. fake client 能验证 OpenAI provider 接收 messages 并提取 assistant content。
 10. fake client 能验证简单 retry。
 
 测试没有调用真实网络。

@@ -15,7 +15,7 @@ def make_message(content: str = "hello") -> InboundMessage:
 async def test_echo_provider_replies_with_input() -> None:
     provider = EchoProvider()
 
-    result = await provider.generate(make_message("hello"))
+    result = await provider.generate([{"role": "user", "content": "hello"}])
 
     assert result == "Echo: hello"
 
@@ -32,6 +32,20 @@ async def test_agent_loop_processes_one_message() -> None:
     assert outbound.chat_id == "default"
     assert outbound.content == "Echo: hello"
     assert await bus.consume_outbound() == outbound
+
+
+async def test_agent_loop_adds_turn_to_history() -> None:
+    bus = MessageBus()
+    agent = AgentLoop(bus, provider=EchoProvider())
+    inbound = make_message("hello")
+
+    await bus.publish_inbound(inbound)
+    await agent.process_next()
+
+    assert agent.history_for(inbound.session_key) == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "Echo: hello"},
+    ]
 
 
 def test_agent_loop_exposes_lock_state() -> None:

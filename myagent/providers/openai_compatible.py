@@ -4,7 +4,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from myagent.bus import InboundMessage
+from myagent.agent.context import Message
 from myagent.config import Settings
 
 
@@ -21,17 +21,14 @@ class OpenAICompatibleProvider:
             base_url=settings.base_url,
         )
 
-    async def generate(self, message: InboundMessage) -> str:
-        """Generate a text response for one inbound message."""
+    async def generate(self, messages: list[Message]) -> str:
+        """Generate a text response for model messages."""
         last_error: Exception | None = None
         for _ in range(self.settings.provider_retries):
             try:
                 completion = await self.client.chat.completions.create(
                     model=self.settings.model,
-                    messages=[
-                        {"role": "system", "content": self.settings.system_prompt},
-                        {"role": "user", "content": message.content},
-                    ],
+                    messages=messages,
                 )
                 content = completion.choices[0].message.content
                 return content or ""
