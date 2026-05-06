@@ -96,6 +96,37 @@ def assert_settings_from_json(config: Path) -> None:
     assert settings.provider_retries == 3
 
 
+def test_settings_reads_mcp_servers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MYAGENT_PROVIDER", raising=False)
+    with_config_file(
+        "settings_mcp.json",
+        "\n".join(
+            [
+                "{",
+                '  "mcpServers": {',
+                '    "demo": {',
+                '      "command": "python",',
+                '      "args": ["server.py"],',
+                '      "env": {"TOKEN": "abc"}',
+                "    }",
+                "  }",
+                "}",
+            ]
+        ),
+        lambda config: assert_mcp_settings(config),
+    )
+
+
+def assert_mcp_settings(config: Path) -> None:
+    settings = Settings.from_sources(config)
+
+    assert len(settings.mcp_servers) == 1
+    assert settings.mcp_servers[0].name == "demo"
+    assert settings.mcp_servers[0].command == "python"
+    assert settings.mcp_servers[0].args == ["server.py"]
+    assert settings.mcp_servers[0].env == {"TOKEN": "abc"}
+
+
 def assert_environment_overrides(config: Path) -> None:
     settings = Settings.from_sources(config)
 

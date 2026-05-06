@@ -12,7 +12,10 @@ import typer
 from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus
 from myagent.config import Settings
+from myagent.mcp import HttpMcpClient, StdioMcpClient
+from myagent.mcp.registry import register_mcp_tools
 from myagent.providers import create_provider
+from myagent.tools import create_default_registry
 
 DEFAULT_SENDER_ID = "local-user"
 DEFAULT_CHAT_ID = "default"
@@ -155,7 +158,9 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
     """Run CLI + MessageBus + AgentLoop with the configured provider."""
     settings = settings or Settings.from_sources(config_path)
     bus = MessageBus()
-    agent = AgentLoop(bus, provider=create_provider(settings))
+    registry = create_default_registry()
+    mcp_clients = await _connect_mcp_servers(settings, registry)
+    agent = AgentLoop(bus, provider=create_provider(settings), tool_registry=registry)
     agent_task = asyncio.create_task(agent.run_until_stopped())
     try:
         await run_chat(bus)
@@ -166,6 +171,30 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
             await agent_task
         except asyncio.CancelledError:
             pass
+        for client in mcp_clients:
+            await client.close()
+
+
+async def _connect_mcp_servers(settings: Settings, registry) -> list:
+    """Connect configured MCP servers and register their tools."""
+    clients: list[StdioMcpClient] = []
+    for config in settings.mcp_servers:
+        client = HttpMcpClient(config) if config.url else StdioMcpClient(config)
+        try:
+            await client.connect()
+            tools = await client.list_tools()
+        except Exception as exc:
+            typer.echo(f"MyAgent: Failed to connect MCP server {config.name}: {exc}")
+            await client.close()
+            continue
+        register_mcp_tools(
+            registry,
+            server_name=config.name,
+            client=client,
+            tools=tools,
+        )
+        clients.append(client)
+    return clients
 
 
 app = typer.Typer(

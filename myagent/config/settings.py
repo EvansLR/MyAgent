@@ -2,9 +2,11 @@
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from myagent.mcp import McpServerConfig, parse_mcp_servers
 
 
 DEFAULT_MODEL = "gpt-5.4-mini"
@@ -22,6 +24,7 @@ class Settings:
     model: str = DEFAULT_MODEL
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     provider_retries: int = 2
+    mcp_servers: list[McpServerConfig] = field(default_factory=list)
 
     @classmethod
     def from_sources(cls, config_path: str | Path | None = None) -> "Settings":
@@ -53,6 +56,7 @@ class Settings:
                 default=_int_from_value(file_values.get("provider_retries"), default=2),
                 minimum=1,
             ),
+            mcp_servers=file_values.get("mcp_servers", []),
         )
 
     @classmethod
@@ -90,7 +94,7 @@ def _resolve_config_path(config_path: str | Path | None) -> Path:
     return DEFAULT_CONFIG_PATH
 
 
-def _load_config_values(path: Path) -> dict[str, str | int | None]:
+def _load_config_values(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     with path.open(encoding="utf-8") as file:
@@ -105,6 +109,7 @@ def _load_config_values(path: Path) -> dict[str, str | int | None]:
         "model": _string_value(provider.get("model")),
         "system_prompt": _string_value(_pick(provider, "systemPrompt", "system_prompt")),
         "provider_retries": provider.get("retries"),
+        "mcp_servers": parse_mcp_servers(data),
     }
 
 
