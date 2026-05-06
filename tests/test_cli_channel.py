@@ -116,3 +116,43 @@ async def test_run_chat_sends_message_and_prints_outbound() -> None:
     await reply_task
 
     assert "MyAgent: Echo: hello" in outputs
+
+
+async def test_run_chat_prints_status_before_final_reply() -> None:
+    bus = MessageBus()
+    inputs = iter(["inspect files", "/stop"])
+    outputs: list[str] = []
+
+    async def publish_reply() -> None:
+        inbound = await bus.consume_inbound()
+        await bus.publish_outbound(
+            OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.chat_id,
+                content="Using tool: list_dir path=docs/modules",
+                metadata={"kind": "status"},
+            )
+        )
+        await bus.publish_outbound(
+            OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.chat_id,
+                content="Final summary",
+            )
+        )
+
+    import asyncio
+
+    reply_task = asyncio.create_task(publish_reply())
+    await run_chat(
+        bus,
+        input_func=lambda _prompt: next(inputs),
+        output_func=outputs.append,
+    )
+    await reply_task
+
+    assert "MyAgent: Using tool: list_dir path=docs/modules" in outputs
+    assert "MyAgent: Final summary" in outputs
+    assert outputs.index("MyAgent: Using tool: list_dir path=docs/modules") < outputs.index(
+        "MyAgent: Final summary"
+    )

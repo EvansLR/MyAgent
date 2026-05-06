@@ -97,8 +97,11 @@ async def run_chat(
             continue
 
         await bus.publish_inbound(make_inbound_message(raw, state))
-        outbound = await bus.consume_outbound()
-        output_func(f"MyAgent: {outbound.content}")
+        while True:
+            outbound = await bus.consume_outbound()
+            output_func(f"MyAgent: {outbound.content}")
+            if outbound.metadata.get("kind") != "status":
+                break
 
 
 async def run_local_chat(settings: Settings | None = None, config_path: str | None = None) -> None:

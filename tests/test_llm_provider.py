@@ -127,12 +127,15 @@ def test_create_provider_rejects_unknown_mode() -> None:
 
 
 class FakeCompletions:
-    def __init__(self, failures_before_success: int = 0) -> None:
+    def __init__(self, failures_before_success: int = 0, message=None) -> None:
         self.calls = 0
         self.failures_before_success = failures_before_success
+        self.message = message
+        self.kwargs = []
 
     async def create(self, **kwargs):
         self.calls += 1
+        self.kwargs.append(kwargs)
         if self.calls <= self.failures_before_success:
             raise RuntimeError("temporary failure")
         assert kwargs["model"] == "fake-model"
@@ -140,7 +143,7 @@ class FakeCompletions:
         return SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    message=SimpleNamespace(content="real reply"),
+                    message=self.message or SimpleNamespace(content="real reply"),
                 )
             ]
         )
@@ -175,3 +178,36 @@ async def test_openai_provider_retries_then_succeeds() -> None:
 
     assert result == "real reply"
     assert completions.calls == 2
+
+
+async def test_openai_provider_parses_tool_calls() -> None:
+    message = SimpleNamespace(
+        content="",
+        reasoning_content="thinking text",
+        tool_calls=[
+            SimpleNamespace(
+                id="call-1",
+                function=SimpleNamespace(
+                    name="read_file",
+                    arguments='{"path": "README.md"}',
+                ),
+            )
+        ],
+    )
+    completions = FakeCompletions(message=message)
+    provider = OpenAICompatibleProvider(
+        Settings(api_key="test-key", model="fake-model"),
+        client=FakeClient(completions),
+    )
+
+    response = await provider.generate_response(
+        [{"role": "user", "content": "hello"}],
+        tools=[{"type": "function", "function": {"name": "read_file"}}],
+    )
+
+    assert response.content == ""
+    assert response.tool_calls[0].id == "call-1"
+    assert response.tool_calls[0].name == "read_file"
+    assert response.tool_calls[0].arguments == {"path": "README.md"}
+    assert response.extra_message_fields == {"reasoning_content": "thinking text"}
+    assert completions.kwargs[0]["tool_choice"] == "auto"

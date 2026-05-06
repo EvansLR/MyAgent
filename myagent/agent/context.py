@@ -1,10 +1,11 @@
 """Context assembly for model calls."""
 
 from dataclasses import dataclass
+from typing import Any
 
 from myagent.bus import InboundMessage
 
-Message = dict[str, str]
+Message = dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
