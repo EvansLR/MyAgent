@@ -7,6 +7,8 @@ import typer
 
 from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus
+from myagent.config import Settings
+from myagent.providers import create_provider
 
 DEFAULT_SENDER_ID = "local-user"
 DEFAULT_CHAT_ID = "default"
@@ -99,10 +101,11 @@ async def run_chat(
         output_func(f"MyAgent: {outbound.content}")
 
 
-async def run_local_echo_chat() -> None:
-    """Run CLI + MessageBus + AgentLoop with the temporary EchoProvider."""
+async def run_local_chat(settings: Settings | None = None, config_path: str | None = None) -> None:
+    """Run CLI + MessageBus + AgentLoop with the configured provider."""
+    settings = settings or Settings.from_sources(config_path)
     bus = MessageBus()
-    agent = AgentLoop(bus)
+    agent = AgentLoop(bus, provider=create_provider(settings))
     agent_task = asyncio.create_task(agent.run_until_stopped())
     try:
         await run_chat(bus)
@@ -123,6 +126,13 @@ app = typer.Typer(
 
 
 @app.callback(invoke_without_command=True)
-def main() -> None:
+def main(
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to a myagent JSON config file.",
+    ),
+) -> None:
     """Run the local CLI channel."""
-    asyncio.run(run_local_echo_chat())
+    asyncio.run(run_local_chat(config_path=config))

@@ -668,4 +668,4 @@ You: Stopping MyAgent CLI.
 - 输入历史
 - 多行输入
 
-下一步应该接入真实 LLM Provider 或 ContextBuilder。
+OpenAI-compatible Provider 已经接入。下一步应该做 ContextBuilder。

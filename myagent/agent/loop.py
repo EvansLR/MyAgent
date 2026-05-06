@@ -3,15 +3,15 @@
 import asyncio
 
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
-from myagent.providers import EchoProvider
+from myagent.providers import BaseProvider, create_provider
 
 
 class AgentLoop:
     """Consume inbound messages, ask a provider, and publish outbound replies."""
 
-    def __init__(self, bus: MessageBus, provider: EchoProvider | None = None) -> None:
+    def __init__(self, bus: MessageBus, provider: BaseProvider | None = None) -> None:
         self.bus = bus
-        self.provider = provider or EchoProvider()
+        self.provider = provider or create_provider()
         self._lock = asyncio.Lock()
         self._running = False
 

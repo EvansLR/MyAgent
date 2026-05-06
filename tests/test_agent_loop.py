@@ -22,7 +22,7 @@ async def test_echo_provider_replies_with_input() -> None:
 
 async def test_agent_loop_processes_one_message() -> None:
     bus = MessageBus()
-    agent = AgentLoop(bus)
+    agent = AgentLoop(bus, provider=EchoProvider())
     inbound = make_message("hello")
 
     await bus.publish_inbound(inbound)
@@ -35,13 +35,13 @@ async def test_agent_loop_processes_one_message() -> None:
 
 
 def test_agent_loop_exposes_lock_state() -> None:
-    agent = AgentLoop(MessageBus())
+    agent = AgentLoop(MessageBus(), provider=EchoProvider())
 
     assert agent.locked is False
 
 
 def test_agent_loop_stop_marks_not_running() -> None:
-    agent = AgentLoop(MessageBus())
+    agent = AgentLoop(MessageBus(), provider=EchoProvider())
     agent._running = True
 
     agent.stop()

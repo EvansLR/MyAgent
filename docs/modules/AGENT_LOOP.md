@@ -524,4 +524,4 @@ InboundMessage -> Provider -> OutboundMessage
 - Trace
 - ReAct 多轮工具循环
 
-下一步建议做 LLM Provider 或 ContextBuilder。为了继续保持“能跑”，更推荐先做 OpenAI-compatible Provider 的设计和接入。
+OpenAI-compatible Provider 已经接入。下一步建议做 ContextBuilder，让 AgentLoop 从“单条用户消息”升级为“结构化上下文消息”。

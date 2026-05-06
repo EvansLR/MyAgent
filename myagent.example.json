@@ -1,0 +1,10 @@
+{
+  "provider": {
+    "mode": "auto",
+    "apiKey": "",
+    "baseUrl": "",
+    "model": "gpt-5.4-mini",
+    "systemPrompt": "You are MyAgent, a concise and helpful assistant.",
+    "retries": 2
+  }
+}
