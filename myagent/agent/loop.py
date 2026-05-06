@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message
+from myagent.agent.subagent import DelegateTaskTool
 from myagent.memory import JsonlMemoryStore, MemoryEntry, MemoryRecall
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
@@ -39,6 +40,8 @@ class AgentLoop:
             skill_registry=self.skill_registry,
         )
         self.tool_registry = tool_registry or create_default_registry()
+        if not self.tool_registry.has("delegate_task"):
+            self.tool_registry.register(DelegateTaskTool(self.provider, self.tool_registry))
         self.trace_store = trace_store or JsonlTraceStore()
         self.max_tool_iterations = max_tool_iterations
         self._history: dict[str, list[Message]] = {}
@@ -209,10 +212,32 @@ class AgentLoop:
                 "arguments": tool_call.arguments,
             },
         )
+        if tool_call.name == "delegate_task":
+            self._trace(
+                session_key,
+                turn_id,
+                "subagent_start",
+                {
+                    "tool_call_id": tool_call.id,
+                    "agent_type": tool_call.arguments.get("agent_type", "researcher"),
+                    "task_preview": _preview(str(tool_call.arguments.get("task", ""))),
+                },
+            )
         try:
             result = await self.tool_registry.execute(tool_call.name, tool_call.arguments)
         except Exception as exc:
             result = f"Error executing tool {tool_call.name}: {exc}"
+        if tool_call.name == "delegate_task":
+            self._trace(
+                session_key,
+                turn_id,
+                "subagent_result",
+                {
+                    "tool_call_id": tool_call.id,
+                    "result_preview": _preview(result),
+                    "result_length": len(result),
+                },
+            )
         self._trace(
             session_key,
             turn_id,

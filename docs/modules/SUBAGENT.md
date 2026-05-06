@@ -1,0 +1,547 @@
+# SubAgent 设计与二期调研记录
+
+## 职责
+
+SubAgent 用来把一个复杂任务拆给更专门、更小上下文的 Agent 去完成。
+
+在 MyAgent 里，它不是第一阶段必须做复杂的多 Agent 平台，而是作为后续能力扩展：
+
+- 主 Agent 继续负责和用户对话、理解目标、整合最终答案。
+- 子 Agent 负责一个明确的小任务，例如浏览某个目录、阅读一组文档、检查某类代码问题、准备某个面试专题。
+- 子 Agent 完成后只返回结果摘要、证据和必要的结构化信息，不直接接管用户会话。
+
+## 为什么需要它
+
+当前 MyAgent 已经有工具调用、Skills、MCP、Memory 和 Trace。下一步如果继续扩大能力，单个 Agent 会遇到几个问题：
+
+- 上下文越来越长，模型容易被无关信息干扰。
+- 所有任务都由一个 Agent 决策，职责会变得不清晰。
+- 浏览文件、总结文档、代码审查、面试陪练等任务的提示词策略不同，混在一起不好维护。
+- 面试讲解时，多 Agent 架构是一个很有价值的设计点，可以体现系统拆分、任务编排和可观测性。
+
+SubAgent 的价值不在于“更炫”，而在于把复杂任务拆成可解释、可追踪、可限制的小执行单元。
+
+## 常见架构调研
+
+### OpenAI Agents SDK
+
+OpenAI 官方 Agents SDK 里常见两种组合方式：
+
+1. Manager / agents as tools
+
+主 Agent 仍然掌握对话控制权，把专门 Agent 暴露成工具。模型需要某类专业能力时，调用对应的 agent tool，拿到结果后由主 Agent 统一总结。
+
+这个模式适合 MyAgent 第二版优先参考，因为它和当前 ToolRegistry / tool calling 机制最接近。
+
+2. Handoffs
+
+主 Agent 判断用户请求属于某个专业领域后，把整个对话交接给另一个 Agent。OpenAI 文档里 handoff 会被表示成工具，例如 `transfer_to_refund_agent` 这样的工具名。接收方 Agent 可以看到交接后的上下文，并继续完成对话。
+
+这个模式更适合客服、业务分流、多角色助手，不适合 MyAgent 现在的第一版目标。MyAgent 暂时不需要让子 Agent 直接接管用户会话。
+
+值得记录的 OpenAI 设计点：
+
+- 子 Agent 可以有独立 instructions。
+- handoff/agent tool 会有名字和描述，让模型自己决定是否调用。
+- handoff 可以带结构化输入，例如 reason、priority、summary。
+- handoff 可以通过 input filter 控制传给子 Agent 的历史内容。
+- 官方强调 tracing / observability，用来观察 Agent 执行过程。
+
+参考资料：
+
+- https://openai.github.io/openai-agents-python/agents/
+- https://openai.github.io/openai-agents-python/handoffs/
+- https://openai.github.io/openai-agents-js/guides/agents/
+- https://openai.github.io/openai-agents-js/guides/handoffs/
+- https://platform.openai.com/docs/guides/agents-sdk/
+
+### LangGraph Supervisor
+
+LangGraph 的 supervisor 思路是：有一个中心 supervisor 负责调度多个 specialized agents。每个子 Agent 可以有不同工具和提示词，supervisor 决定下一步交给谁。
+
+价值：
+
+- 流程清楚，适合画图和面试讲解。
+- 可以和状态机、checkpoint、resume 结合。
+- 适合复杂工作流，例如“先检索，再分析，再生成，再审查”。
+
+代价：
+
+- 工程复杂度比 MyAgent 当前阶段高。
+- 需要更明确的 state graph 设计。
+- 如果现在就做，容易偏离“先跑起来、能讲清楚”的目标。
+
+二期可以借鉴它的“中心调度 + 状态记录”思想，但不急着引入完整图执行框架。
+
+### LangGraph Swarm
+
+Swarm 更强调去中心化，多个 Agent 之间可以相互交接控制权。
+
+价值：
+
+- 适合开放式任务探索。
+- 每个 Agent 更像一个自治角色。
+
+代价：
+
+- 调试难度更高。
+- 任务边界不稳定。
+- 不适合 MyAgent 当前这种学习型、面试型项目。
+
+MyAgent 二期暂时不推荐采用 swarm 作为主架构，只把它作为扩展方向记录。
+
+### AutoGen
+
+AutoGen 经典思路是多 Agent 对话，例如 assistant、user proxy、critic、planner 等角色通过消息轮流协作。
+
+价值：
+
+- 很适合展示多角色协作。
+- 对“规划-执行-审查”这类流程表达直观。
+- 可以做代码生成、审查、讨论型任务。
+
+代价：
+
+- 容易产生多轮无效对话。
+- token 成本高。
+- 控制终止条件和结果质量需要额外机制。
+
+MyAgent 可以在二期借鉴“critic/reviewer 子 Agent”，但不建议把主流程改成多 Agent 群聊。
+
+### CrewAI
+
+CrewAI 强调 role、goal、task、process。它把 Agent 更产品化地组织成一个 crew，每个 Agent 有角色，每个 Task 有目标和产出。
+
+价值：
+
+- 很适合教学和面试表达。
+- 角色、任务、产出物边界清楚。
+- 可以自然支持顺序执行、层级执行。
+
+代价：
+
+- 对 MyAgent 来说抽象稍重。
+- 当前项目不需要完整 crew/task DSL。
+
+二期可以借鉴它的 `AgentProfile` 和 `TaskSpec` 概念，让 SubAgent 配置更清楚。
+
+### Claude Code Subagents
+
+Claude Code 的 SubAgent 更偏向工程任务代理：为特定任务配置独立上下文、专门系统提示词、可用工具范围。
+
+价值：
+
+- 非常适合 MyAgent 的代码/文档/面试场景。
+- 独立上下文可以减少主 Agent 被细节污染。
+- 工具权限可以按子 Agent 类型限制。
+
+代价：
+
+- 如果要做后台并发、任务恢复、结果合并，会增加复杂度。
+
+MyAgent 二期可以重点学习这个方向：不同类型子 Agent 拥有不同 prompt 和工具策略。
+
+## 二期值得改的点
+
+### 1. 采用 Manager / delegate_task 作为第一版 SubAgent
+
+MyAgent 不先做 handoff，也不做 swarm。先做一个同步工具：
+
+```text
+delegate_task(task, agent_type, context)
+```
+
+主 Agent 调用这个工具，工具内部创建一个子 Agent 执行任务，然后把结果返回给主 Agent。
+
+推荐原因：
+
+- 和当前 ToolRegistry 最兼容。
+- 用户体验稳定，最终回答仍由主 Agent 控制。
+- 实现和调试成本低。
+- 面试时容易讲清楚。
+
+### 2. 子 Agent 使用独立上下文
+
+子 Agent 不应该直接继承主会话的全部历史。它应该只拿到：
+
+- 任务说明
+- 必要背景
+- 可用工具说明
+- 少量相关 memory
+- 主 Agent 显式传入的 context
+
+这对应 OpenAI handoff 里的 input filter 思想，但 MyAgent 可以先做轻量版本。
+
+### 3. 增加 SubAgentProfile
+
+可以定义几类轻量 profile：
+
+- `researcher`：负责浏览目录、阅读文件、整理事实。
+- `reviewer`：负责检查代码风险、测试缺口、文档问题。
+- `interviewer`：负责面试题拆解、追问、答案结构化。
+
+每个 profile 包含：
+
+- name
+- description
+- system prompt
+- allowed tools
+- max iterations
+
+### 4. 工具权限要可控
+
+第一版 SubAgent 只给只读工具：
+
+- `list_dir`
+- `read_file`
+
+后续再考虑是否允许 MCP 工具、写文件工具、shell 工具。
+
+这样做的原因是：子 Agent 是被主 Agent 委托出去的，权限越大越难解释和调试。
+
+### 5. 防止递归委托
+
+第一版应该禁止子 Agent 再调用 `delegate_task`。
+
+也就是：
+
+```text
+Main Agent -> SubAgent
+```
+
+不允许：
+
+```text
+Main Agent -> SubAgent -> SubAgent
+```
+
+后续如果要支持嵌套，需要增加 max depth、trace tree、取消机制和更严格的预算控制。
+
+### 6. Trace 需要记录子任务
+
+SubAgent 一定要接入 Trace，否则不好调试。
+
+建议新增事件：
+
+- `subagent_start`
+- `subagent_tool_call`
+- `subagent_tool_result`
+- `subagent_result`
+- `subagent_error`
+
+二期可以先只记录 start/result/error，后续再记录完整子 Agent 内部工具调用。
+
+### 7. CLI 状态展示
+
+当前 CLI 已经能展示工具调用状态。SubAgent 后续可以展示：
+
+```text
+正在委托子任务：researcher
+正在调用工具：read_file
+```
+
+这样用户可以看见系统确实发生了委托，而不是黑盒等待。
+
+### 8. 和 Skills 机制联动
+
+当前 Skills 是把 skill 摘要注入 system prompt，模型根据描述自行决定是否读取。
+
+二期可以升级为：
+
+- 主 Agent 根据任务选择合适的 skill。
+- 子 Agent 根据 profile 自动附加相关 skill。
+- skill 不只是“说明文档”，还可以作为子 Agent 的任务模板。
+
+例如：
+
+- `interview-prep` skill 可以绑定 `interviewer` profile。
+- `code-review` skill 可以绑定 `reviewer` profile。
+
+### 9. 和 Memory 机制联动
+
+当前 Memory 还比较简单，后续需要升级。
+
+SubAgent 二期可以做两件事：
+
+- 子 Agent 可以读取经过筛选的 memory。
+- 子 Agent 产生的重要结论由主 Agent 决定是否写入 memory。
+
+不要让子 Agent 自动大量写 memory，否则记忆会很快变脏。
+
+### 10. 配置化
+
+SubAgent 二期应该可以通过 `myagent.json` 配置：
+
+```json
+{
+  "subagents": {
+    "enabled": true,
+    "maxDepth": 1,
+    "profiles": {
+      "researcher": {
+        "model": "same-as-main",
+        "tools": ["list_dir", "read_file"],
+        "maxIterations": 4
+      }
+    }
+  }
+}
+```
+
+第一版实现时可以先内置默认 profile，配置化作为第二步。
+
+## MyAgent 推荐路线
+
+### 二期第一步：文档与最小设计
+
+先完成 SubAgent 模块设计文档，明确：
+
+- 为什么要做
+- 不做什么
+- 输入输出
+- profile 怎么定义
+- trace 怎么记录
+- 如何防止递归
+
+### 二期第二步：实现同步 delegate_task
+
+实现一个普通工具：
+
+```text
+delegate_task
+```
+
+它内部创建子 Agent，执行任务，返回文本结果。
+
+### 二期第三步：补 Trace 和 CLI 状态
+
+让用户能看到：
+
+- 什么时候开始子任务
+- 用了哪个 profile
+- 最终子任务结果是什么
+
+### 二期第四步：和 Skills/Memory 做轻量联动
+
+不是做复杂 RAG，而是让 profile 能带上相关 skill 摘要，让主 Agent 控制 memory 写入。
+
+## 暂不实现
+
+第一版 SubAgent 暂不做：
+
+- 后台并发任务
+- swarm
+- 多 Agent 群聊
+- 子 Agent 直接接管用户会话
+- 子 Agent 写文件
+- 子 Agent 执行 shell
+- 嵌套子 Agent
+- 完整 checkpoint/resume
+- 复杂任务队列
+
+这些可以作为面试里的后续扩展方向。
+
+## 面试表达
+
+可以这样讲：
+
+> MyAgent 第二版准备引入 SubAgent，但不会一开始做复杂的多 Agent 群聊。我会先采用类似 OpenAI agents-as-tools 的 manager 模式：主 Agent 负责对话和最终决策，把 researcher、reviewer、interviewer 这类专门 Agent 暴露成 `delegate_task` 能力。子 Agent 使用独立上下文和受限工具集，完成任务后返回结构化结果。这样既能控制复杂度，也能保留可观测性和权限边界。后续如果业务需要，再考虑 handoff、状态图、并发任务队列和嵌套委托。
+
+## 第一版实现记录
+
+本次实现的是 SubAgent 的最小可运行版本，不是完整多 Agent 平台。
+
+核心能力：
+
+- 主 Agent 默认拥有 `delegate_task` 工具。
+- `delegate_task` 会创建一个临时 SubAgentRunner。
+- 子 Agent 使用独立 system prompt 和独立 user task。
+- 子 Agent 只能使用只读工具：`list_dir`、`read_file`。
+- 子 Agent 不会看到 `delegate_task`，因此不能递归委托。
+- 子 Agent 执行完后，把结果作为工具结果返回给主 Agent。
+- 最终回答仍由主 Agent 生成。
+
+### 新增文件
+
+```text
+myagent/agent/subagent.py
+tests/test_subagent.py
+```
+
+### 修改文件
+
+```text
+myagent/agent/loop.py
+myagent/agent/__init__.py
+```
+
+### 关键类
+
+#### SubAgentProfile
+
+`SubAgentProfile` 表示一种子 Agent 角色。
+
+第一版内置了三种 profile：
+
+- `researcher`：负责读文件、整理事实。
+- `reviewer`：负责检查风险、测试缺口、文档问题。
+- `interviewer`：负责生成面试导向解释。
+
+profile 当前是代码内置的，后续可以迁移到 `myagent.json` 配置。
+
+#### SubAgentRunner
+
+`SubAgentRunner` 负责真正执行子任务。
+
+它的输入是：
+
+- `task`
+- `agent_type`
+- `context`
+
+它的运行方式和主 AgentLoop 类似，但更小：
+
+```text
+build subagent messages
+  -> ask provider
+  -> maybe call read-only tool
+  -> append tool result
+  -> ask provider again
+  -> return final subagent answer
+```
+
+它没有 MessageBus，也不直接和用户对话。
+
+#### DelegateTaskTool
+
+`DelegateTaskTool` 是主 Agent 看到的工具。
+
+它的 schema 是：
+
+```text
+delegate_task(task, agent_type, context)
+```
+
+当模型认为某个任务适合委托时，会调用这个工具。工具内部创建只读子工具表，然后运行 `SubAgentRunner`。
+
+### 和 AgentLoop 的关系
+
+`AgentLoop` 初始化时会把 `DelegateTaskTool` 注册进主 ToolRegistry：
+
+```text
+ToolRegistry
+  -> list_dir
+  -> read_file
+  -> delegate_task
+```
+
+主 Agent 可以看到 `delegate_task`。
+
+子 Agent 只能看到：
+
+```text
+SubAgent ToolRegistry
+  -> list_dir
+  -> read_file
+```
+
+这个设计保证了第一版不会出现递归 SubAgent。
+
+### Trace 记录
+
+`AgentLoop` 原本已经会记录普通工具事件：
+
+- `tool_call`
+- `tool_result`
+
+本次为 `delegate_task` 额外增加：
+
+- `subagent_start`
+- `subagent_result`
+
+第一版没有记录子 Agent 内部每一次工具调用的完整 trace。原因是当前实现仍然保持轻量，先让主流程可观测。后续如果要做完整树形 trace，可以让 `SubAgentRunner` 接收 `TraceStore`、parent turn id 和 child task id。
+
+### 为什么没有做 handoff
+
+第一版没有让子 Agent 接管用户会话。
+
+原因：
+
+- 当前 CLI 是单用户本地会话，不需要客服式分流。
+- MyAgent 的主目标是学习和面试讲解，主 Agent 保持最终控制更容易解释。
+- handoff 会引入上下文交接、用户状态、返回控制权等额外复杂度。
+
+当前选择更像 OpenAI agents-as-tools，也就是“主 Agent 把子 Agent 当工具调用”。
+
+### 为什么只给只读工具
+
+SubAgent 是被主 Agent 委托出去的执行单元。如果一开始就允许写文件、执行 shell 或调用任意 MCP 工具，调试和权限解释都会变复杂。
+
+第一版只给：
+
+- `list_dir`
+- `read_file`
+
+这已经足够测试“委托子任务浏览项目并总结”的核心能力。
+
+后续如果要开放更多工具，建议按 profile 配置白名单。
+
+### 自动化测试
+
+新增测试文件：
+
+```text
+tests/test_subagent.py
+```
+
+覆盖内容：
+
+- `SubAgentRunner` 能使用只读工具完成任务。
+- 子 Agent 只能看到 `list_dir` 和 `read_file`。
+- `DelegateTaskTool` 会返回格式化的子任务结果。
+- `AgentLoop` 默认注册并执行 `delegate_task`。
+- 主 Agent 能看到 `delegate_task`，子 Agent 看不到 `delegate_task`。
+
+相关测试命令：
+
+```text
+python -m pytest tests/test_subagent.py tests/test_agent_loop.py tests/test_agent_trace.py
+```
+
+### 手动测试方式
+
+启动 CLI：
+
+```text
+python -m myagent
+```
+
+可以尝试：
+
+```text
+请委托一个 researcher 子 Agent 浏览 docs/modules 目录，并总结当前项目有哪些模块。
+```
+
+如果模型决定调用 `delegate_task`，终端会先看到类似状态：
+
+```text
+正在调用工具：delegate_task task=...
+```
+
+然后子 Agent 会在内部调用只读工具读取目录或文件，最后主 Agent 整合结果给用户。
+
+注意：模型是否调用 `delegate_task` 取决于模型自己的 tool calling 决策。如果想提高触发概率，可以明确说“请委托一个 researcher 子 Agent”。
+
+### 当前限制
+
+第一版仍然有这些限制：
+
+- 子 Agent 和主 Agent 共用同一个 provider。
+- profile 暂时写在代码里，还不能从配置文件改。
+- 子 Agent 内部工具调用没有单独展示 spinner 状态。
+- 子 Agent 内部工具调用没有完整 trace tree。
+- 不支持并发子任务。
+- 不支持后台任务取消。
+- 不支持 handoff。
+
+这些都可以作为第二版继续扩展。
