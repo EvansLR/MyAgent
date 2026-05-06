@@ -105,7 +105,7 @@ async def test_agent_loop_executes_tool_calls() -> None:
     status = await bus.consume_outbound()
     final = await bus.consume_outbound()
     assert status.metadata["kind"] == "status"
-    assert status.content == "Using tool: read_file path=note.txt"
+    assert status.content == "正在调用工具：read_file path=note.txt"
     assert final == outbound
     assert provider.calls == 2
     assert provider.seen_tools is not None

@@ -664,8 +664,69 @@ You: Stopping MyAgent CLI.
 但暂时还没有：
 
 - 真实模型回复
-- Markdown 渲染
 - 输入历史
 - 多行输入
 
 OpenAI-compatible Provider 已经接入。下一步应该做 ContextBuilder。
+
+## Rich Spinner 状态展示设计
+
+工具调用状态已经可以通过 `metadata.kind = "status"` 从 AgentLoop 发到 CLI。第一版实现是直接打印：
+
+```text
+MyAgent: 正在调用工具：read_file path=pyproject.toml
+```
+
+为了让交互体验更自然，CLI 使用 Rich 的 `Console.status()` 展示 spinner：
+
+```text
+MyAgent: Thinking
+MyAgent: 正在调用工具：list_dir path=docs/modules
+MyAgent: 正在调用工具：read_file path=docs/modules/TOOL_REGISTRY.md
+```
+
+设计原则：
+
+- 引入 `rich`，但只用于 CLI 展示层。
+- 只在真实交互终端启用 spinner。
+- 测试、管道输出、非 TTY 环境仍然使用普通逐行输出。
+- 收到最终回答前，status 只更新同一行。
+- 收到最终回答后，清掉 spinner 行，再打印正式回答。
+
+这样能改善体验，但不会影响 MessageBus、AgentLoop、ToolRegistry 的核心逻辑。
+
+选择 Rich 的原因：
+
+- Typer 生态里经常和 Rich 一起使用。
+- `Console.status()` 已经处理了终端刷新、清行和 spinner 动画。
+- 比自己维护 `\r` 刷新逻辑更稳定，也更容易继续扩展成 Markdown 或彩色输出。
+
+## Markdown 渲染设计
+
+真实模型经常会返回 Markdown，例如：
+
+````text
+## 标题
+- 列表
+```python
+print("hello")
+```
+````
+
+如果 CLI 直接按纯文本输出，用户会看到很多 Markdown 符号。既然已经引入 Rich，最终回答可以使用 Rich Markdown 渲染。
+
+设计原则：
+
+- 只渲染最终回答。
+- 工具状态行仍然保持普通短文本。
+- 只在真实交互终端启用 Markdown 渲染。
+- 测试、管道输出、非 TTY 环境仍然输出原始文本，方便重定向和自动化测试。
+
+CLI 输出形态：
+
+```text
+MyAgent:
+<Rich Markdown rendered answer>
+```
+
+这样后续模型返回标题、列表、代码块时，终端里会更接近正常阅读体验。

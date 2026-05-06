@@ -1,8 +1,12 @@
 """Typer entrypoint for the local CLI channel."""
 
 import asyncio
+import sys
 from dataclasses import dataclass
+from typing import Callable
 
+from rich.console import Console
+from rich.markdown import Markdown
 import typer
 
 from myagent.agent import AgentLoop
@@ -13,6 +17,7 @@ from myagent.providers import create_provider
 DEFAULT_SENDER_ID = "local-user"
 DEFAULT_CHAT_ID = "default"
 SUPPORTED_COMMANDS = {"/help", "/new", "/stop"}
+CONSOLE = Console()
 
 
 @dataclass(slots=True)
@@ -78,8 +83,8 @@ async def run_chat(
     bus: MessageBus,
     *,
     state: CliState | None = None,
-    input_func=input,
-    output_func=typer.echo,
+    input_func: Callable[[str], str] = input,
+    output_func: Callable[[str], None] = typer.echo,
 ) -> None:
     """Run the local interactive chat loop."""
     state = state or CliState()
@@ -97,11 +102,53 @@ async def run_chat(
             continue
 
         await bus.publish_inbound(make_inbound_message(raw, state))
+        await _consume_turn_outputs(bus, output_func)
+
+
+async def _consume_turn_outputs(
+    bus: MessageBus,
+    output_func: Callable[[str], None],
+) -> None:
+    """Print status updates and the final reply for one user turn."""
+    if not _should_use_spinner(output_func):
         while True:
             outbound = await bus.consume_outbound()
-            output_func(f"MyAgent: {outbound.content}")
-            if outbound.metadata.get("kind") != "status":
-                break
+            if outbound.metadata.get("kind") == "status":
+                output_func(f"MyAgent: {outbound.content}")
+                continue
+            _print_final_reply(outbound.content, output_func)
+            break
+        return
+
+    with CONSOLE.status("[bold cyan]MyAgent:[/bold cyan] Thinking", spinner="dots") as status:
+        while True:
+            outbound = await bus.consume_outbound()
+            if outbound.metadata.get("kind") == "status":
+                status.update(f"[bold cyan]MyAgent:[/bold cyan] {outbound.content}")
+                continue
+
+            status.stop()
+            _print_final_reply(outbound.content, output_func)
+            break
+
+
+def _should_use_spinner(output_func: Callable[[str], None]) -> bool:
+    """Return whether this run should render status updates as a spinner."""
+    return output_func is typer.echo and sys.stdout.isatty()
+
+
+def _print_final_reply(content: str, output_func: Callable[[str], None]) -> None:
+    """Print the final answer, rendering Markdown in an interactive terminal."""
+    if _should_use_rich_output(output_func):
+        CONSOLE.print("[bold cyan]MyAgent:[/bold cyan]")
+        CONSOLE.print(Markdown(content))
+        return
+    output_func(f"MyAgent: {content}")
+
+
+def _should_use_rich_output(output_func: Callable[[str], None]) -> bool:
+    """Return whether final replies should use Rich terminal rendering."""
+    return output_func is typer.echo and sys.stdout.isatty()
 
 
 async def run_local_chat(settings: Settings | None = None, config_path: str | None = None) -> None:

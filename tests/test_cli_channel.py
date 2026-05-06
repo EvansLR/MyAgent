@@ -129,7 +129,7 @@ async def test_run_chat_prints_status_before_final_reply() -> None:
             OutboundMessage(
                 channel=inbound.channel,
                 chat_id=inbound.chat_id,
-                content="Using tool: list_dir path=docs/modules",
+                content="正在调用工具：list_dir path=docs/modules",
                 metadata={"kind": "status"},
             )
         )
@@ -151,8 +151,8 @@ async def test_run_chat_prints_status_before_final_reply() -> None:
     )
     await reply_task
 
-    assert "MyAgent: Using tool: list_dir path=docs/modules" in outputs
+    assert "MyAgent: 正在调用工具：list_dir path=docs/modules" in outputs
     assert "MyAgent: Final summary" in outputs
-    assert outputs.index("MyAgent: Using tool: list_dir path=docs/modules") < outputs.index(
+    assert outputs.index("MyAgent: 正在调用工具：list_dir path=docs/modules") < outputs.index(
         "MyAgent: Final summary"
     )

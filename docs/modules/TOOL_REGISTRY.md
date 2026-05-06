@@ -498,7 +498,7 @@ AgentLoop 新增一个轻量工具循环：
 继续请求模型生成最终回答
 ```
 
-第一版默认 `max_tool_iterations = 3`。这个限制是为了避免模型反复调用工具导致死循环。
+第一版默认 `max_tool_iterations = 8`。这个限制是为了避免模型反复调用工具导致死循环，同时给真实模型浏览目录、读取多个文件留下足够空间。
 
 ### 当前支持的工具
 
@@ -703,8 +703,8 @@ The `reasoning_content` in the thinking mode must be passed back to the API.
 
 ```text
 User asks question
-  -> MyAgent: Using tool: list_dir path=docs/modules
-  -> MyAgent: Using tool: read_file path=docs/modules/xxx.md
+  -> MyAgent: 正在调用工具：list_dir path=docs/modules
+  -> MyAgent: 正在调用工具：read_file path=docs/modules/xxx.md
   -> MyAgent: final answer
 ```
 
@@ -746,7 +746,7 @@ AgentLoop 在执行每个工具前会发布状态消息：
 
 ```text
 metadata.kind = "status"
-content = "Using tool: read_file path=pyproject.toml"
+content = "正在调用工具：read_file path=pyproject.toml"
 ```
 
 CLI 收到状态消息后会立即打印，但不会结束本轮等待；它会继续消费 outbound queue，直到收到非 status 消息，也就是最终回答。
@@ -754,8 +754,8 @@ CLI 收到状态消息后会立即打印，但不会结束本轮等待；它会�
 用户现在会看到类似：
 
 ```text
-MyAgent: Using tool: list_dir path=docs/modules
-MyAgent: Using tool: read_file path=docs/modules/TOOL_REGISTRY.md
+MyAgent: 正在调用工具：list_dir path=docs/modules
+MyAgent: 正在调用工具：read_file path=docs/modules/TOOL_REGISTRY.md
 MyAgent: 目前已经完成了这些模块：...
 ```
 

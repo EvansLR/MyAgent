@@ -9,7 +9,7 @@ from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.tools import ToolRegistry, create_default_registry
 
-MAX_TOOL_ITERATIONS = 3
+MAX_TOOL_ITERATIONS = 8
 
 
 class AgentLoop:
@@ -91,7 +91,7 @@ class AgentLoop:
                 result = await self._execute_tool_call(tool_call)
                 working_messages.append(_tool_result_message(tool_call, result))
 
-        return "I reached the tool call limit before producing a final answer."
+        return "工具调用次数已达到上限，暂时还没有生成最终回答。"
 
     async def _execute_tool_call(self, tool_call: ToolCall) -> str:
         """Run one requested tool call through the registry."""
@@ -167,7 +167,7 @@ def _format_tool_status(tool_call: ToolCall) -> str:
     """Build a short human-readable status line for a tool call."""
     args = _format_tool_arguments(tool_call.arguments)
     suffix = f" {args}" if args else ""
-    return f"Using tool: {tool_call.name}{suffix}"
+    return f"正在调用工具：{tool_call.name}{suffix}"
 
 
 def _format_tool_arguments(arguments: dict[str, object]) -> str:
