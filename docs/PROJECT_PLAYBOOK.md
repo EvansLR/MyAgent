@@ -1,5 +1,22 @@
 # MyAgent 项目开发手册
 
+## 当前使用方式
+
+这份手册仍然定义 MyAgent 的开发节奏，但项目已经不在从零搭骨架阶段。
+
+当前状态：
+
+- Phase 1 已完成，主链路和第一批扩展能力已经可运行。
+- 当前开发阶段是 Phase 2：模块复盘与重点升级。
+- 新对话开始时，先读 `docs/NEXT_STEPS.md`，再读 `docs/PHASE2_REVIEW_PLAN.md`。
+- 只有在需要理解历史开发顺序时，再回看本手册里的 Phase 1 里程碑。
+
+Phase 2 的工作仍然遵守同一套节奏：
+
+```text
+复盘目标 -> 文档校准 -> 最小升级 -> 验证 -> 用户确认 -> Git 提交
+```
+
 ## 这份文档解决什么问题
 
 从零开发一个项目时，最容易乱的是顺序：
@@ -188,6 +205,8 @@ docs/modules/MEMORY.md
 
 ## 第一阶段推荐开发顺序
 
+以下内容是 Phase 1 的历史开发顺序，不再是当前待办清单。
+
 MyAgent 第一阶段按“先跑通消息，再接入智能”的顺序推进。
 
 ### Milestone 0：文档和项目骨架
@@ -341,7 +360,7 @@ test: cover message bus
 
 ## 下一步
 
-当前建议下一步：
+Phase 1 时的历史建议是：
 
 1. 确认并提交 `docs/ARCHITECTURE.md` 和 `docs/PROJECT_PLAYBOOK.md`。
 2. 创建 `docs/modules/MESSAGE_BUS.md`。
@@ -349,3 +368,14 @@ test: cover message bus
 4. 实现 MessageBus。
 5. 写 `tests/test_message_bus.py`。
 6. 用户测试确认后提交 MessageBus 模块。
+
+这些内容已经完成。
+
+当前建议下一步请以 `docs/NEXT_STEPS.md` 和 `docs/PHASE2_REVIEW_PLAN.md` 为准。Phase 2 第一轮建议先做：
+
+1. Project Docs / Roadmap 校准。
+2. Config 复盘。
+3. CLI Channel 体验复盘。
+4. Memory 复盘。
+5. Skills 复盘。
+6. SubAgent 复盘。

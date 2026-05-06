@@ -31,6 +31,16 @@ MyAgent 是一个面向学习、面试讲解和本地演示的轻量 ReAct Agent
 
 ## 最近完成的工作
 
+最近一组完成的文档校准主题是 Project Docs / Roadmap。
+
+校准内容：
+
+- `MYAGENT_ROADMAP.md`：从“设计草案”调整为当前 roadmap，明确 Phase 1 已完成、Phase 2 是当前阶段，并把未实现的写文件、编辑、exec、web_search、高级 trace、独立 SubAgent 模型配置等放入 Phase 2 或后续扩展。
+- `docs/PHASE1_PLAN.md`：标记为 Phase 1 历史计划和验收记录，不再作为当前待办清单。
+- `docs/PROJECT_PLAYBOOK.md`：补充当前使用方式，说明新对话应先读 `NEXT_STEPS` 和 `PHASE2_REVIEW_PLAN`。
+
+本轮只校准文档，没有修改运行代码。
+
 最近一组完成的变更主题是 SubAgent 和开发规范沉淀。
 
 新增/修改内容：
@@ -121,10 +131,11 @@ python -m myagent
 
 当前最直接的下一步是：
 
-1. 按 `docs/PHASE2_REVIEW_PLAN.md` 进入第二版模块复盘。
-2. 第一轮先校准 Project Docs / Roadmap，避免旧文档误导后续开发。
-3. 之后按 Config、MessageBus、CLI Channel、AgentLoop、LLM Provider、ContextBuilder、ToolRegistry、Trace、Memory、Skills、MCP、SubAgent 依次复盘。
-4. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
+1. 按 `docs/PHASE2_REVIEW_PLAN.md` 继续第二版模块复盘。
+2. Project Docs / Roadmap 已完成第一轮校准，下一步建议进入 Config 复盘。
+3. Config 复盘重点看 `myagent.json`、`myagent.example.json`、环境变量覆盖逻辑，以及 provider、MCP、SubAgent profile 是否都应该走配置文件。
+4. Config 之后建议按 CLI Channel、Memory、Skills、SubAgent 继续推进。
+5. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
 
 可选后续方向：
 

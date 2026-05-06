@@ -1,4 +1,4 @@
-# MyAgent 设计草案
+# MyAgent Roadmap
 
 ## 项目定位
 
@@ -10,79 +10,168 @@
 
 ---
 
-## 第一阶段：核心骨架（必做）
+## 当前状态
 
-### 1. 消息总线（MessageBus）
-- 内存队列，inbound/outbound
-- 解耦 Channel 和 AgentLoop
+Phase 1 已经完成：MyAgent 现在有一个可运行、可测试、可讲解的轻量 ReAct Agent runtime。
 
-### 2. CLI 通道
-- `typer` 做命令行交互
-- 支持 `/new`、`/stop`、`/help`
+已完成的主链路是：
 
-### 3. ReAct 主循环（AgentLoop）
-- LLM → Tool → Result → LLM 循环
-- 全局锁串行处理（简化并发）
-- 最大迭代次数限制
+```text
+CLI Channel
+  -> MessageBus
+  -> AgentLoop
+  -> ContextBuilder
+  -> LLM Provider
+  -> ToolRegistry
+  -> tool result
+  -> AgentLoop
+  -> CLI Channel
+```
 
-### 4. 上下文构建（ContextBuilder）
-- System prompt 组装（Identity + Memory + Skills + Tools）
-- **你的设计**：Context 怎么组织？固定模板还是动态预算？
+已完成的扩展能力包括：
 
-### 5. LLM Provider
-- OpenAI 兼容接口（`openai` SDK）
-- 支持配置不同模型（主模型 / summary 模型 / subagent 模型）
-- 简单重试逻辑
+- JSON 配置文件和环境变量覆盖。
+- Rich CLI 状态展示和 Markdown 渲染。
+- OpenAI-compatible provider 和 EchoProvider。
+- ToolRegistry 注册、schema、参数校验和执行。
+- 只读文件系统工具：`list_dir`、`read_file`。
+- JSONL Trace。
+- 文件型 Memory 保存和简单召回。
+- Skills 扫描和上下文注入。
+- MCP stdio 和 HTTP/SSE 风格工具接入。
+- SubAgent 同步委托工具 `delegate_task`。
 
-### 6. 工具层
-- ToolRegistry（注册表）
-- 内置工具：read_file、write_file、edit_file、list_dir、exec、web_search
-- 参数 JSON Schema 校验
+最近一次记录的全量测试结果是：
 
-### 7. MCP 扩展
-- stdio 连接外部 MCP 服务器
-- 动态工具注册到 ToolRegistry（`mcp_{server}_{tool}`）
-- 工具超时控制
-- **sse 连接后续扩展**
+```text
+python -m pytest
+80 passed, 1 skipped
+```
 
-### 7. 记忆层（Memory）
-- **你的设计**：HISTORY.md + MEMORY.md 文件型？还是 SQLite？
-- 召回机制：关键词？时间衰减？复合打分？
-- 压缩策略：LLM 总结 or 规则归档？
-
-### 8. Trace
-- JSONL append-only
-- 事件枚举（StrEnum）
-- correlation_id 配对
-- 损坏容忍 + 自动清理
-
-### 9. Skills（技能插件）
-- `skills/` 目录自动扫描
-- SKILL.md 解析
-- **你的设计**：全量加载？按需加载？摘要 + 按需全文？
-
-### 10. SubAgent（同步委托）
-- `delegate_task` 工具
-- 只读工具集
-- 独立模型配置
+跳过项是 `tests/test_mcp_stdio.py`，原因是当前 Windows 沙箱可能限制 asyncio subprocess pipe；这是已知环境限制。
 
 ---
 
-## 第二阶段：扩展能力（建议做）
+## Phase 1：核心骨架（已完成）
+
+### 1. 消息总线（MessageBus）
+- 已实现内存队列，包含 inbound/outbound。
+- 已解耦 Channel 和 AgentLoop。
+
+### 2. CLI 通道
+- 已实现本地命令行入口。
+- 支持普通消息、`/new`、`/stop`、`/help`。
+- 已加入 Rich 状态展示和 Markdown 渲染。
+
+### 3. ReAct 主循环（AgentLoop）
+- 已实现 LLM -> Tool -> Result -> LLM 循环。
+- 已用全局锁串行处理，降低第一版并发复杂度。
+- 已加入最大迭代次数限制。
+- 已接入 memory、skills、trace、MCP、SubAgent 等扩展点。
+
+### 4. 上下文构建（ContextBuilder）
+- 已实现分区式上下文组装。
+- 当前包含 Identity、Memory、Skills、Tools、Conversation 等 section。
+- 暂未实现完整 token budget，后续可升级为 budget-aware composer。
+
+### 5. LLM Provider
+- 已实现 OpenAI-compatible provider。
+- 已保留 EchoProvider，方便本地测试和最小闭环验证。
+- 当前 SubAgent 与主 Agent 共用 provider；独立模型配置作为 Phase 2 复盘项。
+
+### 6. 工具层
+- 已实现 ToolRegistry 注册表。
+- 已实现工具描述、JSON Schema、参数校验和执行。
+- 第一版只提供只读工具：`list_dir`、`read_file`。
+- `write_file`、`edit_file`、`exec`、`web_search` 暂未实现，原因是当前阶段优先安全、轻量和演示稳定。
+
+### 7. MCP 扩展
+- 已实现 stdio MCP 接入。
+- 已实现 HTTP/SSE 风格 MCP 接入。
+- 已支持动态工具注册到 ToolRegistry。
+- 超时、重试、禁用配置和真实 MCP server 体验仍属于 Phase 2 复盘项。
+
+### 8. 记忆层（Memory）
+- 已实现文件型 memory 存储。
+- 已实现显式保存和简单召回。
+- 当前召回仍偏简单，Phase 2 应重点升级为更值得讲的记忆机制。
+
+### 9. Trace
+- 已实现 JSONL append-only 运行轨迹。
+- 已记录基础 turn、LLM、tool、memory、subagent 事件。
+- correlation id、树形 trace、trace summary/inspect、损坏容忍和清理仍属于后续增强。
+
+### 10. Skills（技能）
+- 已实现 `skills/*/SKILL.md` 扫描。
+- 已实现摘要提取和上下文注入。
+- 自动读取 skill 全文、模型主动选择 skill、skill 与 SubAgent profile 绑定仍属于 Phase 2 复盘项。
+
+### 11. SubAgent（同步委托）
+- 已实现 `delegate_task` 工具。
+- 子 Agent 只暴露只读工具集：`list_dir`、`read_file`。
+- 已内置 `researcher`、`reviewer`、`interviewer` profile。
+- 当前使用独立 prompt，但与主 Agent 共用 provider；独立模型配置、profile 配置化和 trace tree 属于 Phase 2 复盘项。
+
+---
+
+## Phase 2：模块复盘与重点升级（当前阶段）
+
+Phase 2 不急着堆新功能，而是按模块复盘：
+
+- 当前实现是否和文档一致。
+- 当前能力是否足够稳定。
+- 哪些地方影响演示和面试表达。
+- 哪些增强应该实现，哪些继续后置。
+
+第一轮建议先做：
+
+1. Project Docs / Roadmap 校准。
+2. Config 复盘。
+3. CLI Channel 体验复盘。
+4. Memory 复盘。
+5. Skills 复盘。
+6. SubAgent 复盘。
+
+其中 Memory 和 Skills 是最值得重点提升的两个模块。
+
+### Memory 升级方向
+
+- 继续保持文件型存储，避免过早引入 SQLite 或向量库。
+- 给 memory entry 增加更清楚的字段，例如来源、时间、重要性、标签。
+- 从简单关键词召回升级为可解释的复合召回。
+- 增加 memory review / consolidation 的设计说明，先不急着做复杂自动化。
+
+### Skills 升级方向
+
+- 从“摘要注入”升级为更明确的“可激活能力”。
+- 明确模型如何知道有哪些 skill、什么时候需要读取全文。
+- 评估是否把 skill 全文读取暴露成受控工具。
+- 评估 skill 是否要和 SubAgent profile 绑定。
+
+### SubAgent 升级方向
+
+- 评估 profile 是否配置化。
+- 评估是否需要独立模型配置。
+- 评估子 Agent 内部工具调用是否展示到 CLI。
+- 评估是否需要树形 trace。
+
+---
+
+## Phase 2 之后的扩展能力（建议做）
 
 ### 11. MCP 工具扩展
-- stdio / sse 连接外部 MCP 服务器
-- 动态工具注册到 ToolRegistry
-- **简化策略**：先只做 stdio，sse 后续扩展
+- 更稳定的真实 MCP server 接入体验。
+- 更清楚的错误提示、超时、重试、禁用配置。
+- 工具命名和 schema 兼容性整理。
 
 ### 12. Budget-aware Context Composer
 - 4 级 Tier 优先级（PROTECTED / HIGH / MEDIUM / LOW）
 - 超预算时逐步降级
-- **前提**：Phase 1 的 ContextBuilder 设计要预留扩展点
+- 基于当前 ContextBuilder section 结构继续演进。
 
 ---
 
-## 第三阶段：有时间再考虑（优先级很低）
+## Phase 3：有时间再考虑（优先级很低）
 
 > 以下功能有价值，但不影响核心框架的完整性和面试表达。记录下来作为后续方向，当前阶段不投入开发。
 
