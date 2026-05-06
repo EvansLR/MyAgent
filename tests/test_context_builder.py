@@ -1,5 +1,9 @@
+from pathlib import Path
+import shutil
+
 from myagent.agent import ContextBuilder
 from myagent.bus import InboundMessage
+from myagent.memory import JsonlMemoryStore, MemoryRecall
 
 
 def make_message(content: str = "hello") -> InboundMessage:
@@ -9,6 +13,14 @@ def make_message(content: str = "hello") -> InboundMessage:
         chat_id="default",
         content=content,
     )
+
+
+def make_workspace(name: str) -> Path:
+    root = Path(".test-workspaces") / "context-builder" / name
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    return root
 
 
 def test_context_builder_builds_system_prompt() -> None:
@@ -35,3 +47,17 @@ def test_context_builder_builds_messages_with_history() -> None:
         {"role": "assistant", "content": "second"},
         {"role": "user", "content": "third"},
     ]
+
+
+def test_context_builder_includes_recalled_memory() -> None:
+    store = JsonlMemoryStore(make_workspace("memory") / "facts.jsonl")
+    store.add("我正在准备 Java 后端面试。", "cli:default")
+    builder = ContextBuilder(
+        identity="Test identity.",
+        memory_recall=MemoryRecall(store),
+    )
+
+    messages = builder.build_messages(make_message("Java 面试怎么准备？"))
+
+    assert "# Memory" in messages[0]["content"]
+    assert "我正在准备 Java 后端面试。" in messages[0]["content"]

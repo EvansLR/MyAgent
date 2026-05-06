@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from myagent.bus import InboundMessage
+from myagent.memory import MemoryEntry, MemoryRecall
 
 Message = dict[str, Any]
 
@@ -20,22 +21,36 @@ class ContextSection:
 class ContextBuilder:
     """Build model messages from identity, placeholders, and conversation."""
 
-    def __init__(self, identity: str | None = None) -> None:
+    def __init__(
+        self,
+        identity: str | None = None,
+        memory_recall: MemoryRecall | None = None,
+    ) -> None:
         self.identity = identity or (
             "You are MyAgent, a lightweight ReAct agent runtime for learning "
             "and interview practice. Be concise, helpful, and honest about "
             "current limitations."
         )
+        self.memory_recall = memory_recall
 
-    def build_sections(self) -> list[ContextSection]:
+    def build_sections(self, memories: list[MemoryEntry] | None = None) -> list[ContextSection]:
         """Return system prompt sections in first-stage priority order."""
-        return [
+        sections = [
             ContextSection(name="Identity", content=self.identity, priority=1),
         ]
+        if memories:
+            sections.append(
+                ContextSection(
+                    name="Memory",
+                    content="\n".join(f"- {memory.content}" for memory in memories),
+                    priority=20,
+                )
+            )
+        return sections
 
-    def build_system_prompt(self) -> str:
+    def build_system_prompt(self, memories: list[MemoryEntry] | None = None) -> str:
         """Build the system prompt from ordered sections."""
-        sections = sorted(self.build_sections(), key=lambda section: section.priority)
+        sections = sorted(self.build_sections(memories), key=lambda section: section.priority)
         return "\n\n---\n\n".join(
             f"# {section.name}\n\n{section.content.strip()}"
             for section in sections
@@ -48,8 +63,15 @@ class ContextBuilder:
         history: list[Message] | None = None,
     ) -> list[Message]:
         """Build the messages sent to a provider."""
+        memories = self.recall_memory(current_message.content)
         return [
-            {"role": "system", "content": self.build_system_prompt()},
+            {"role": "system", "content": self.build_system_prompt(memories)},
             *(history or []),
             {"role": "user", "content": current_message.content},
         ]
+
+    def recall_memory(self, query: str) -> list[MemoryEntry]:
+        """Recall memory entries for a user query."""
+        if self.memory_recall is None:
+            return []
+        return self.memory_recall.recall(query)

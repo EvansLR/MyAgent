@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message
+from myagent.memory import JsonlMemoryStore, MemoryEntry, MemoryRecall
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.tools import ToolRegistry, create_default_registry
@@ -24,11 +25,15 @@ class AgentLoop:
         context_builder: ContextBuilder | None = None,
         tool_registry: ToolRegistry | None = None,
         trace_store: TraceStore | None = None,
+        memory_store: JsonlMemoryStore | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
-        self.context_builder = context_builder or ContextBuilder()
+        self.memory_store = memory_store or JsonlMemoryStore()
+        self.context_builder = context_builder or ContextBuilder(
+            memory_recall=MemoryRecall(self.memory_store)
+        )
         self.tool_registry = tool_registry or create_default_registry()
         self.trace_store = trace_store or JsonlTraceStore()
         self.max_tool_iterations = max_tool_iterations
@@ -65,8 +70,31 @@ class AgentLoop:
                 "content": inbound.content,
             },
         )
+        saved_memory = self._maybe_save_memory(inbound)
+        if saved_memory is not None:
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "memory_saved",
+                {
+                    "memory_id": saved_memory.id,
+                    "content_preview": _preview(saved_memory.content),
+                    "source": saved_memory.source,
+                },
+            )
         history = self._history_for(inbound.session_key)
         messages = self.context_builder.build_messages(inbound, history)
+        recalled_memories = self.context_builder.recall_memory(inbound.content)
+        if recalled_memories:
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "memory_recalled",
+                {
+                    "memory_ids": [memory.id for memory in recalled_memories],
+                    "count": len(recalled_memories),
+                },
+            )
         self._trace(
             inbound.session_key,
             turn_id,
@@ -226,6 +254,13 @@ class AgentLoop:
     def _history_for(self, session_key: str) -> list[Message]:
         return self._history.setdefault(session_key, [])
 
+    def _maybe_save_memory(self, inbound: InboundMessage) -> MemoryEntry | None:
+        """Save explicit user memory instructions."""
+        content = _extract_explicit_memory(inbound.content)
+        if content is None:
+            return None
+        return self.memory_store.add(content, inbound.session_key)
+
     def _trace(
         self,
         session_key: str,
@@ -314,3 +349,17 @@ def _preview(text: str, limit: int = 300) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
+
+
+def _extract_explicit_memory(content: str) -> str | None:
+    """Extract explicitly requested memory content from a user message."""
+    text = content.strip()
+    triggers = ("记住", "记一下", "帮我记")
+    if not any(trigger in text for trigger in triggers):
+        return None
+
+    for marker in ("：", ":"):
+        if marker in text:
+            candidate = text.split(marker, 1)[1].strip()
+            return candidate or text
+    return text
