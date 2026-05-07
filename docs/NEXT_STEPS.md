@@ -85,6 +85,54 @@ python -m pytest
 81 passed, 1 skipped
 ```
 
+随后根据用户要求，先不直接设计 Memory，而是调研 Codex、Claude、OpenClaw 等系统的 memory 做法：
+
+- 新增 `docs/modules/MEMORY_PHASE2_RESEARCH.md`。
+- 调研对象包括 OpenAI ChatGPT Memory、OpenAI Agents SDK cookbook、Codex AGENTS.md、Claude Code memory、OpenClaw、Letta/MemGPT、LangGraph/Deep Agents、Zep。
+- 初步结论：MyAgent 第二版不应直接上向量库，而应先做轻量分层 memory：scope、kind、importance、tags、可解释 recall、用户可管理、后续 consolidation 扩展点。
+
+用户进一步明确：MyAgent 是用户个人助理型 Agent，类似 OpenClaw，不只是通用 coding agent。因此 Memory 设计应优先服务个人长期状态：
+
+- `profile`：用户偏好、目标、协作方式。
+- `project`：当前项目状态、阶段决策、路线。
+- `working`：最近阶段的候选信息、观察和临时计划。
+
+Codex / Claude Code 等 coding agent 经验可以参考，但不能主导设计。
+
+随后继续查阅 OpenClaw 相关机制，发现 MyAgent 需要从“当前源码项目里的 coding agent”转向“local-first 个人助理 runtime”：
+
+- 新增 `docs/PERSONAL_AGENT_DIRECTION.md`。
+- 重点参考 OpenClaw 的 agent workspace、SOUL/USER/IDENTITY/TOOLS/MEMORY 文件分层、daily notes、skills、tools/plugins、channels/routing、heartbeat 和安全默认值。
+- 新方向：MyAgent 源码仓库和运行时个人助理 workspace 应分开；后续应设计 `~/.myagent/workspace` 这一类 agent home。
+- 近期优先级应偏 Memory v2、ContextBuilder v2、Skills v2、状态可见性和 QQ Channel 设计，而不是继续堆 coding 工具。
+
+随后完成个人助理定位校准：
+
+- 更新 `docs/ARCHITECTURE.md`：明确 MyAgent 是 local-first 个人助理 Agent runtime，不是只服务代码仓库的 Coding Agent；新增 Agent Workspace 方向。
+- 更新 `MYAGENT_ROADMAP.md`：把长期方向改为“长期理解用户 -> 维护个人工作状态 -> 使用工具完成任务 -> 支持多通道协作”。
+- 更新 `docs/DECISIONS.md`：记录项目定位、Memory 三层方向、Skills 工作流方向和 QQ Channel 后续方向。
+
+随后根据用户追问，进一步校准 Memory 触发机制：
+
+- Memory v2 不应只有一个后处理 `MemoryObserver`。
+- 应采用三条路径：live memory tools、post-turn MemoryExtractor、dreaming/review consolidation。
+- 参考 OpenClaw / Claude：主 Agent 应能通过 memory tools 在当前 turn 主动写 memory 或 proposal。
+- 参考 OpenAI Agents SDK：post-turn/session-close extractor 用于补漏和生成候选。
+- 长期 `MEMORY.md` 不允许模型随意直接改，先生成 proposal；显式记忆可自动 apply，自动候选先进 daily notes。
+
+随后校准 Core Memory / Searchable Memory：
+
+- `Core Memory` 是 `MEMORY.md` 中默认组装进 system prompt 的高信号 section。
+- `Searchable Memory` 是不默认进入 prompt、通过 `memory_search` / `memory_get` 按需检索的内容。
+- 这个分层参考 Letta / MemGPT 的 Core Memory / Archival Memory，也对应 OpenClaw / Claude Code 默认加载高信号 memory 文件、按需搜索更多记忆的做法。
+
+随后已把调研结论收敛进 `docs/modules/MEMORY.md`：
+
+- 增加 Memory Phase 2 Review。
+- 明确第二版目标：从“显式关键词记忆”升级为“轻量、分层、可管理、可解释的本地记忆系统”。
+- 确定最小实现范围：扩展 `MemoryEntry`，新增 `MemoryRecallResult` / `recall_with_scores`，增加 `forget(id)`，增强 trace 中的 recall 解释。
+- 明确暂不做向量库、SQLite、knowledge graph、后台 dreaming 和自动全量 chat history 建模。
+
 最近一组完成的变更主题是 SubAgent 和开发规范沉淀。
 
 新增/修改内容：
@@ -179,9 +227,12 @@ python -m myagent
 2. Project Docs / Roadmap 已完成第一轮校准。
 3. Config 已完成第一轮文档复盘。
 4. CLI Channel 已完成第一轮体验复盘和小升级。
-5. 下一步建议进入 Memory 复盘，重点把 memory 从“简单可演示”升级为“值得讲”。
-6. Memory 之后建议按 Skills、SubAgent 继续推进。
-7. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
+5. Memory 外部调研已完成第一版文档。
+6. Memory Phase 2 Review 已收敛进 `docs/modules/MEMORY.md`。
+7. 个人助理方向已新增 `docs/PERSONAL_AGENT_DIRECTION.md`，用于纠正“只像 Coding Agent”的偏移。
+8. Architecture / Roadmap / Decisions 已完成个人助理定位校准。
+9. 下一步建议先和用户讨论 Memory v2 设计，确认 profile/project/working 三层的边界，再写代码。
+10. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
 
 可选后续方向：
 

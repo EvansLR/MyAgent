@@ -678,3 +678,454 @@ python -m pytest
 ```text
 MemoryExtractor
 ```
+
+## Phase 2 Review
+
+### 当前实现
+
+当前 Memory 已经完成第一版闭环：
+
+```text
+显式保存 -> JSONL 存储 -> 简单召回 -> ContextBuilder 注入 -> Trace 记录
+```
+
+已实现能力：
+
+- `MemoryEntry`：保存 `id`、`ts`、`content`、`source`、`session_key`、`metadata`。
+- `JsonlMemoryStore`：append-only 写入 `data/memory/facts.jsonl`。
+- `MemoryRecall`：用关键词重叠召回，没命中时返回最近 memory。
+- `AgentLoop`：识别“记住 / 记一下 / 帮我记”并保存。
+- `ContextBuilder`：把召回结果注入 `# Memory` section。
+- `Trace`：记录 `memory_saved` 和 `memory_recalled`。
+
+### 外部调研结论
+
+详细调研见：
+
+```text
+docs/modules/MEMORY_PHASE2_RESEARCH.md
+```
+
+本项目定位需要先说清楚：
+
+```text
+MyAgent 是用户个人助理型 Agent，类似 OpenClaw 这类 local-first personal agent。
+```
+
+因此 Memory 的主目标不是服务代码仓库自动化，也不是简单复刻 Codex / Claude Code 的项目指令机制，而是维护用户个人助理的长期工作状态。
+
+参考对象包括：
+
+- OpenClaw memory
+- OpenAI ChatGPT Memory
+- OpenAI Agents SDK context personalization cookbook
+- OpenAI Codex / `AGENTS.md`
+- Claude Code memory
+- Letta / MemGPT
+- LangGraph / Deep Agents
+- Zep
+
+这些系统的共识是：
+
+```text
+Memory 不是简单把历史聊天塞回 prompt。
+Memory 是分层、可管理、可检索、可审查的状态系统。
+```
+
+对 MyAgent 最值得采纳的经验：
+
+- 优先参考 OpenClaw 的 local-first personal memory 思路。
+- 区分 short-term session history 和 personal long-term memory。
+- 区分 memory scope：`profile`、`project`、`working`。
+- 区分 memory kind：`preference`、`fact`、`decision`、`task`、`insight`。
+- 让用户能查看、删除、关闭 memory。
+- 长期 memory 应该是整理后的 durable facts，不应直接堆原始对话。
+- 召回应可解释：为什么召回这条、命中了什么、分数是多少。
+- 保持 local-first，人类可读、可测试。
+- 向量检索、knowledge graph、后台 dreaming 可以后置。
+
+### 和原设计的差异
+
+第一版设计只区分：
+
+```text
+session history
+memory
+```
+
+Phase 2 需要进一步区分：
+
+```text
+Session History
+Memory Inbox / Candidate Memory
+Long-term Memory
+```
+
+第一版 `MemoryEntry.metadata` 是开放 dict，但没有明确字段。Phase 2 应把常用字段提升为正式字段，降低后续维护成本。
+
+第一版 recall 返回 `list[MemoryEntry]`，没有分数和命中原因。Phase 2 应新增结构化 recall result，以便 trace 和调试。
+
+### 当前问题
+
+- memory 只能显式保存，用户必须说“记住”。
+- memory entry 没有 `kind`、`scope`、`importance`、`tags`、`updated_at`。
+- recall 只做关键词重叠，不考虑 tag、重要性、时间。
+- trace 只记录召回数量和 memory id，没有记录召回原因。
+- memory 只能 append，不能删除、归档或标记失效。
+- ContextBuilder 只有一个扁平 Memory section，无法区分 profile 和 relevant memories。
+- 没有 `/memory` 或 `myagent memory` 管理入口。
+
+### Phase 2 目标
+
+第二版目标不是生产级 memory 平台，而是：
+
+```text
+从“显式关键词记忆”升级为“面向个人助理的轻量长期状态系统”。
+```
+
+验收标准：
+
+- 仍然本地文件型存储。
+- 旧 JSONL memory 能兼容读取。
+- memory 有明确类型和作用域。
+- recall 有可解释分数。
+- 用户至少可以通过 API 删除或隐藏 memory。
+- trace 能说明 memory 为什么被召回。
+- 不引入向量库、SQLite、后台任务或真实模型依赖。
+
+### Phase 2 最小实现范围
+
+Phase 2 的 Memory 不应该只做“结构字段 + 更好 recall”。那会变成一个被动存储模块，仍然不像个人助理。
+
+参考 OpenClaw、Claude Code、OpenAI Agents SDK 后，MyAgent Memory v2 应采用三条路径：
+
+```text
+Live path
+  主 Agent 在当前 turn 中通过 memory tools 主动写入或提出记忆。
+
+Post-turn path
+  每轮结束后由 MemoryExtractor 后处理 transcript，补漏候选记忆。
+
+Consolidation path
+  定期或手动 review daily notes / candidates，晋升到 MEMORY.md。
+```
+
+这三条路径分工：
+
+- Live path 类似 OpenClaw / Claude：agent 在工作中主动记忆。
+- Post-turn path 类似 OpenAI Agents SDK：run/session 后抽取和总结。
+- Consolidation path 类似 OpenClaw Dreaming：筛选、去重、评分、promotion。
+
+#### 触发机制
+
+1. Live path：memory tools
+
+给主 Agent 暴露受控 memory tools：
+
+```text
+memory_append_daily
+memory_propose_long_term
+memory_search
+memory_get
+```
+
+用途：
+
+- 用户显式说“记住”“以后按这个”“这个很重要”。
+- 模型判断当前 turn 中出现了长期偏好、长期目标、重要决策。
+- 模型需要查历史记忆来完成当前任务。
+
+第一版建议：
+
+- `memory_append_daily` 写入 `memory/YYYY-MM-DD.md` 或对应 daily store。
+- `memory_propose_long_term` 生成长期记忆 proposal，不让模型随意直接改 `MEMORY.md`。
+- `memory_search` / `memory_get` 用于按需查 memory，避免把全部 memory 注入 prompt。
+
+2. Post-turn path：MemoryExtractor
+
+每轮最终回答后运行：
+
+```text
+user message + assistant answer + trace summary
+  -> MemoryExtractor
+  -> memory candidates
+  -> daily notes / inbox
+```
+
+这不是为了省 token 的可选机制。MyAgent 是个人助理项目，默认应该每轮运行，后续再加配置开关。
+
+MemoryExtractor 只负责补漏和候选，不直接写 `MEMORY.md`。
+
+3. Consolidation path：Dreaming / Review
+
+定期或手动读取：
+
+```text
+daily notes
+memory candidates
+recent trace summaries
+existing MEMORY.md
+```
+
+然后做：
+
+- 去重。
+- 合并相似记忆。
+- 发现冲突。
+- 判断是否 durable。
+- 生成 promotion proposal。
+
+只有通过 review 的内容才写入 `MEMORY.md`。
+
+第一版可以先做文档和接口，不急着实现完整后台 dreaming。
+
+#### 文件层设计
+
+更贴近 OpenClaw 的文件结构：
+
+```text
+data/memory/
+  MEMORY.md
+  DREAMS.md
+  daily/
+    2026-05-07.md
+```
+
+含义：
+
+- `MEMORY.md`：精炼、稳定、长期有效的记忆。
+- `daily/YYYY-MM-DD.md`：每轮自动观察、候选记忆、近期计划。
+- `DREAMS.md`：review / consolidation 的过程和 promotion 记录。
+
+`profile / project / working` 不再作为三个文件，而是作为记忆 section / scope：
+
+```text
+MEMORY.md
+  ## Core Memory
+  ## User Profile
+  ## Preferences
+  ## Long-term Goals
+  ## Active Projects
+  ## Decisions
+
+daily/YYYY-MM-DD.md
+  ## Observations
+  ## Candidates
+  ## Open Loops
+```
+
+#### Core Memory 与 Searchable Memory
+
+参考 Letta / MemGPT 的 Core Memory / Archival Memory 分层，以及 OpenClaw / Claude Code 默认加载高信号 memory 文件的做法，MyAgent 使用两个概念：
+
+```text
+Core Memory
+  默认组装进 system prompt 的高信号长期记忆。
+
+Searchable Memory
+  不默认组装，通过 memory_search / memory_get 按需检索。
+```
+
+Core Memory 不是单独文件，而是 `MEMORY.md` 里的默认注入 section，例如：
+
+```text
+## Core Memory
+## User Profile
+## Active Goals
+```
+
+`memory_search` 搜索的是：
+
+- `MEMORY.md` 里没有默认注入的 section，例如 Decisions、Reference Notes、Archived Details。
+- `daily/YYYY-MM-DD.md`。
+- `DREAMS.md` 中的 proposal / review 记录。
+
+这样可以保证个人助理每轮都知道核心偏好和长期目标，同时避免把所有历史细节都塞进 prompt。
+
+#### Phase 2A 最小实现建议
+
+建议第一轮做这些：
+
+1. 扩展 `MemoryEntry`
+
+新增字段：
+
+```text
+scope: profile | project | working
+kind: preference | fact | decision | task | insight
+importance: int
+tags: list[str]
+updated_at: str
+status: active | candidate | archived | forgotten
+```
+
+默认值保持兼容：
+
+```text
+scope = profile
+kind = fact
+importance = 1
+tags = []
+status = active
+```
+
+2. 增加 memory tools
+
+最小工具：
+
+```text
+memory_append_daily(note, tags=None, importance=1)
+memory_propose_long_term(content, section, tags=None, importance=3)
+memory_search(query)
+memory_get(memory_id)
+```
+
+先不让模型直接写 `MEMORY.md`，而是写 proposal。
+
+3. 增加 `MemoryExtractor`
+
+每轮后运行，输出 candidate entries。
+
+第一版可以用同一个 OpenAI-compatible provider，后续再配置 summary/memory model。
+
+4. 增加 `MemoryRecallResult`
+
+字段：
+
+```text
+entry
+score
+matched_terms
+matched_tags
+```
+
+`MemoryRecall.recall(...)` 仍然可以返回 entries，或者新增：
+
+```text
+recall_with_scores(...)
+```
+
+为了减少破坏，建议先新增 `recall_with_scores(...)`，保留原 `recall(...)`。
+
+5. 升级召回打分
+
+建议轻量公式：
+
+```text
+score =
+  keyword_overlap * 3
+  + tag_overlap * 4
+  + importance
+  + recency_bonus
+```
+
+其中 `recency_bonus` 第一版可以非常简单，例如最近 7 天 +1，或者先不实现。
+
+6. 增加 memory 管理 API
+
+优先做：
+
+```text
+forget(memory_id) -> bool
+```
+
+实现方式不物理删除，而是重写 JSONL 或追加 tombstone 都可以。
+
+为保持简单，Phase 2A 建议先重写 JSONL，把目标 entry 标记为：
+
+```text
+status = forgotten
+```
+
+recall 默认忽略 forgotten memory。
+
+7. 增强 trace
+
+新增事件：
+
+```text
+memory_tool_call
+memory_candidate_saved
+memory_proposal_created
+memory_recalled
+```
+
+`memory_recalled` 记录：
+
+```text
+memory_id
+score
+matched_terms
+matched_tags
+```
+
+### 暂不处理
+
+暂不实现：
+
+- embedding / vector search。
+- SQLite。
+- knowledge graph。
+- 自动全量 chat history 建模。
+- 后台 dreaming / cron consolidation。
+- 复杂 MemoryExtractor 自动写入长期 memory。
+- 让模型直接任意改 `MEMORY.md`。
+- `/memory` CLI 交互命令。
+- 多用户云同步。
+- 复杂隐私设置页。
+
+这些方向保留在 `MEMORY_PHASE2_RESEARCH.md`，等基础结构稳定后再选。
+
+### 测试计划
+
+新增或更新测试：
+
+- 旧格式 JSONL 仍能读成新 `MemoryEntry`。
+- 新字段能写入和读取。
+- forgotten memory 默认不被 recall。
+- `forget(id)` 能标记 memory。
+- tag 命中会提高 recall 分数。
+- importance 会影响排序。
+- `recall_with_scores(...)` 返回分数和命中原因。
+- ContextBuilder 仍能注入 Memory section。
+- AgentLoop 的 `memory_recalled` trace 包含 score 和 matched 信息。
+
+推荐先跑：
+
+```text
+python -m pytest tests/test_memory_store.py tests/test_memory_recall.py tests/test_agent_memory.py tests/test_context_builder.py
+```
+
+最终跑：
+
+```text
+python -m pytest
+```
+
+### 面试表达更新
+
+可以这样讲：
+
+> MyAgent 第一版 Memory 只做显式保存和关键词召回，用来跑通长期记忆链路。第二版我参考了 ChatGPT Memory、Claude Code、OpenClaw、Letta 和 LangGraph，没有直接上向量库，而是先把 memory lifecycle 做清楚：区分 session history 和 long-term memory，给 memory 增加 scope、kind、importance、tags，并让 recall 输出可解释分数。这样既比第一版更像真实 Agent memory，又保持本地文件型、可测试、可讲清楚。
+
+更贴近项目定位的表达是：
+
+> MyAgent 是个人助理型 Agent，Memory 是它的长期工作状态，不是聊天记录缓存。第二版会把 memory 分成 profile、project、working 三层：profile 记用户偏好和目标，project 记当前项目状态和决策，working 记最近阶段的候选信息和观察。这样它更接近 OpenClaw 这类 local-first personal agent，而不是只服务一次性代码任务。
+
+如果被问到为什么暂时不做自动记忆：
+
+> 自动记忆最大的问题不是抽取，而是误记和难管理。所以 MyAgent 第二版先增强显式记忆和可管理能力，自动抽取先进入候选区或后续 MemoryExtractor，不直接写长期 memory。
+
+如果被问到为什么不用向量库：
+
+> 当前 memory 数量很小，向量库不是瓶颈。更关键的是建立清楚的数据结构、召回解释和用户控制。等 memory 规模变大，recall 层可以替换成 hybrid search，而 store、ContextBuilder 和 trace 的边界不用推翻。
+
+## Phase 2 推荐实施顺序
+
+1. 升级 `MemoryEntry` 数据结构，并保持旧 JSONL 兼容。
+2. 给 `JsonlMemoryStore` 增加 `forget(id)` 和 active 过滤。
+3. 新增 `MemoryRecallResult` 和 `recall_with_scores(...)`。
+4. 用关键词、tags、importance 做可解释 recall。
+5. 更新 ContextBuilder / AgentLoop，让 trace 记录 recall score。
+6. 跑 focused memory tests 和全量测试。
+7. 再考虑 `/memory` CLI 或 MemoryExtractor 设计。

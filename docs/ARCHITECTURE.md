@@ -2,18 +2,58 @@
 
 ## 设计目标
 
-MyAgent 是一个面向学习和面试展示的轻量异步 ReAct Agent runtime。
+MyAgent 是一个面向用户个人助理场景的 local-first、轻量、可教学、可面试的异步 Agent runtime。
 
-它的目标不是复刻 NanoBot 的全部工程能力，而是提炼 Agent 系统里最关键的运行机制：
+它不是只服务代码仓库的一次性 Coding Agent，也不是生产级 Agent 平台。
+
+它的核心目标是：
+
+```text
+让一个本地运行的个人助理 Agent 能长期理解用户、维护个人工作状态、通过工具完成任务，并且整个设计能被讲清楚。
+```
+
+当前实现仍然保留 ReAct 主循环作为最小决策框架，但后续设计重点不应只围绕“读代码、改代码、跑测试”，而应围绕个人助理能力：
 
 - 用户消息如何进入系统
-- Agent 如何构建上下文
+- Agent 如何维护 identity、persona、user profile 和 memory
+- Agent 如何构建当前上下文
 - LLM 如何决定是否调用工具
 - 工具结果如何回到 LLM
 - 运行过程如何被记录和解释
-- Memory、Skills、MCP、SubAgent 如何作为扩展能力接入
+- Memory、Skills、MCP、SubAgent、Channel 如何作为个人助理能力接入
 
-第一阶段的核心标准是：**能跑、能讲、能扩展**。
+当前阶段的核心标准是：**能跑、能讲、能扩展，并逐步接近个人助理而不是 Coding Agent**。
+
+## 个人助理定位
+
+MyAgent 后续应引入 “Agent Workspace” 概念。
+
+源码仓库和运行时个人助理状态需要分开：
+
+```text
+E:\ClaudeCode\openSource\MyAgent
+  MyAgent 的源码项目。
+
+~/.myagent/workspace/
+  某个用户个人助理的长期状态。
+```
+
+运行时 workspace 可以参考 OpenClaw 这类 local-first personal agent 的分层：
+
+```text
+~/.myagent/workspace/
+  AGENT.md        # 操作原则和运行约束
+  PERSONA.md      # 助理的风格、边界和自我设定
+  USER.md         # 用户画像、偏好、称呼和协作方式
+  TOOLS.md        # 工具使用约定和风险提示
+  MEMORY.md       # 精炼后的长期记忆
+  memory/
+    YYYY-MM-DD.md # working memory / daily notes
+  skills/
+    ...
+```
+
+第一版不必立即实现完整 workspace，但架构口径要明确：MyAgent 的目标是个人助理 runtime，代码项目能力只是其中一种任务类型。
 
 ## 总体分层
 
@@ -22,7 +62,7 @@ MyAgent 按职责分为 6 层：
 ```text
 ┌─────────────────────────────────────────────┐
 │ Interface Layer                             │
-│ CLI Channel                                 │
+│ CLI Channel / Future QQ Channel             │
 ├─────────────────────────────────────────────┤
 │ Message Layer                               │
 │ MessageBus / InboundMessage / OutboundMessage│
@@ -31,7 +71,7 @@ MyAgent 按职责分为 6 层：
 │ AgentLoop / Session / Task Control          │
 ├─────────────────────────────────────────────┤
 │ Intelligence Layer                          │
-│ ContextBuilder / LLM Provider / Memory      │
+│ ContextBuilder / LLM Provider / Memory / Persona│
 ├─────────────────────────────────────────────┤
 │ Capability Layer                            │
 │ ToolRegistry / Built-in Tools / Skills / MCP│
@@ -50,7 +90,7 @@ MyAgent 按职责分为 6 层：
 ```text
 User
   ↓
-CLI Channel
+Channel
   ↓ publish_inbound
 MessageBus
   ↓ consume_inbound
@@ -66,7 +106,7 @@ AgentLoop
   ↓ publish_outbound
 MessageBus
   ↓ consume_outbound
-CLI Channel
+Channel
   ↓
 User
 ```
@@ -171,7 +211,14 @@ MyAgent/
 - 将普通消息封装成 `InboundMessage`
 - 消费 `OutboundMessage` 并打印给用户
 
-第一阶段只做本地单用户 CLI，不做 Telegram、Slack、Discord 等 IM 通道。
+第一阶段只做本地单用户 CLI。后续如果扩展 IM，优先考虑 QQ Channel，并建议通过 OneBot 兼容协议接入。
+
+Channel 层的边界：
+
+- 把外部消息转换成 `InboundMessage`。
+- 把 `OutboundMessage` 发送回对应通道。
+- 处理通道级安全策略，例如 allowlist、群聊 require mention。
+- 不把 QQ/IM 协议细节泄漏给 AgentLoop。
 
 ### Message Layer
 
@@ -223,12 +270,13 @@ MyAgent/
 职责：
 
 - 统一组织发给 LLM 的上下文
-- 汇总 Identity、Memory、Skills、Tools、Conversation
+- 汇总 Identity、Persona、User Profile、Memory、Skills、Tools、Conversation
 
 第一阶段采用分区式模板：
 
 ```text
 Identity
+Persona / User Profile
 Memory
 Available Skills
 Available Tools
@@ -251,7 +299,7 @@ Conversation
 
 职责：
 
-- 保存跨轮次重要信息
+- 保存用户个人助理的长期工作状态
 - 在构建上下文时提供可召回内容
 
 第一阶段参考 NanoBot 思路做轻量版本：
@@ -261,6 +309,26 @@ Conversation
 - 可选总结
 
 不急着做完整 active memory、SQLite、向量检索。
+
+Phase 2 的新方向：
+
+- Memory 不只是当前代码项目进度。
+- Memory 应服务个人助理长期状态。
+- 建议分为：
+
+```text
+profile  # 用户偏好、目标、协作方式
+project  # 长期项目/任务状态和决策
+working  # 最近观察、候选信息、临时计划
+```
+
+详见：
+
+```text
+docs/PERSONAL_AGENT_DIRECTION.md
+docs/modules/MEMORY_PHASE2_RESEARCH.md
+docs/modules/MEMORY.md
+```
 
 ### Capability Layer
 
@@ -294,6 +362,12 @@ Conversation
 - 按需读取全文
 
 Skills 是“提示词能力扩展”，不是 Python 插件系统。第一阶段保持简单。
+
+个人助理方向下，Skills 更接近可复用工作流手册：
+
+- Memory 记事实、偏好和状态。
+- Skills 记“怎么做事”。
+- Tools 负责真实执行。
 
 #### MCP
 
@@ -401,6 +475,8 @@ myagent
 - `myagent trace`
 - `myagent memory`
 - `myagent skills`
+- `myagent workspace`
+- `myagent qq`
 
 ## 实现路线
 
@@ -497,6 +573,9 @@ docs/modules/
 以下能力有价值，但不作为第一阶段重点：
 
 - 多 IM 通道
+- Agent Workspace
+- persona / user profile 文件体系
+- Heartbeat 主动助理循环
 - 完整 Web UI
 - 完整 checkpoint/resume
 - SQLite session migration
@@ -518,3 +597,16 @@ Channel -> MessageBus -> AgentLoop -> Context/LLM/Tools -> MessageBus -> Channel
 Memory、Skills、MCP、SubAgent 都围绕这个主链路扩展。
 
 第一阶段不要追求大而全，先把主链路跑通，再让每个扩展模块逐步接入。
+
+Phase 2 之后，MyAgent 的解释口径应从：
+
+```text
+一个能跑 ReAct + tools 的本地 coding-ish agent
+```
+
+校准为：
+
+```text
+一个 local-first 个人助理 Agent runtime。
+CLI 只是第一种通道，文件工具只是第一批能力，Memory/Skills/Workspace 才是长期个人助理体验的基础。
+```

@@ -2,17 +2,27 @@
 
 ## 项目定位
 
-参考 NanoBot 架构理念，重新设计一个**轻量、可教学、可面试**的异步 ReAct Agent 运行时框架。
+参考 NanoBot 和 OpenClaw 等 Agent 架构理念，重新设计一个**local-first、轻量、可教学、可面试**的个人助理 Agent runtime。
 
 核心原则：**做减法**。只保留最必要的模块，每个模块都要能讲清楚设计决策。
 
-本项目不是生产级 Agent 平台，当前目标是服务研究生面试场景：系统要能跑起来，架构要能讲清楚，工程化保持必要但不过度。
+本项目不是生产级 Agent 平台，也不是只服务代码仓库的一次性 Coding Agent。
+
+当前目标是服务学习、演示和面试场景：系统要能跑起来，架构要能讲清楚，工程化保持必要但不过度。同时，长期方向要明确指向用户个人助理：
+
+```text
+长期理解用户 -> 维护个人工作状态 -> 使用工具完成任务 -> 支持多通道协作
+```
+
+因此，代码项目能力只是 MyAgent 的一个任务场景，不是最终边界。
 
 ---
 
 ## 当前状态
 
 Phase 1 已经完成：MyAgent 现在有一个可运行、可测试、可讲解的轻量 ReAct Agent runtime。
+
+但 Phase 2 的定位已经校准：后续升级不能只沿着 Coding Agent 方向堆工具，而要把 MyAgent 往 local-first personal assistant runtime 推进。
 
 已完成的主链路是：
 
@@ -122,6 +132,7 @@ Phase 2 不急着堆新功能，而是按模块复盘：
 - 当前能力是否足够稳定。
 - 哪些地方影响演示和面试表达。
 - 哪些增强应该实现，哪些继续后置。
+- 当前设计是否偏向 coding agent，是否需要拉回个人助理方向。
 
 第一轮建议先做：
 
@@ -131,15 +142,18 @@ Phase 2 不急着堆新功能，而是按模块复盘：
 4. Memory 复盘。
 5. Skills 复盘。
 6. SubAgent 复盘。
+7. Personal Agent Direction 校准。
 
 其中 Memory 和 Skills 是最值得重点提升的两个模块。
 
 ### Memory 升级方向
 
+- 以 OpenClaw 这类 local-first personal agent 为主参考。
+- 不把 memory 限定为当前代码项目状态。
+- 采用 `profile / project / working` 三层。
 - 继续保持文件型存储，避免过早引入 SQLite 或向量库。
-- 给 memory entry 增加更清楚的字段，例如来源、时间、重要性、标签。
 - 从简单关键词召回升级为可解释的复合召回。
-- 增加 memory review / consolidation 的设计说明，先不急着做复杂自动化。
+- 增加用户可查看、可删除、可整理的路径。
 
 ### Skills 升级方向
 
@@ -147,6 +161,25 @@ Phase 2 不急着堆新功能，而是按模块复盘：
 - 明确模型如何知道有哪些 skill、什么时候需要读取全文。
 - 评估是否把 skill 全文读取暴露成受控工具。
 - 评估 skill 是否要和 SubAgent profile 绑定。
+- 将 Skills 解释为个人助理的可复用工作流手册，而不是单纯 coding prompt。
+
+### Personal Agent Workspace 方向
+
+- 区分 MyAgent 源码仓库和运行时个人助理 workspace。
+- 后续设计类似：
+
+```text
+~/.myagent/workspace/
+  PERSONA.md
+  USER.md
+  MEMORY.md
+  TOOLS.md
+  memory/
+  skills/
+```
+
+- ContextBuilder 后续应能读取 persona、user profile、memory 和 skills。
+- 暂不急着完整实现，但 Roadmap 必须避免把项目锁死在 Coding Agent。
 
 ### SubAgent 升级方向
 
@@ -311,10 +344,12 @@ Phase 2 不急着堆新功能，而是按模块复盘：
 ## 已确认决策
 
 1. **命名** — 项目名为 MyAgent，Python 包名建议为 `myagent`。
-2. **Context 设计** — 模仿 NanoBot 的分区式上下文设计，但在 MyAgent 中做轻量化实现，并预留后续 budget/tier 扩展点。
-3. **Memory 方案** — 参考 NanoBot 的 memory 思路，先做够演示和面试讲解的轻量版本。
-4. **Skills 加载** — 采用“扫描摘要 + 按需加载全文”的方向。
-5. **MCP 范围** — 目标上支持 stdio + SSE；实现时可以先 stdio，再补 SSE。
+2. **项目定位** — MyAgent 是 local-first 个人助理 Agent runtime，不是只服务代码仓库的 Coding Agent。
+3. **Context 设计** — 模仿 NanoBot / OpenClaw 的分区式上下文设计，但在 MyAgent 中做轻量化实现，并预留后续 persona、user profile、memory、skills、budget/tier 扩展点。
+4. **Memory 方案** — 优先参考 OpenClaw 的 personal memory 思路，采用 `profile / project / working` 三层方向，先做本地文件型和可解释召回。
+5. **Skills 加载** — 采用“扫描摘要 + 按需加载全文”的方向，后续升级为个人助理可复用工作流。
+6. **MCP 范围** — 目标上支持 stdio + SSE；实现时可以先 stdio，再补 SSE。
+7. **Channel 方向** — CLI 是第一入口，后续 IM 优先考虑 QQ + OneBot 兼容协议，群聊默认保守。
 
 ## 开发节奏
 
