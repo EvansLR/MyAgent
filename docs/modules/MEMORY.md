@@ -1129,3 +1129,130 @@ python -m pytest
 5. 更新 ContextBuilder / AgentLoop，让 trace 记录 recall score。
 6. 跑 focused memory tests 和全量测试。
 7. 再考虑 `/memory` CLI 或 MemoryExtractor 设计。
+
+## Phase 2A Implementation Notes
+
+本轮已经完成 Memory v2 的最小闭环实现，目标是让 MyAgent 从“关键词触发 JSONL 记忆”升级到“个人助理式 Markdown memory workspace”。
+
+新增文件：
+
+```text
+myagent/memory/markdown.py
+myagent/memory/extractor.py
+myagent/tools/memory.py
+tests/test_memory_tools.py
+```
+
+修改文件：
+
+```text
+myagent/memory/__init__.py
+myagent/tools/__init__.py
+myagent/agent/context.py
+myagent/agent/loop.py
+tests/test_memory_store.py
+tests/test_context_builder.py
+tests/test_agent_memory.py
+```
+
+当前落地结构：
+
+```text
+data/memory/
+  MEMORY.md
+  DREAMS.md
+  daily/
+    YYYY-MM-DD.md
+```
+
+当前实现的运行流：
+
+```text
+ContextBuilder
+  -> 从 MEMORY.md 读取 Core Memory / User Profile / Active Goals
+  -> 默认注入 system prompt 的 # Core Memory section
+
+AgentLoop
+  -> 注册 memory_append_daily / memory_propose_long_term / memory_search / memory_get
+  -> 主 Agent 可在 live path 中通过工具写入或查询 memory
+  -> final answer 发布后运行 MemoryExtractor
+  -> MemoryExtractor 输出 daily candidate 或 long-term proposal
+```
+
+四个工具当前职责：
+
+```text
+memory_append_daily
+  写入 daily/YYYY-MM-DD.md，适合工作观察、候选记忆、临时上下文。
+
+memory_propose_long_term
+  写入 DREAMS.md proposal，不直接修改 MEMORY.md。
+
+memory_search
+  搜索 MEMORY.md 非 core section、DREAMS.md、daily notes。
+
+memory_get
+  根据 memory_id 读取完整 memory chunk。
+```
+
+重要边界：
+
+- 旧 `JsonlMemoryStore` 暂时保留，避免一次性破坏旧模块和测试。
+- 旧“用户说记住就靠关键词直接写 JSONL”的路径已经不再作为 AgentLoop 主路径。
+- `AgentLoop` 默认不再把旧 JSONL memory recall 注入上下文，避免历史测试记忆污染新的个人助理 memory。
+- 自动记忆默认由 post-turn `MemoryExtractor` 执行，但只写 daily candidate 或 proposal，不直接写长期 `MEMORY.md`。
+- `MEMORY.md` 的 core sections 会默认进 prompt；更大的历史内容要通过工具搜索。
+
+### Phase 2A Fix: Real Remember / Forget
+
+本轮本地测试暴露了一个严重问题：
+
+```text
+模型说“已记住 / 已忘掉”，但底层 memory 文件未必真的变化。
+```
+
+修复内容：
+
+- `memory_propose_long_term` 新增 `apply` 行为，默认 `apply=true`，用于用户明确要求记住的长期资料。
+- 自动 `MemoryExtractor` 仍然使用 `apply=false`，只写 `DREAMS.md` proposal，避免自动抽取直接污染长期记忆。
+- 新增 `memory_forget(query)` 工具，可按 memory id 或文本主题从 `MEMORY.md`、`DREAMS.md`、daily notes 删除匹配记忆。
+- `AgentLoop` 注册 `memory_forget`。
+- `AgentLoop` 默认停止注入旧 `JsonlMemoryStore` recall；旧 JSONL 代码仅保留为兼容模块。
+
+修复后的语义：
+
+```text
+用户说“我的名字是 lin，记住”
+  -> agent 应调用 memory_propose_long_term(apply=true, section="User Profile")
+  -> 写入 MEMORY.md
+  -> 下一轮默认进入 Core Memory prompt
+
+用户说“忘掉我正在准备 Java 后端面试”
+  -> agent 应调用 memory_forget(query="Java 后端面试")
+  -> 从 Markdown memory 文件中删除匹配项
+```
+
+这次也清理了本地 ignored memory 数据：
+
+- 从 `data/memory/DREAMS.md` 删除错误的 Java 面试 proposal。
+- 清空旧 `data/memory/facts.jsonl` 中的 Java 面试测试记忆。
+- 把 `用户的名字是 lin` 写入 `data/memory/MEMORY.md` 的 `User Profile`。
+
+本轮 focused verification：
+
+```text
+python -m pytest tests/test_memory_store.py tests/test_memory_tools.py tests/test_context_builder.py tests/test_agent_memory.py tests/test_agent_trace.py tests/test_agent_loop.py
+```
+
+结果：
+
+```text
+24 passed
+```
+
+修复后全量验证：
+
+```text
+python -m pytest
+90 passed, 1 skipped
+```

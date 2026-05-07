@@ -3,6 +3,13 @@
 from pathlib import Path
 
 from myagent.tools.filesystem import ListDirTool, ReadFileTool
+from myagent.tools.memory import (
+    MemoryAppendDailyTool,
+    MemoryForgetTool,
+    MemoryGetTool,
+    MemoryProposeLongTermTool,
+    MemorySearchTool,
+)
 from myagent.tools.registry import ToolRegistry
 
 
@@ -15,4 +22,14 @@ def create_default_registry(workspace: Path | str | None = None) -> ToolRegistry
     return registry
 
 
-__all__ = ["ListDirTool", "ReadFileTool", "ToolRegistry", "create_default_registry"]
+__all__ = [
+    "ListDirTool",
+    "MemoryAppendDailyTool",
+    "MemoryForgetTool",
+    "MemoryGetTool",
+    "MemoryProposeLongTermTool",
+    "MemorySearchTool",
+    "ReadFileTool",
+    "ToolRegistry",
+    "create_default_registry",
+]

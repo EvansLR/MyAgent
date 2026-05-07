@@ -65,6 +65,18 @@ def test_context_builder_includes_recalled_memory() -> None:
     assert "我正在准备 Java 后端面试。" in messages[0]["content"]
 
 
+def test_context_builder_includes_core_memory() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        core_memory_provider=lambda: "## User Profile\n\n- 用户偏好文档优先。",
+    )
+
+    messages = builder.build_messages(make_message("hello"))
+
+    assert "# Core Memory" in messages[0]["content"]
+    assert "用户偏好文档优先。" in messages[0]["content"]
+
+
 def test_context_builder_includes_available_skills() -> None:
     skill_registry = SkillRegistry(
         [

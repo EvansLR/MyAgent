@@ -1,7 +1,7 @@
 """Context assembly for model calls."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from myagent.bus import InboundMessage
 from myagent.memory import MemoryEntry, MemoryRecall
@@ -26,6 +26,7 @@ class ContextBuilder:
         self,
         identity: str | None = None,
         memory_recall: MemoryRecall | None = None,
+        core_memory_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
     ) -> None:
         self.identity = identity or (
@@ -34,6 +35,7 @@ class ContextBuilder:
             "current limitations."
         )
         self.memory_recall = memory_recall
+        self.core_memory_provider = core_memory_provider
         self.skill_registry = skill_registry
 
     def build_sections(self, memories: list[MemoryEntry] | None = None) -> list[ContextSection]:
@@ -41,6 +43,15 @@ class ContextBuilder:
         sections = [
             ContextSection(name="Identity", content=self.identity, priority=1),
         ]
+        core_memory = self.read_core_memory()
+        if core_memory:
+            sections.append(
+                ContextSection(
+                    name="Core Memory",
+                    content=core_memory,
+                    priority=10,
+                )
+            )
         if memories:
             sections.append(
                 ContextSection(
@@ -87,6 +98,12 @@ class ContextBuilder:
         if self.memory_recall is None:
             return []
         return self.memory_recall.recall(query)
+
+    def read_core_memory(self) -> str:
+        """Read always-visible long-term memory for the system prompt."""
+        if self.core_memory_provider is None:
+            return ""
+        return self.core_memory_provider().strip()
 
     def format_skills(self) -> str:
         """Format available skills for the system prompt."""

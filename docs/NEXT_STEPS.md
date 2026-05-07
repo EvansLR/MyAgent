@@ -249,3 +249,46 @@ python -m myagent
 - Skills 是否要和 SubAgent profile 绑定？
 - Memory 下一版是否需要从关键词召回升级为更可靠的检索策略？
 - QQ Channel 是否在 Agent 主体跑顺之后作为独立模块设计？第一版是否只支持私聊，群聊是否需要命令前缀？
+
+## Latest Session Update
+
+Memory v2 Phase 2A 已经开始实现，并完成最小闭环：
+
+- 新增 Markdown-backed memory store：`MEMORY.md`、`DREAMS.md`、`daily/YYYY-MM-DD.md`。
+- `Core Memory` / `User Profile` / `Active Goals` 会由 `ContextBuilder` 默认组装进 system prompt。
+- 主 Agent 现在注册四个 memory tools：`memory_append_daily`、`memory_propose_long_term`、`memory_search`、`memory_get`。
+- `AgentLoop` 在 final answer 发布后运行 `MemoryExtractor`，默认每轮尝试从 user message + assistant answer 中抽取候选记忆。
+- 自动抽取不会直接写长期 `MEMORY.md`，而是写 daily note 或 DREAMS proposal。
+- 旧 JSONL memory 代码暂时保留，作为旧模块兼容和对照。
+
+随后本地 CLI 测试暴露了记忆一致性问题：模型声称“已忘掉 Java 面试 / 已记住名字”，但实际底层只写了 `DREAMS.md` proposal，旧 `facts.jsonl` 仍被默认召回。
+
+已修复：
+
+- `AgentLoop` 默认不再注入旧 JSONL recall，避免旧测试记忆污染上下文。
+- `memory_propose_long_term` 默认会把用户明确要求记住的长期资料写入 `MEMORY.md`。
+- 自动 `MemoryExtractor` 仍然只写 proposal，不直接污染长期记忆。
+- 新增 `memory_forget(query)`，支持按 id 或主题从 Markdown memory 文件删除记忆。
+- 本地 ignored memory 数据已清理：Java 面试测试记忆已移除，`用户的名字是 lin` 已进入 `MEMORY.md` 的 `User Profile`。
+
+当前 focused tests 已通过：
+
+```text
+python -m pytest tests/test_memory_store.py tests/test_memory_tools.py tests/test_context_builder.py tests/test_agent_memory.py tests/test_agent_trace.py tests/test_agent_loop.py
+24 passed
+```
+
+最新全量测试：
+
+```text
+python -m pytest
+90 passed, 1 skipped
+```
+
+下一步建议：
+
+1. 先跑全量 `python -m pytest`。
+2. 如果全量通过，人工检查 `data/memory/` 是否仍未被 Git 跟踪。
+3. 让用户确认这版 Memory v2 行为。
+4. 用户确认后提交。
+5. 后续再考虑 `/memory` CLI、review/consolidation 命令，以及长期 `MEMORY.md` 的人工晋升流程。

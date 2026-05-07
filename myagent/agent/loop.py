@@ -7,11 +7,19 @@ from uuid import uuid4
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message
 from myagent.agent.subagent import DelegateTaskTool
-from myagent.memory import JsonlMemoryStore, MemoryEntry, MemoryRecall
+from myagent.memory import JsonlMemoryStore, MarkdownMemoryStore, MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.skills import SkillRegistry
-from myagent.tools import ToolRegistry, create_default_registry
+from myagent.tools import (
+    MemoryAppendDailyTool,
+    MemoryForgetTool,
+    MemoryGetTool,
+    MemoryProposeLongTermTool,
+    MemorySearchTool,
+    ToolRegistry,
+    create_default_registry,
+)
 from myagent.tracing import JsonlTraceStore, TraceStore
 
 MAX_TOOL_ITERATIONS = 8
@@ -28,18 +36,26 @@ class AgentLoop:
         tool_registry: ToolRegistry | None = None,
         trace_store: TraceStore | None = None,
         memory_store: JsonlMemoryStore | None = None,
+        markdown_memory_store: MarkdownMemoryStore | None = None,
+        memory_extractor: MemoryExtractor | None = None,
         skill_registry: SkillRegistry | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
         self.memory_store = memory_store or JsonlMemoryStore()
+        self.markdown_memory_store = markdown_memory_store or MarkdownMemoryStore()
+        self.memory_extractor = memory_extractor or MemoryExtractor(
+            self.provider,
+            self.markdown_memory_store,
+        )
         self.skill_registry = skill_registry or SkillRegistry.from_directory()
         self.context_builder = context_builder or ContextBuilder(
-            memory_recall=MemoryRecall(self.memory_store),
+            core_memory_provider=self.markdown_memory_store.read_core_memory,
             skill_registry=self.skill_registry,
         )
         self.tool_registry = tool_registry or create_default_registry()
+        self._register_memory_tools()
         if not self.tool_registry.has("delegate_task"):
             self.tool_registry.register(DelegateTaskTool(self.provider, self.tool_registry))
         self.trace_store = trace_store or JsonlTraceStore()
@@ -77,18 +93,6 @@ class AgentLoop:
                 "content": inbound.content,
             },
         )
-        saved_memory = self._maybe_save_memory(inbound)
-        if saved_memory is not None:
-            self._trace(
-                inbound.session_key,
-                turn_id,
-                "memory_saved",
-                {
-                    "memory_id": saved_memory.id,
-                    "content_preview": _preview(saved_memory.content),
-                    "source": saved_memory.source,
-                },
-            )
         history = self._history_for(inbound.session_key)
         messages = self.context_builder.build_messages(inbound, history)
         recalled_memories = self.context_builder.recall_memory(inbound.content)
@@ -139,6 +143,7 @@ class AgentLoop:
             },
         )
         await self.bus.publish_outbound(outbound)
+        await self._extract_memory_after_turn(inbound, content, turn_id)
         history.extend(
             [
                 {"role": "user", "content": inbound.content},
@@ -283,12 +288,54 @@ class AgentLoop:
     def _history_for(self, session_key: str) -> list[Message]:
         return self._history.setdefault(session_key, [])
 
-    def _maybe_save_memory(self, inbound: InboundMessage) -> MemoryEntry | None:
-        """Save explicit user memory instructions."""
-        content = _extract_explicit_memory(inbound.content)
-        if content is None:
-            return None
-        return self.memory_store.add(content, inbound.session_key)
+    def _register_memory_tools(self) -> None:
+        """Expose local personal memory tools to the main agent."""
+        tools = (
+            MemoryAppendDailyTool(self.markdown_memory_store),
+            MemoryProposeLongTermTool(self.markdown_memory_store),
+            MemorySearchTool(self.markdown_memory_store),
+            MemoryGetTool(self.markdown_memory_store),
+            MemoryForgetTool(self.markdown_memory_store),
+        )
+        for tool in tools:
+            if not self.tool_registry.has(tool.name):
+                self.tool_registry.register(tool)
+
+    async def _extract_memory_after_turn(
+        self,
+        inbound: InboundMessage,
+        assistant_answer: str,
+        turn_id: str,
+    ) -> None:
+        """Run post-turn memory extraction after the final answer."""
+        if self.memory_extractor is None:
+            return
+        try:
+            memory_ids = await self.memory_extractor.extract_turn(
+                inbound.content,
+                assistant_answer,
+            )
+        except Exception as exc:
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "memory_extraction_error",
+                {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            return
+        if memory_ids:
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "memory_candidates_saved",
+                {
+                    "memory_ids": memory_ids,
+                    "count": len(memory_ids),
+                },
+            )
 
     def _trace(
         self,
@@ -378,17 +425,3 @@ def _preview(text: str, limit: int = 300) -> str:
     if len(compact) <= limit:
         return compact
     return f"{compact[: limit - 3]}..."
-
-
-def _extract_explicit_memory(content: str) -> str | None:
-    """Extract explicitly requested memory content from a user message."""
-    text = content.strip()
-    triggers = ("记住", "记一下", "帮我记")
-    if not any(trigger in text for trigger in triggers):
-        return None
-
-    for marker in ("：", ":"):
-        if marker in text:
-            candidate = text.split(marker, 1)[1].strip()
-            return candidate or text
-    return text
