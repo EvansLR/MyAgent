@@ -65,6 +65,26 @@ python -m pytest
 80 passed, 1 skipped
 ```
 
+随后进入 CLI Channel 体验复盘，并完成第一轮小升级：
+
+- 更新 `docs/modules/CLI_CHANNEL.md`：补充 Phase 2 Review，校准 Rich spinner、Markdown、MCP 启动提示和未知命令行为。
+- 更新 `myagent/cli/commands.py`：未知 slash command 不再进入模型，改为提示 `/help`；MCP server 连接成功时显示注册工具数量。
+- 更新 `tests/test_cli_channel.py`：覆盖未知 slash command 的新行为。
+
+本轮验证：
+
+```text
+python -m pytest tests/test_cli_channel.py
+python -m pytest
+```
+
+结果：
+
+```text
+14 passed
+81 passed, 1 skipped
+```
+
 最近一组完成的变更主题是 SubAgent 和开发规范沉淀。
 
 新增/修改内容：
@@ -111,7 +131,7 @@ read_file
 
 ```text
 python -m pytest
-80 passed, 1 skipped
+81 passed, 1 skipped
 ```
 
 跳过的测试是 `tests/test_mcp_stdio.py`，原因是当前 Windows 开发沙箱可能禁止 asyncio subprocess pipe。这个是已知旧情况，不是 SubAgent 引入的新问题。
@@ -157,10 +177,11 @@ python -m myagent
 
 1. 按 `docs/PHASE2_REVIEW_PLAN.md` 继续第二版模块复盘。
 2. Project Docs / Roadmap 已完成第一轮校准。
-3. Config 已完成第一轮文档复盘；暂不做代码改动。
-4. 下一步建议进入 CLI Channel 体验复盘，重点看状态展示、错误提示、MCP 连接失败提示、SubAgent 内部工具调用是否展示。
-5. CLI Channel 之后建议按 Memory、Skills、SubAgent 继续推进。
-6. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
+3. Config 已完成第一轮文档复盘。
+4. CLI Channel 已完成第一轮体验复盘和小升级。
+5. 下一步建议进入 Memory 复盘，重点把 memory 从“简单可演示”升级为“值得讲”。
+6. Memory 之后建议按 Skills、SubAgent 继续推进。
+7. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
 
 可选后续方向：
 
@@ -168,6 +189,7 @@ python -m myagent
 - 改进 Memory：从简单关键词召回升级为更可展示的记忆机制。
 - 改进 SubAgent：profile 配置化、子 Agent trace tree、CLI 展示子 Agent 内部工具调用。
 - 改进 ContextBuilder：增加 budget-aware context composer。
+- 后续 IM Channel：暂时不做微信；如果以后扩展，优先考虑 QQ，并建议通过 OneBot 兼容协议接入，让 MyAgent 只负责 Channel 适配，不直接处理 QQ 登录和协议细节。
 
 ## 开放问题
 
@@ -175,3 +197,4 @@ python -m myagent
 - 子 Agent 内部工具调用是否要在 CLI spinner 中显示？
 - Skills 是否要和 SubAgent profile 绑定？
 - Memory 下一版是否需要从关键词召回升级为更可靠的检索策略？
+- QQ Channel 是否在 Agent 主体跑顺之后作为独立模块设计？第一版是否只支持私聊，群聊是否需要命令前缀？

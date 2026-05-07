@@ -44,8 +44,9 @@ MyAgent 第一阶段只保留核心交互能力：
 - 支持 `/new`、`/stop`、`/help`。
 - 把普通文本封装成 `InboundMessage`。
 - 从 MessageBus 消费 `OutboundMessage` 并打印。
+- 使用 Rich 展示工具调用状态和 Markdown 最终回答。
 
-暂不引入 `prompt_toolkit`、`rich`、多子命令和复杂配置。
+暂不引入 `prompt_toolkit`、多子命令和复杂配置。
 
 ## 所属架构层
 
@@ -490,9 +491,15 @@ session_key = "cli:session-1"
 - `/stop` -> `"stop"`
 - 其他输入 -> `"message"`
 
-第一阶段把未知 slash command 也当成普通 message。
+第一阶段曾经把未知 slash command 也当成普通 message。
 
-这样做的原因是保持逻辑简单。后续如果要严格校验，可以把 `/unknown` 改成错误提示。
+Phase 2 复盘后改为直接提示：
+
+```text
+Unknown command. Type /help for supported commands.
+```
+
+原因是 `/unknown` 更像用户输入了 CLI 控制命令，而不是想问模型的问题。直接提示能减少手动测试时的困惑。
 
 ### make_inbound_message
 
@@ -577,18 +584,19 @@ CLI Channel -> MessageBus -> AgentLoop/EchoProvider -> MessageBus -> CLI Channel
 
 ## tests/test_cli_channel.py
 
-测试文件验证了 10 个行为：
+测试文件验证了 11 个行为：
 
 1. `/help` 能解析为 `help`。
 2. `/new` 能解析为 `new`。
 3. `/stop` 能解析为 `stop`。
 4. 普通文本解析为 `message`。
-5. 未知 slash command 暂时解析为 `message`。
+5. 未知 slash command 解析为 `unknown`。
 6. `make_inbound_message` 会使用当前 `CliState`。
 7. `/new` 会改变 `chat_id`。
 8. `/stop` 会让 `running = False`。
 9. help 文本包含 `/help`、`/new`、`/stop`。
-10. 未知内部 command 会抛出 `ValueError`。
+10. 未知 slash command 会直接提示 `/help`。
+11. 未知内部 command 会抛出 `ValueError`。
 
 ### 本次验证结果
 
@@ -663,11 +671,12 @@ You: Stopping MyAgent CLI.
 
 但暂时还没有：
 
-- 真实模型回复
 - 输入历史
 - 多行输入
+- trace / memory 查看命令
+- 子 Agent 内部工具调用展开显示
 
-OpenAI-compatible Provider 已经接入。下一步应该做 ContextBuilder。
+OpenAI-compatible Provider、ContextBuilder、ToolRegistry、MCP 和 SubAgent 都已经接入。CLI Channel 的下一步重点不是继续扩大入口能力，而是保持本地体验清楚、稳定、可测试。
 
 ## Rich Spinner 状态展示设计
 
@@ -730,3 +739,117 @@ MyAgent:
 ```
 
 这样后续模型返回标题、列表、代码块时，终端里会更接近正常阅读体验。
+
+## Phase 2 Review
+
+### 当前实现
+
+当前 CLI Channel 已经实现：
+
+- Typer 入口：`python -m myagent` 和 `myagent`。
+- `--config/-c` 指定本地 JSON 配置。
+- `/help`、`/new`、`/stop`。
+- 未知 slash command 的直接提示。
+- 普通输入转 `InboundMessage`。
+- 等待并打印 `OutboundMessage`。
+- Rich spinner 展示 `metadata.kind = "status"` 的工具调用状态。
+- Rich Markdown 渲染最终回答。
+- 启动时连接配置中的 MCP server，并把工具注册到 ToolRegistry。
+- MCP 连接失败时打印错误但不阻止本地 CLI 启动。
+- MCP 连接成功时打印 server 名称和注册工具数量。
+
+### 和原设计的差异
+
+早期文档说第一阶段暂不引入 Rich 和 Markdown 渲染；实际后续已经引入并完成。
+
+早期未知 slash command 会当作普通消息进入 AgentLoop；Phase 2 复盘后改为 CLI 直接提示，避免用户把拼错的命令发给模型。
+
+早期 CLI 只负责 MessageBus 输入输出；实际现在也承担了运行时装配工作：
+
+```text
+Settings -> create_default_registry -> connect MCP servers -> create provider -> AgentLoop
+```
+
+这仍然可以接受，因为当前项目只有一个本地入口；后续如果入口变多，再考虑抽出 runtime bootstrap。
+
+### 当前问题
+
+- CLI 启动时的 MCP 成功/失败提示仍然比较基础。
+- 子 Agent 内部工具调用不会逐条显示到 CLI；目前只能看到主 Agent 调用 `delegate_task`。
+- 没有 `/trace`、`/memory` 等查看命令。
+- 没有输入历史、多行输入和快捷键。
+- CLI 错误提示还没有统一的错误类型或颜色规范。
+
+### 二期建议
+
+当前建议只做小体验增强：
+
+- 未知 slash command 直接提示 `/help`。
+- MCP 连接成功时显示注册工具数量，方便手动确认远程能力是否接入。
+- 保留 Rich spinner 和 Markdown 渲染，不继续扩展复杂 TUI。
+- 暂不展示 SubAgent 内部工具调用，等 SubAgent trace tree 设计清楚后再做。
+
+### 暂不处理
+
+暂不实现：
+
+- `prompt_toolkit` 输入历史和多行编辑。
+- `/trace`、`/memory`、`/model` 子命令。
+- 复杂配置初始化向导。
+- provider 登录。
+- 后台任务取消。
+- SubAgent 内部工具调用实时展开。
+- Web UI 或 IM Channel。
+
+### 测试计划
+
+已有测试覆盖：
+
+- slash command 解析。
+- 未知 slash command 提示。
+- `CliState` 会话切换。
+- `make_inbound_message` 生成正确 `InboundMessage`。
+- `run_chat` 能处理 help/stop。
+- `run_chat` 能发布普通消息并打印最终回复。
+- status 消息会在最终回复前打印。
+
+本轮建议验证：
+
+```text
+python -m pytest tests/test_cli_channel.py
+python -m pytest
+```
+
+本轮已执行，结果：
+
+```text
+14 passed
+81 passed, 1 skipped
+```
+
+跳过项仍是当前 Windows 环境下的 `tests/test_mcp_stdio.py`。
+
+手动验证：
+
+```text
+python -m myagent
+/unknown
+/help
+/stop
+```
+
+预期 `/unknown` 不进入模型，而是提示：
+
+```text
+Unknown command. Type /help for supported commands.
+```
+
+### 面试表达更新
+
+可以这样讲：
+
+> CLI Channel 仍然是一个很薄的本地入口：普通消息通过 MessageBus 交给 AgentLoop，CLI 自己只处理控制命令和展示状态。Phase 2 做的体验增强也很克制，只让未知命令更清楚、MCP 连接状态更可见，而没有把 CLI 做成复杂 TUI。
+
+如果被问到为什么不展示 SubAgent 内部工具调用，可以回答：
+
+> 现在主 Agent 会显示 `delegate_task`，但子 Agent 内部工具调用还没有展示。原因是这需要 trace tree 或嵌套状态事件支持；如果直接在 CLI 里临时打印，容易破坏模块边界。等 SubAgent 复盘时先设计 trace tree，再决定 CLI 怎么展开展示。

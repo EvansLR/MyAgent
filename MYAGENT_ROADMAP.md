@@ -195,12 +195,22 @@ Phase 2 不急着堆新功能，而是按模块复盘：
 
 **问题**：支持 Telegram、Discord、Slack、飞书、钉钉等通道。
 
+当前用户偏好：
+
+- 先不急着做 IM Channel。
+- 先把 Agent 本体跑通、跑稳、跑得更有效率。
+- 如果以后做 IM，优先考虑 QQ；微信暂不优先。
+- QQ 建议优先考虑 OneBot 兼容协议，让 MyAgent 对接标准 Channel 层，而不是直接处理 QQ 登录和底层协议。
+
 **为什么不现在做**：
 - 每个通道需要独立的认证、消息格式、错误处理
 - 核心框架的验证不依赖 IM 通道
 - CLI 已足够展示框架能力
 
 **后续方向**：
+- QQ Channel 作为独立模块文档设计，例如 `docs/modules/QQ_CHANNEL.md`
+- 第一版可以只支持私聊，群聊响应和命令前缀后置决策
+- 通过 OneBot HTTP/WebSocket 兼容服务接入，降低协议和登录复杂度
 - 继承 BaseChannel 抽象基类
 - ChannelManager 自动发现（pkgutil + entry_points）
 - 先加 Discord 或 Telegram（社区文档最完善）

@@ -44,6 +44,8 @@ def parse_cli_command(raw: str) -> str:
     text = raw.strip()
     if text in SUPPORTED_COMMANDS:
         return text.removeprefix("/")
+    if text.startswith("/"):
+        return "unknown"
     return "message"
 
 
@@ -79,6 +81,8 @@ def handle_cli_command(command: str, state: CliState) -> str:
     if command == "stop":
         state.running = False
         return "Stopping MyAgent CLI."
+    if command == "unknown":
+        return "Unknown command. Type /help for supported commands."
     raise ValueError(f"Unsupported CLI command: {command}")
 
 
@@ -193,6 +197,7 @@ async def _connect_mcp_servers(settings: Settings, registry) -> list:
             client=client,
             tools=tools,
         )
+        typer.echo(f"MyAgent: Connected MCP server {config.name} with {len(tools)} tools.")
         clients.append(client)
     return clients
 

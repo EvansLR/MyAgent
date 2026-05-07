@@ -27,8 +27,8 @@ def test_parse_plain_text_as_message() -> None:
     assert parse_cli_command("hello") == "message"
 
 
-def test_unknown_slash_command_is_message() -> None:
-    assert parse_cli_command("/unknown") == "message"
+def test_unknown_slash_command_is_unknown() -> None:
+    assert parse_cli_command("/unknown") == "unknown"
 
 
 def test_make_inbound_message_uses_current_cli_state() -> None:
@@ -60,6 +60,12 @@ def test_stop_command_marks_state_not_running() -> None:
 
     assert state.running is False
     assert output == "Stopping MyAgent CLI."
+
+
+def test_unknown_command_returns_help_hint() -> None:
+    output = handle_cli_command("unknown", CliState())
+
+    assert output == "Unknown command. Type /help for supported commands."
 
 
 def test_help_text_mentions_supported_commands() -> None:
