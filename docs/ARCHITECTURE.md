@@ -346,14 +346,40 @@ Skills 是“提示词能力扩展”，不是 Python 插件系统。第一阶�
 第一阶段配置保持轻量：
 
 ```text
-MYAGENT_MODEL
+MYAGENT_CONFIG
+MYAGENT_PROVIDER
 MYAGENT_API_KEY
+OPENAI_API_KEY
 MYAGENT_BASE_URL
-MYAGENT_MAX_ITERATIONS
-MYAGENT_WORKSPACE
+MYAGENT_MODEL
+MYAGENT_SYSTEM_PROMPT
+MYAGENT_PROVIDER_RETRIES
 ```
 
-可以先使用环境变量和简单 `Settings` 类，不急着做复杂配置文件和迁移逻辑。
+当前也支持本地 JSON 配置：
+
+```text
+myagent.json
+```
+
+可提交模板是：
+
+```text
+myagent.example.json
+```
+
+`myagent.json` 用于保存本地真实配置，已被 `.gitignore` 忽略，不能提交 API key、MCP key 或私有 URL。
+
+当前 JSON 配置主要包含：
+
+```text
+provider
+mcpServers
+```
+
+其中 `provider` 用于选择 EchoProvider 或 OpenAI-compatible provider；`mcpServers` 用于配置 stdio 或 HTTP/SSE 风格 MCP server。
+
+后续如果要把 `max_iterations`、`workspace`、SubAgent profile、工具权限等纳入配置，应先在 `docs/modules/CONFIG.md` 校准设计，再实现。
 
 ## 运行模式
 

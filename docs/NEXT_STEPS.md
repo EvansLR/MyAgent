@@ -41,6 +41,30 @@ MyAgent 是一个面向学习、面试讲解和本地演示的轻量 ReAct Agent
 
 本轮只校准文档，没有修改运行代码。
 
+随后进入 Config 复盘，并完成第一轮文档化：
+
+- 新增 `docs/modules/CONFIG.md`：集中说明 `Settings`、`myagent.json`、环境变量覆盖、`mcpServers`、SubAgent 配置暂缓项和 Phase 2 Review。
+- 更新 `myagent.example.json`：增加空的 `mcpServers` 字段，提示 MCP 配置入口。
+- 更新 `docs/ARCHITECTURE.md`：把配置设计从早期环境变量口径校准为当前 JSON + 环境变量模式。
+- 修复 provider 类型导入环：`providers.base`、`providers.echo`、`providers.openai_compatible` 不再为了类型标注导入 `myagent.agent.context.Message`。
+
+本轮发现：本地 `myagent.json` 包含真实 provider/MCP key，但该文件未被 Git 跟踪，并且已在 `.gitignore` 中忽略。后续不能提交该文件。
+
+本轮验证：
+
+```text
+python -m json.tool myagent.example.json
+python -m pytest tests/test_llm_provider.py tests/test_mcp_config.py
+python -m pytest
+```
+
+结果：
+
+```text
+15 passed
+80 passed, 1 skipped
+```
+
 最近一组完成的变更主题是 SubAgent 和开发规范沉淀。
 
 新增/修改内容：
@@ -132,10 +156,11 @@ python -m myagent
 当前最直接的下一步是：
 
 1. 按 `docs/PHASE2_REVIEW_PLAN.md` 继续第二版模块复盘。
-2. Project Docs / Roadmap 已完成第一轮校准，下一步建议进入 Config 复盘。
-3. Config 复盘重点看 `myagent.json`、`myagent.example.json`、环境变量覆盖逻辑，以及 provider、MCP、SubAgent profile 是否都应该走配置文件。
-4. Config 之后建议按 CLI Channel、Memory、Skills、SubAgent 继续推进。
-5. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
+2. Project Docs / Roadmap 已完成第一轮校准。
+3. Config 已完成第一轮文档复盘；暂不做代码改动。
+4. 下一步建议进入 CLI Channel 体验复盘，重点看状态展示、错误提示、MCP 连接失败提示、SubAgent 内部工具调用是否展示。
+5. CLI Channel 之后建议按 Memory、Skills、SubAgent 继续推进。
+6. 如果用户继续测试 SubAgent 并发现问题，先回到 `docs/modules/SUBAGENT.md` 校准设计，再修代码。
 
 可选后续方向：
 

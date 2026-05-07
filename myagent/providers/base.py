@@ -1,9 +1,9 @@
 """Common provider interface."""
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
-from myagent.agent.context import Message
+Message = dict[str, Any]
 
 
 @dataclass(frozen=True, slots=True)

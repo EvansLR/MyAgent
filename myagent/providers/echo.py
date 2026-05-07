@@ -1,7 +1,6 @@
 """A no-network provider used to validate the runtime flow."""
 
-from myagent.agent.context import Message
-from myagent.providers.base import ProviderResponse
+from myagent.providers.base import Message, ProviderResponse
 
 
 class EchoProvider:

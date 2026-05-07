@@ -5,9 +5,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from myagent.agent.context import Message
 from myagent.config import Settings
-from myagent.providers.base import ProviderResponse, ToolCall
+from myagent.providers.base import Message, ProviderResponse, ToolCall
 
 
 class OpenAICompatibleProvider:
