@@ -355,3 +355,233 @@ tests/test_context_builder.py
 - Trace 记录 context stats
 - 持久化 session history
 - Token-aware truncation
+
+## Phase 2 Review
+
+ContextBuilder 第二轮不应只是继续追加 section，而应升级为更明确的 context composer。
+
+详细外部调研见：
+
+```text
+docs/modules/CONTEXT_BUILDER_PHASE2_RESEARCH.md
+```
+
+本轮参考对象包括：
+
+- OpenClaw Context
+- OpenAI Agents SDK Sessions / context engineering cookbook
+- Claude Code context window / compaction
+- LangGraph short-term / long-term memory
+
+### 当前实现状态
+
+当前 `ContextBuilder` 已经接入：
+
+- `Identity`
+- `Core Memory`
+- `Available Skills`
+- conversation history
+- current user message
+
+当前 `AgentLoop` 会记录：
+
+```text
+context_built
+  message_count
+  roles
+```
+
+### 当前问题
+
+- 没有 context size / token estimate。
+- 没有 section-level report。
+- 没有 history selection policy。
+- 没有 budget 对象。
+- 没有区分 protected / high / medium / low / ephemeral context。
+- 没有记录 tool schema context cost。
+- 没有为后续 compaction / memory flush 留明确 hook。
+
+### Phase 2 目标
+
+第二轮建议目标：
+
+```text
+从“简单拼接 system prompt”
+升级为
+“可观测、可分层、可预算、可扩展的 context composer”
+```
+
+最小实现建议：
+
+1. 新增 `ContextBudget`。
+2. 新增 `ContextAssemblyReport`。
+3. `ContextSection` 增加 `tier` 和 `source`。
+4. 新增 `build_messages_with_report(...)`，保留旧 `build_messages(...)` 兼容调用。
+5. 实现 deterministic history selection，例如默认只保留最近 20 条 history message。
+6. AgentLoop 把 report 写入 `context_built` trace。
+7. tests 覆盖 section report、history trimming、Core Memory tier、trace 统计。
+
+### 暂不实现
+
+本轮暂不直接实现：
+
+- 模型摘要式 compaction。
+- pre-compaction memory flush。
+- `/context` CLI 命令。
+- 精确 tokenizer。
+- persistent SessionManager。
+
+这些不是放弃，而是等 ContextBuilder v2 的 report / budget / history selection 稳定后，再按正常节奏接入。
+
+### Deferred Until Real Trigger Points
+
+以下能力必须保留在路线图里，但不在当前 ContextBuilder v2A 直接实现：
+
+```text
+context compaction
+pre-compaction memory flush
+tool output pruning
+/context inspect
+summary persistence
+```
+
+暂缓原因不是优先级低，而是它们需要几个 pipeline 先出现真实触发点：
+
+- Skills v2：skill 摘要、active skill、完整 skill 内容加载会带来新的 context 成本。
+- Tools pipeline：tool result 和 tool schema 需要进入 context report，才能判断裁剪顺序。
+- SubAgent pipeline：子 Agent 内部上下文、返回 summary、trace tree 会影响主上下文设计。
+- Session history：history 规模变大后，才需要摘要式 compaction 和持久化 summary。
+- Memory pipeline：pre-compaction flush 需要和 daily / DREAMS / MemoryExtractor 的写入策略对齐。
+
+触发条件建议：
+
+```text
+当出现以下任一情况，再进入 compaction 设计：
+- history trimming 开始丢失用户仍然关心的信息
+- tool result 明显污染或撑爆 context
+- active skill 内容开始占用大量 prompt
+- SubAgent result 需要长期保留但不适合塞进主 history
+- ContextAssemblyReport 显示 prompt 预算经常接近上限
+```
+
+到那时再设计：
+
+```text
+before_compaction:
+  optional memory flush
+  tool output pruning
+  transcript summary
+  summary injection
+  trace compaction report
+```
+
+### 和 Memory 的边界
+
+Memory v2 已经规定：
+
+```text
+MEMORY.md 的 Core Memory / User Profile / Active Goals
+  -> 默认注入 context
+
+daily / DREAMS / searchable memory
+  -> 不默认注入
+  -> 通过 memory tools 按需查询
+```
+
+ContextBuilder v2 应保持这个边界，并把 Core Memory 标为高优先级 section。
+
+### 推荐下一步
+
+下一步先实现 ContextBuilder v2 的 report 和 history selection，不急着做压缩：
+
+```text
+ContextBudget
+ContextSection tier/source
+ContextAssemblyReport
+build_messages_with_report
+AgentLoop trace 增强
+focused tests
+```
+
+### Phase 2A Implementation Notes
+
+本阶段已经落地 ContextBuilder v2 的最小可观测 composer。
+
+新增能力：
+
+```text
+ContextTier
+  protected / high / medium / low / ephemeral
+
+ContextBudget
+  max_prompt_tokens
+  max_history_messages
+  chars_per_token
+
+ContextAssemblyReport
+  total_chars
+  estimated_tokens
+  message_count
+  sections
+  history
+  warnings
+
+build_messages_with_report(...)
+  返回 messages 和 report
+```
+
+当前默认 history 策略：
+
+```text
+max_history_messages = 20
+```
+
+如果 history 超过上限，只保留最近消息，并在 report 中记录：
+
+```text
+history.total_messages
+history.included_messages
+history.dropped_messages
+warnings: ["history_trimmed"]
+```
+
+`AgentLoop` 已改为调用 `build_messages_with_report(...)`，并把 report 写入 `context_built` trace：
+
+```text
+context_built:
+  message_count
+  roles
+  context:
+    total_chars
+    estimated_tokens
+    sections
+    history
+    warnings
+```
+
+旧 `MemoryRecall` 主路径已彻底移除：
+
+- `ContextBuilder` 不再接受 `memory_recall`。
+- `AgentLoop` 不再记录旧 `memory_recalled`。
+- `myagent/memory/recall.py` 和 `tests/test_memory_recall.py` 已删除。
+
+当前 focused verification：
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_agent_trace.py
+9 passed
+```
+
+全量验证：
+
+```text
+python -m pytest
+88 passed, 1 skipped
+```
+
+后续不要忘记：
+
+```text
+ContextBuilder v2A 做的是 report / tier / budget / history selection。
+Compaction 不是取消，而是等 Skills / Tools / SubAgent / Session pipeline 形成真实压力后再做。
+```

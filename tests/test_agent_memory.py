@@ -4,7 +4,7 @@ import shutil
 
 from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus
-from myagent.memory import JsonlMemoryStore, MarkdownMemoryStore
+from myagent.memory import MarkdownMemoryStore
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.tracing import JsonlTraceStore
 
@@ -125,23 +125,3 @@ async def test_agent_loop_runs_post_turn_memory_extractor() -> None:
     assert "用户偏好先写设计文档再实现代码。" in daily_text
     assert "memory_candidates_saved" in [event["event"] for event in events]
 
-
-def test_agent_loop_default_context_does_not_recall_legacy_jsonl_memory() -> None:
-    root = make_workspace("legacy-jsonl")
-    legacy_path = root / "facts.jsonl"
-    legacy_path.write_text(
-        '{"id":"legacy","ts":"2026-05-07T00:00:00","content":"用户正在准备 Java 后端面试。",'
-        '"source":"user_explicit","session_key":"cli:default","metadata":{}}\n',
-        encoding="utf-8",
-    )
-    bus = MessageBus()
-    agent = AgentLoop(
-        bus,
-        provider=CapturingProvider(),
-        memory_store=JsonlMemoryStore(legacy_path),
-        markdown_memory_store=MarkdownMemoryStore(root / "memory"),
-    )
-
-    messages = agent.context_builder.build_messages(make_message("你知道我在准备什么吗？"))
-
-    assert "用户正在准备 Java 后端面试。" not in messages[0]["content"]

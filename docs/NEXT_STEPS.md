@@ -265,7 +265,7 @@ Memory v2 Phase 2A 已经开始实现，并完成最小闭环：
 
 已修复：
 
-- `AgentLoop` 默认不再注入旧 JSONL recall，避免旧测试记忆污染上下文。
+- `AgentLoop` 和 `ContextBuilder` 已移除旧 JSONL recall 主路径，避免旧测试记忆污染上下文。
 - `memory_propose_long_term` 默认会把用户明确要求记住的长期资料写入 `MEMORY.md`。
 - 自动 `MemoryExtractor` 仍然只写 proposal，不直接污染长期记忆。
 - 新增 `memory_forget(query)`，支持按 id 或主题从 Markdown memory 文件删除记忆。
@@ -292,3 +292,91 @@ python -m pytest
 3. 让用户确认这版 Memory v2 行为。
 4. 用户确认后提交。
 5. 后续再考虑 `/memory` CLI、review/consolidation 命令，以及长期 `MEMORY.md` 的人工晋升流程。
+
+## ContextBuilder Phase 2 Research
+
+Memory v2 已完成提交后，下一步进入 ContextBuilder 第二轮。
+
+用户明确要求：在做 ContextBuilder 拔高前，先查阅成熟开源框架的做法，取长补短，再设计自己的文档。
+
+已新增：
+
+```text
+docs/modules/CONTEXT_BUILDER_PHASE2_RESEARCH.md
+```
+
+已更新：
+
+```text
+docs/modules/CONTEXT_BUILDER.md
+```
+
+调研结论：
+
+- OpenClaw 的 `/context list/detail` 说明 context 必须可观测，应该能看到 section、file、skill、tool schema 的大小贡献。
+- OpenAI Agents SDK 的 sessions 说明 history 存储和本轮输入选择要分开，并支持 trimming / compression。
+- Claude Code 的 context window 说明旧 tool outputs 应优先清理，稳定规则应放在 memory/project files，而不是依赖早期聊天记录。
+- LangGraph 说明 short-term memory 和 long-term memory 应分离，长 history 会引入 stale info、成本和性能问题。
+
+ContextBuilder Phase 2 推荐实现顺序：
+
+1. 新增 `ContextBudget`。
+2. 扩展 `ContextSection`，加入 `tier` 和 `source`。
+3. 新增 `ContextAssemblyReport`。
+4. 新增 `build_messages_with_report(...)`。
+5. 实现 deterministic history selection，先保留最近 N 条。
+6. AgentLoop 把 context report 写入 trace。
+7. 跑 focused context tests 和全量 tests。
+
+当前实现进展：
+
+- 已新增 `ContextTier`、`ContextBudget`、`ContextAssemblyReport`。
+- 已新增 `build_messages_with_report(...)`。
+- 已实现默认最近 20 条 history 的 deterministic selection。
+- `AgentLoop` 已把 context report 写入 `context_built` trace。
+- 旧 `MemoryRecall` 主路径和文件已删除：`myagent/memory/recall.py`、`tests/test_memory_recall.py`。
+- Focused tests 已通过：
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_agent_trace.py
+9 passed
+```
+
+全量验证：
+
+```text
+python -m pytest
+88 passed, 1 skipped
+```
+
+明确记录一个重要暂缓项：
+
+```text
+Context compaction 暂不在 ContextBuilder v2A 直接实现。
+```
+
+这不是取消。它需要等后面的 pipeline 出现真实触发点后再做：
+
+- Skills v2：区分 skill summary / active skill / full skill content 后，会知道 skills 对 context 的真实压力。
+- Tools pipeline：tool result、tool schema、tool output pruning 需要一起设计。
+- SubAgent pipeline：子 Agent summary、trace tree、主上下文回灌方式需要先明确。
+- Session history：当 history selection 开始丢失重要信息，再做 summary compaction 才有实际问题可解。
+- Memory pipeline：pre-compaction memory flush 要和 daily / DREAMS / MemoryExtractor 对齐。
+
+后续必须回来的 ContextBuilder 高级项：
+
+```text
+context compaction
+pre-compaction memory flush
+tool output pruning
+/context inspect
+summary persistence
+```
+
+建议触发条件：
+
+```text
+ContextAssemblyReport 显示上下文经常接近预算上限，
+或 Skills / Tools / SubAgent 产生明显 prompt 膨胀时，
+再进入 ContextBuilder compaction 设计。
+```

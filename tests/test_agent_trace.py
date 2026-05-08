@@ -56,6 +56,11 @@ async def test_agent_loop_records_basic_trace_events() -> None:
         "final_answer",
     ]
     assert events[0]["data"]["content"] == "hello"
+    context = events[1]["data"]["context"]
+    assert context["message_count"] == 2
+    assert context["history"]["included_messages"] == 0
+    assert context["sections"][0]["name"] == "Identity"
+    assert context["sections"][0]["tier"] == "protected"
     assert events[-1]["data"]["content_preview"] == "Echo: hello"
 
 

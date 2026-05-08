@@ -1134,6 +1134,22 @@ python -m pytest
 
 本轮已经完成 Memory v2 的最小闭环实现，目标是让 MyAgent 从“关键词触发 JSONL 记忆”升级到“个人助理式 Markdown memory workspace”。
 
+重要更新：
+
+```text
+旧 MemoryRecall / JSONL 关键词召回已经彻底退出主链路。
+```
+
+当前设计中：
+
+- `MEMORY.md` 的 Core Memory / User Profile / Active Goals 默认进入 ContextBuilder。
+- `daily/` 和 `DREAMS.md` 不默认进入上下文。
+- 额外记忆只能通过 `memory_search` / `memory_get` 工具按需查询。
+- 遗忘通过 `memory_forget` 执行。
+- `myagent/memory/recall.py` 和 `tests/test_memory_recall.py` 已删除。
+
+文档中早期关于 `MemoryRecall`、`memory_recalled`、`recall_with_scores` 的内容只代表第一阶段历史设计，不再代表当前主链路。
+
 新增文件：
 
 ```text

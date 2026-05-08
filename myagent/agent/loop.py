@@ -94,18 +94,11 @@ class AgentLoop:
             },
         )
         history = self._history_for(inbound.session_key)
-        messages = self.context_builder.build_messages(inbound, history)
-        recalled_memories = self.context_builder.recall_memory(inbound.content)
-        if recalled_memories:
-            self._trace(
-                inbound.session_key,
-                turn_id,
-                "memory_recalled",
-                {
-                    "memory_ids": [memory.id for memory in recalled_memories],
-                    "count": len(recalled_memories),
-                },
-            )
+        messages, context_report = self.context_builder.build_messages_with_report(
+            inbound,
+            history,
+        )
+        self.context_builder.last_report = context_report
         self._trace(
             inbound.session_key,
             turn_id,
@@ -113,6 +106,7 @@ class AgentLoop:
             {
                 "message_count": len(messages),
                 "roles": [message.get("role") for message in messages],
+                "context": context_report.to_dict(),
             },
         )
         try:

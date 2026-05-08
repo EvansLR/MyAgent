@@ -1,9 +1,8 @@
 from pathlib import Path
 import shutil
 
-from myagent.agent import ContextBuilder
+from myagent.agent import ContextBudget, ContextBuilder
 from myagent.bus import InboundMessage
-from myagent.memory import JsonlMemoryStore, MemoryRecall
 from myagent.skills import SkillRegistry
 from myagent.skills.entries import SkillEntry
 
@@ -51,20 +50,6 @@ def test_context_builder_builds_messages_with_history() -> None:
     ]
 
 
-def test_context_builder_includes_recalled_memory() -> None:
-    store = JsonlMemoryStore(make_workspace("memory") / "facts.jsonl")
-    store.add("我正在准备 Java 后端面试。", "cli:default")
-    builder = ContextBuilder(
-        identity="Test identity.",
-        memory_recall=MemoryRecall(store),
-    )
-
-    messages = builder.build_messages(make_message("Java 面试怎么准备？"))
-
-    assert "# Memory" in messages[0]["content"]
-    assert "我正在准备 Java 后端面试。" in messages[0]["content"]
-
-
 def test_context_builder_includes_core_memory() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
@@ -75,6 +60,50 @@ def test_context_builder_includes_core_memory() -> None:
 
     assert "# Core Memory" in messages[0]["content"]
     assert "用户偏好文档优先。" in messages[0]["content"]
+
+
+def test_context_builder_reports_sections_and_core_memory_tier() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        core_memory_provider=lambda: "## User Profile\n\n- 用户名字是 lin。",
+    )
+
+    messages, report = builder.build_messages_with_report(make_message("hello"))
+
+    assert messages[0]["role"] == "system"
+    sections = {section.name: section for section in report.sections}
+    assert sections["Identity"].tier == "protected"
+    assert sections["Identity"].source == "identity"
+    assert sections["Core Memory"].tier == "high"
+    assert sections["Core Memory"].source == "memory:core"
+    assert report.total_chars > 0
+    assert report.estimated_tokens > 0
+
+
+def test_context_builder_trims_history_by_budget() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        budget=ContextBudget(max_history_messages=2),
+    )
+    history = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "second"},
+        {"role": "user", "content": "third"},
+        {"role": "assistant", "content": "fourth"},
+    ]
+
+    messages, report = builder.build_messages_with_report(make_message("fifth"), history)
+
+    assert messages == [
+        {"role": "system", "content": "# Identity\n\nTest identity."},
+        {"role": "user", "content": "third"},
+        {"role": "assistant", "content": "fourth"},
+        {"role": "user", "content": "fifth"},
+    ]
+    assert report.history.total_messages == 4
+    assert report.history.included_messages == 2
+    assert report.history.dropped_messages == 2
+    assert report.warnings == ["history_trimmed"]
 
 
 def test_context_builder_includes_available_skills() -> None:
