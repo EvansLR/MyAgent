@@ -452,6 +452,157 @@ Full SKILL.md lazy loading
 
 这会是 Skills 模块从“能力列表提示”升级为“可激活能力机制”的关键一步。
 
+## Phase 2 Research
+
+第二轮参考了成熟 Agent / Coding Agent 的能力加载机制：
+
+- Claude Code / Agent Skills 强调 progressive disclosure：先向模型暴露 skill metadata，完整说明按需加载。
+- Claude Code skills 使用 `SKILL.md`，可带 frontmatter，例如 `name`、`description`、`allowed-tools`。
+- Codex / AGENTS.md 的经验说明：稳定规则应放入本地可读文件，而不是依赖早期对话。
+- OpenClaw 的 context 经验说明：默认 context 应保持轻量，可通过工具读取更多 workspace / skill 内容。
+
+可采纳结论：
+
+```text
+Skills v2 不应该把所有 SKILL.md 全文塞进 system prompt。
+默认注入轻量 skill summary。
+当模型判断需要完整流程时，通过显式工具加载完整 skill。
+```
+
+## Phase 2A Implementation Notes
+
+本阶段已经把 Skills 从“摘要注入”升级为“摘要注入 + 按需加载全文”的最小闭环。
+
+新增/修改能力：
+
+```text
+SkillEntry.allowed_tools
+SkillRegistry.get(skill_id)
+SkillRegistry.read_skill(skill_id)
+skill_get(skill_id)
+```
+
+### Progressive Disclosure
+
+`# Available Skills` 仍然只注入轻量摘要：
+
+```text
+- code-review
+  Name: code-review
+  Description: Review code changes...
+  Path: skills/code-review/SKILL.md
+  Allowed Tools: read_file, list_dir
+  Full Instructions: call skill_get with this skill id when needed.
+```
+
+完整 `SKILL.md` 不默认进入 context。
+
+当模型需要完整 skill 工作流时，应调用：
+
+```text
+skill_get(skill_id="code-review")
+```
+
+这会返回：
+
+```text
+Skill metadata
+Allowed tools
+Full SKILL.md content
+```
+
+### AgentLoop 接入
+
+当 `SkillRegistry` 中存在 skill 时，`AgentLoop` 默认注册：
+
+```text
+skill_get
+```
+
+这样 skill 全文加载变成可观测工具调用，而不是隐藏 prompt 注入。
+
+### 当前边界
+
+当前还没有实现：
+
+- 自动 SkillSelector
+- 多 skill 冲突处理
+- active skill section 持久化
+- allowed-tools 权限强制
+- skill marketplace
+- skill 热加载
+
+这些等 Skills pipeline 继续变复杂后再做。
+
+### 测试
+
+新增/更新测试：
+
+```text
+tests/test_skill_tools.py
+tests/test_skills.py
+tests/test_agent_skills.py
+```
+
+覆盖内容：
+
+- frontmatter 解析 `allowed-tools`
+- Available Skills 提示使用 `skill_get`
+- `skill_get` 返回完整 `SKILL.md`
+- AgentLoop 在存在 skill 时注册 `skill_get`
+
+验证结果：
+
+```text
+python -m pytest
+90 passed, 1 skipped
+```
+
+### Imported Skills For Local Testing
+
+为了测试 `skill_get` 和 progressive disclosure，本地新增了 5 个公开示例 skill。
+
+来源：
+
+```text
+https://github.com/anthropics/skills
+commit: d211d437443a7b2496a3dad9575e7dddd724c585
+```
+
+新增目录：
+
+```text
+skills/doc-coauthoring/
+skills/frontend-design/
+skills/mcp-builder/
+skills/skill-creator/
+skills/webapp-testing/
+```
+
+它们用于覆盖不同触发场景：
+
+- `doc-coauthoring`：写文档、技术方案、proposal。
+- `frontend-design`：前端页面、组件、UI 美化。
+- `mcp-builder`：设计和实现 MCP server。
+- `skill-creator`：创建、优化、评测 skill。
+- `webapp-testing`：用 Playwright 测试本地 web app。
+
+本地触发示例：
+
+```text
+请先加载 webapp-testing skill，然后告诉我怎么测试本地前端页面。
+```
+
+```text
+请使用 mcp-builder skill，帮我设计一个 GitHub issue 管理 MCP server。
+```
+
+如果触发成功，CLI 应显示类似：
+
+```text
+正在调用工具：skill_get skill_id=mcp-builder
+```
+
 ## 第一阶段实现记录
 
 本阶段已经完成 Skills 第一版：扫描本地 skill 摘要并注入 ContextBuilder。

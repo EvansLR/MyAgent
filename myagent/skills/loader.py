@@ -27,11 +27,13 @@ class SkillLoader:
         skill_id = skill_path.parent.name
         name = metadata.get("name") or _first_heading(body) or skill_id
         description = metadata.get("description") or _description_section(body) or _fallback_summary(body)
+        allowed_tools = _parse_allowed_tools(metadata.get("allowed-tools", ""))
         return SkillEntry(
             id=skill_id,
             name=name,
             description=description,
             path=skill_path,
+            allowed_tools=allowed_tools,
         )
 
 
@@ -54,9 +56,16 @@ def _parse_frontmatter(text: str) -> dict[str, str]:
         key, value = line.split(":", 1)
         key = key.strip()
         value = value.strip().strip("\"'")
-        if key in {"name", "description"} and value:
+        if key in {"name", "description", "allowed-tools"} and value:
             metadata[key] = value
     return metadata
+
+
+def _parse_allowed_tools(value: str) -> tuple[str, ...]:
+    """Parse a comma-separated allowed-tools metadata value."""
+    if not value:
+        return ()
+    return tuple(tool.strip() for tool in value.split(",") if tool.strip())
 
 
 def _first_heading(text: str) -> str | None:

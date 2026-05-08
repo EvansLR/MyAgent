@@ -1,4 +1,4 @@
-"""Read-only filesystem tools."""
+"""Workspace-scoped filesystem tools."""
 
 from pathlib import Path
 from typing import Any
@@ -34,7 +34,11 @@ class FilesystemTool(Tool):
         try:
             resolved.relative_to(self.workspace)
         except ValueError as exc:
-            raise PermissionError(f"Path is outside workspace: {path}") from exc
+            raise PermissionError(
+                f"Path is outside workspace: {path}. "
+                f"Workspace root: {self.workspace}. "
+                "Use a relative path such as '.' unless the user provided an explicit in-workspace path."
+            ) from exc
         return resolved
 
 
@@ -47,14 +51,23 @@ class ListDirTool(FilesystemTool):
 
     @property
     def description(self) -> str:
-        return "List directory contents inside the workspace."
+        return (
+            "List directory contents inside the current workspace. "
+            "Use relative paths such as '.'; do not invent absolute paths."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Directory path to list."},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Directory path inside the workspace. Use '.' for the workspace root. "
+                        "Absolute paths must already be inside the workspace."
+                    ),
+                },
                 "recursive": {"type": "boolean", "description": "Whether to list recursively."},
                 "max_entries": {
                     "type": "integer",
@@ -75,7 +88,10 @@ class ListDirTool(FilesystemTool):
         try:
             directory = self.resolve_path(path)
             if not directory.exists():
-                return f"Error: Directory not found: {path}"
+                return (
+                    f"Error: Directory not found: {path}. "
+                    "Use path='.' to inspect the workspace root."
+                )
             if not directory.is_dir():
                 return f"Error: Not a directory: {path}"
 
@@ -119,14 +135,23 @@ class ReadFileTool(FilesystemTool):
 
     @property
     def description(self) -> str:
-        return "Read a UTF-8 text file inside the workspace with line numbers."
+        return (
+            "Read a UTF-8 text file inside the current workspace with line numbers. "
+            "Use relative paths; do not invent absolute paths."
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "File path to read."},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "File path inside the workspace. Prefer relative paths. "
+                        "Absolute paths must already be inside the workspace."
+                    ),
+                },
                 "offset": {
                     "type": "integer",
                     "description": "1-based line number to start at.",
@@ -151,7 +176,10 @@ class ReadFileTool(FilesystemTool):
         try:
             file_path = self.resolve_path(path)
             if not file_path.exists():
-                return f"Error: File not found: {path}"
+                return (
+                    f"Error: File not found: {path}. "
+                    "Use list_dir path='.' to inspect the workspace root first."
+                )
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
 
@@ -170,5 +198,68 @@ class ReadFileTool(FilesystemTool):
             else:
                 result += f"\n\n(End of file - {len(lines)} lines total)"
             return result
+        except PermissionError as exc:
+            return f"Error: {exc}"
+
+
+class WriteFileTool(FilesystemTool):
+    """Write a UTF-8 text file inside the workspace."""
+
+    @property
+    def name(self) -> str:
+        return "write_file"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Write UTF-8 text content to a file inside the current workspace. "
+            "Use relative paths; do not invent absolute paths."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "File path inside the workspace. Prefer relative paths. "
+                        "Parent directories will be created when needed."
+                    ),
+                },
+                "content": {
+                    "type": "string",
+                    "description": "UTF-8 text content to write.",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Whether to replace an existing file. Defaults to false.",
+                },
+            },
+            "required": ["path", "content"],
+        }
+
+    async def execute(
+        self,
+        path: str,
+        content: str,
+        overwrite: bool = False,
+        **_: Any,
+    ) -> str:
+        try:
+            file_path = self.resolve_path(path)
+            if file_path.exists() and file_path.is_dir():
+                return f"Error: Not a file: {path}"
+            if file_path.exists() and not overwrite:
+                return (
+                    f"Error: File already exists: {path}. "
+                    "Call write_file with overwrite=true if replacing it is intended."
+                )
+
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8")
+            relative = file_path.relative_to(self.workspace)
+            return f"Wrote {len(content)} characters to {relative}."
         except PermissionError as exc:
             return f"Error: {exc}"

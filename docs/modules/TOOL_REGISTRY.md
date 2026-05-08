@@ -765,3 +765,50 @@ MyAgent: 目前已经完成了这些模块：...
 python -m pytest
 50 passed
 ```
+
+## Write File Tool Implementation Note
+
+本地测试发现：当用户要求“设计一个前端 HTML 网页，保存下来”时，Agent 回复“无法直接写文件到磁盘”。
+
+排查结论：
+
+- 不是模型没有理解“保存下来”。
+- 默认工具 registry 只有 `list_dir` 和 `read_file`。
+- MyAgent 当时确实没有提供 `write_file` 工具，所以模型没有可调用的保存能力。
+
+已修复：
+
+- 新增 `WriteFileTool`。
+- `create_default_registry(...)` 默认注册：
+  - `list_dir`
+  - `read_file`
+  - `write_file`
+- `write_file` 只能写入当前 workspace 内路径。
+- 父目录不存在时会自动创建。
+- 如果目标文件已存在，默认拒绝覆盖；只有传 `overwrite=true` 才会替换。
+- `delegate_task` 子 Agent 仍然只继承 `list_dir` / `read_file`，保持子 Agent 默认只读。
+
+建议本地验证：
+
+```text
+python -m myagent
+```
+
+然后输入：
+
+```text
+帮我设计一个可以用于社团宣传的前端html网页，保存为 club-promotion.html
+```
+
+预期应该看到类似：
+
+```text
+正在调用工具：write_file path=club-promotion.html ...
+```
+
+自动测试：
+
+```text
+python -m pytest tests/test_filesystem_tools.py tests/test_agent_loop.py tests/test_agent_trace.py tests/test_subagent.py
+25 passed
+```

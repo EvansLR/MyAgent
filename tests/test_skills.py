@@ -35,6 +35,7 @@ def test_skill_loader_reads_frontmatter_metadata() -> None:
                 "---",
                 "name: code-review",
                 "description: Review code changes.",
+                "allowed-tools: read_file, list_dir",
                 "---",
                 "",
                 "# Code Review",
@@ -47,6 +48,7 @@ def test_skill_loader_reads_frontmatter_metadata() -> None:
     assert skills[0].id == "code-review"
     assert skills[0].name == "code-review"
     assert skills[0].description == "Review code changes."
+    assert skills[0].allowed_tools == ("read_file", "list_dir")
     assert skills[0].path.as_posix().endswith("code-review/SKILL.md")
 
 
@@ -97,3 +99,4 @@ def test_skill_registry_formats_skills_for_context() -> None:
     assert "Name: commit-message" in content
     assert "Description: Generate concise Git commit messages." in content
     assert "Path:" in content
+    assert "Full Instructions: call skill_get" in content

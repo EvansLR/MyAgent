@@ -12,3 +12,4 @@ class SkillEntry:
     name: str
     description: str
     path: Path
+    allowed_tools: tuple[str, ...] = ()

@@ -2,10 +2,11 @@
 
 import asyncio
 import json
+from pathlib import Path
 from uuid import uuid4
 
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
-from myagent.agent.context import ContextBuilder, Message
+from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
 from myagent.agent.subagent import DelegateTaskTool
 from myagent.memory import JsonlMemoryStore, MarkdownMemoryStore, MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
@@ -17,6 +18,7 @@ from myagent.tools import (
     MemoryGetTool,
     MemoryProposeLongTermTool,
     MemorySearchTool,
+    SkillGetTool,
     ToolRegistry,
     create_default_registry,
 )
@@ -39,6 +41,7 @@ class AgentLoop:
         markdown_memory_store: MarkdownMemoryStore | None = None,
         memory_extractor: MemoryExtractor | None = None,
         skill_registry: SkillRegistry | None = None,
+        workspace_root: Path | str | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         self.bus = bus
@@ -51,6 +54,7 @@ class AgentLoop:
         )
         self.skill_registry = skill_registry or SkillRegistry.from_directory()
         self.context_builder = context_builder or ContextBuilder(
+            runtime_environment=format_runtime_environment(workspace_root),
             core_memory_provider=self.markdown_memory_store.read_core_memory,
             skill_registry=self.skill_registry,
         )
@@ -294,6 +298,8 @@ class AgentLoop:
         for tool in tools:
             if not self.tool_registry.has(tool.name):
                 self.tool_registry.register(tool)
+        if self.skill_registry.list_skills() and not self.tool_registry.has("skill_get"):
+            self.tool_registry.register(SkillGetTool(self.skill_registry))
 
     async def _extract_memory_after_turn(
         self,

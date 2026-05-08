@@ -380,3 +380,201 @@ ContextAssemblyReport 显示上下文经常接近预算上限，
 或 Skills / Tools / SubAgent 产生明显 prompt 膨胀时，
 再进入 ContextBuilder compaction 设计。
 ```
+
+## Skills Phase 2A
+
+ContextBuilder v2A 提交后，进入 Skills 第二轮。
+
+当前目标：
+
+```text
+让 Skills 从“摘要注入”
+升级为
+“摘要注入 + 按需加载完整 skill”
+```
+
+已实现：
+
+- `SkillEntry.allowed_tools`
+- `SkillRegistry.get(skill_id)`
+- `SkillRegistry.read_skill(skill_id)`
+- `skill_get(skill_id)` tool
+- `AgentLoop` 在存在 skills 时自动注册 `skill_get`
+- `# Available Skills` 中提示模型需要完整说明时调用 `skill_get`
+- 已从 Anthropic public skills repo 导入 5 个本地测试 skill：
+  - `doc-coauthoring`
+  - `frontend-design`
+  - `mcp-builder`
+  - `skill-creator`
+  - `webapp-testing`
+
+当前边界：
+
+- 不自动把所有 `SKILL.md` 全文塞进 context。
+- 不做自动 SkillSelector。
+- 不强制 allowed-tools 权限。
+- 不做 skill marketplace / 热加载。
+
+下一步验证：
+
+```text
+python -m pytest tests/test_skills.py tests/test_skill_tools.py tests/test_agent_skills.py tests/test_context_builder.py tests/test_agent_loop.py
+```
+
+验证结果：
+
+```text
+python -m pytest
+90 passed, 1 skipped
+```
+
+本地手动触发建议：
+
+```text
+请先加载 webapp-testing skill，然后告诉我怎么测试本地前端页面。
+```
+
+```text
+请使用 mcp-builder skill，帮我设计一个 GitHub issue 管理 MCP server。
+```
+
+预期 CLI 出现：
+
+```text
+正在调用工具：skill_get skill_id=...
+```
+
+## Required Follow-Up: Runtime Environment Context
+
+本地测试 Skills v2A 时发现一个重要问题：
+
+```text
+用户请求：帮我设计一个可以用于社团宣传的前端html网页
+模型触发 frontend-design skill 后，调用了：
+list_dir path=/Users/liuguanglin/workspace/claude-didi-9527
+```
+
+但当前项目实际运行在：
+
+```text
+Windows
+PowerShell
+E:\ClaudeCode\openSource\MyAgent
+```
+
+结论：ContextBuilder 需要注入基础运行环境信息，否则模型容易脑补 Linux/macOS 路径，影响工具调用。
+
+后续必须改：
+
+```text
+新增 Runtime Environment section
+  OS
+  shell
+  workspace root
+  path style
+  filesystem scope
+  prefer relative paths
+  do not invent absolute paths
+```
+
+建议优先级：高。
+
+原因：这不是体验优化，而是工具调用正确性和安全边界问题。
+
+## Runtime Environment Context Update
+
+已实现 Runtime Environment Context，用来修复本地 Skills 测试时模型调用：
+
+```text
+list_dir path=/Users/liuguanglin/workspace/claude-didi-9527
+```
+
+这类不存在路径的问题。
+
+实际结论：
+
+- 代码没有把 workspace 写死成 `/Users/...`。
+- CLI 文件工具的 workspace 仍来自当前运行目录。
+- 问题来源更像是模型缺少 OS / shell / workspace root 约束后，自己生成了 macOS/Linux 风格绝对路径。
+
+已改动：
+
+- `ContextBuilder` 支持 `runtime_environment` section。
+- `AgentLoop` 默认注入当前运行环境。
+- CLI 会把当前目录作为 workspace root 同步传给工具 registry 和 AgentLoop。
+- `list_dir` / `read_file` 的描述和错误信息强调 workspace 边界、优先使用 `.` 和相对路径。
+
+验证：
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_filesystem_tools.py tests/test_agent_loop.py tests/test_agent_trace.py
+25 passed
+```
+
+## Write File Tool Update
+
+本地测试发现：用户要求“设计前端 HTML 网页，保存下来”时，Agent 回复“无法直接写文件到磁盘”。
+
+排查结论：
+
+- workspace 没有被写死成错误路径。
+- 但默认工具集合确实只有 `list_dir` / `read_file`，没有 `write_file`。
+- 所以模型没有实际保存文件的工具，只能把代码输出给用户。
+
+已修复：
+
+- 新增 `write_file` 工具。
+- 默认 registry 注册 `list_dir`、`read_file`、`write_file`。
+- `write_file` 只允许写 workspace 内文件。
+- 默认不覆盖已有文件，除非传 `overwrite=true`。
+- 子 Agent 仍保持只读工具集合。
+
+下一次 CLI 测试前需要重启：
+
+```text
+python -m myagent
+```
+
+建议测试 prompt：
+
+```text
+帮我设计一个可以用于社团宣传的前端html网页，保存为 club-promotion.html
+```
+
+预期工具调用：
+
+```text
+write_file path=club-promotion.html
+```
+
+## Session Handoff: Skills And File Tools
+
+本轮已完成并通过本地验证：
+
+- Skills v2A：从“摘要注入”升级为“摘要注入 + `skill_get` 按需加载完整 skill”。
+- 本地 skills：已导入 `doc-coauthoring`、`frontend-design`、`mcp-builder`、`skill-creator`、`webapp-testing` 用于测试。
+- Runtime Environment：ContextBuilder 已注入 OS / shell / workspace root / path style，避免模型继续编造 `/Users/...` 这类错误绝对路径。
+- File tools：默认工具从只读的 `list_dir` / `read_file` 扩展为 `list_dir` / `read_file` / `write_file`。
+- 本地 CLI 已验证：让 Agent 设计前端 HTML 并保存，能够成功写入文件。
+
+当前验证结果：
+
+```text
+python -m pytest
+95 passed, 1 skipped
+```
+
+本地测试产物：
+
+```text
+public/mymusic-club.html
+```
+
+这是用户本地手动测试生成的页面，不作为项目代码提交。
+
+明天建议继续：
+
+1. 先从 `git status` 和本文件恢复上下文。
+2. 继续本地 CLI 体验测试：重点看 `skill_get`、`write_file`、Windows workspace 提示是否稳定。
+3. 如果稳定，进入下一块：让 Agent 更高效地完成“创建/修改文件型任务”，包括任务规划、写前检查、写后简短确认。
+4. 后续再考虑更强的 Skills pipeline：active skill 记录、skill 使用 trace、allowed-tools 权限提示是否要变成真正限制。

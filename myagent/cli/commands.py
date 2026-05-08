@@ -3,6 +3,7 @@
 import asyncio
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 from rich.console import Console
@@ -162,9 +163,15 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
     """Run CLI + MessageBus + AgentLoop with the configured provider."""
     settings = settings or Settings.from_sources(config_path)
     bus = MessageBus()
-    registry = create_default_registry()
+    workspace_root = Path.cwd()
+    registry = create_default_registry(workspace_root)
     mcp_clients = await _connect_mcp_servers(settings, registry)
-    agent = AgentLoop(bus, provider=create_provider(settings), tool_registry=registry)
+    agent = AgentLoop(
+        bus,
+        provider=create_provider(settings),
+        tool_registry=registry,
+        workspace_root=workspace_root,
+    )
     agent_task = asyncio.create_task(agent.run_until_stopped())
     try:
         await run_chat(bus)

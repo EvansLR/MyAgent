@@ -2,6 +2,9 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
+import os
+from pathlib import Path
+import platform
 from typing import Any, Callable
 
 from myagent.bus import InboundMessage
@@ -110,6 +113,7 @@ class ContextBuilder:
     def __init__(
         self,
         identity: str | None = None,
+        runtime_environment: str | None = None,
         core_memory_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
         budget: ContextBudget | None = None,
@@ -119,6 +123,7 @@ class ContextBuilder:
             "and interview practice. Be concise, helpful, and honest about "
             "current limitations."
         )
+        self.runtime_environment = runtime_environment
         self.core_memory_provider = core_memory_provider
         self.skill_registry = skill_registry
         self.budget = budget or ContextBudget()
@@ -135,6 +140,16 @@ class ContextBuilder:
                 source="identity",
             ),
         ]
+        if self.runtime_environment:
+            sections.append(
+                ContextSection(
+                    name="Runtime Environment",
+                    content=self.runtime_environment,
+                    priority=5,
+                    tier=ContextTier.PROTECTED,
+                    source="runtime:environment",
+                )
+            )
         core_memory = self.read_core_memory()
         if core_memory:
             sections.append(
@@ -273,3 +288,31 @@ class ContextBuilder:
 def _estimate_tokens(text: str, chars_per_token: int) -> int:
     divisor = max(chars_per_token, 1)
     return max((len(text) + divisor - 1) // divisor, 0)
+
+
+def format_runtime_environment(workspace_root: Path | str | None = None) -> str:
+    """Return stable runtime facts that help the model call local tools correctly."""
+    root = Path(workspace_root or ".").resolve()
+    os_name = platform.system() or "Unknown"
+    shell = _detect_shell(os_name)
+    path_style = "Windows paths" if os_name == "Windows" else "POSIX paths"
+    return "\n".join(
+        [
+            f"- OS: {os_name}",
+            f"- Shell: {shell}",
+            f"- Workspace root: {root}",
+            f"- Path style: {path_style}",
+            "- Filesystem tools are scoped to the workspace root.",
+            "- Prefer relative paths such as '.' unless the user provides an explicit in-workspace path.",
+            "- Do not invent absolute paths.",
+        ]
+    )
+
+
+def _detect_shell(os_name: str) -> str:
+    if os_name == "Windows":
+        parent = (os.environ.get("PSModulePath") or "").lower()
+        if "powershell" in parent:
+            return "PowerShell"
+        return "Windows shell"
+    return os.environ.get("SHELL") or "Unknown shell"

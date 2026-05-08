@@ -1,7 +1,7 @@
 from pathlib import Path
 import shutil
 
-from myagent.agent import ContextBudget, ContextBuilder
+from myagent.agent import ContextBudget, ContextBuilder, format_runtime_environment
 from myagent.bus import InboundMessage
 from myagent.skills import SkillRegistry
 from myagent.skills.entries import SkillEntry
@@ -48,6 +48,23 @@ def test_context_builder_builds_messages_with_history() -> None:
         {"role": "assistant", "content": "second"},
         {"role": "user", "content": "third"},
     ]
+
+
+def test_context_builder_includes_runtime_environment() -> None:
+    workspace = make_workspace("runtime")
+    builder = ContextBuilder(
+        identity="Test identity.",
+        runtime_environment=format_runtime_environment(workspace),
+    )
+
+    messages, report = builder.build_messages_with_report(make_message("hello"))
+
+    assert "# Runtime Environment" in messages[0]["content"]
+    assert str(workspace.resolve()) in messages[0]["content"]
+    assert "Do not invent absolute paths." in messages[0]["content"]
+    sections = {section.name: section for section in report.sections}
+    assert sections["Runtime Environment"].tier == "protected"
+    assert sections["Runtime Environment"].source == "runtime:environment"
 
 
 def test_context_builder_includes_core_memory() -> None:

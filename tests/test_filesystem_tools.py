@@ -2,7 +2,7 @@ from pathlib import Path
 import shutil
 
 from myagent.tools import create_default_registry
-from myagent.tools.filesystem import ListDirTool, ReadFileTool
+from myagent.tools.filesystem import ListDirTool, ReadFileTool, WriteFileTool
 
 
 def make_workspace(name: str) -> Path:
@@ -70,6 +70,52 @@ async def test_filesystem_tool_blocks_path_escape() -> None:
     result = await tool.execute(str(outside))
 
     assert "outside workspace" in result
+    assert str(workspace.resolve()) in result
+    assert "Use a relative path" in result
+
+
+async def test_write_file_saves_text_inside_workspace() -> None:
+    workspace = make_workspace("write")
+    tool = WriteFileTool(workspace)
+
+    result = await tool.execute("pages/club-promotion.html", "<h1>Hello</h1>")
+
+    assert "Wrote" in result
+    assert (workspace / "pages" / "club-promotion.html").read_text(encoding="utf-8") == "<h1>Hello</h1>"
+
+
+async def test_write_file_requires_overwrite_for_existing_file() -> None:
+    workspace = make_workspace("write-existing")
+    target = workspace / "note.txt"
+    target.write_text("old", encoding="utf-8")
+    tool = WriteFileTool(workspace)
+
+    result = await tool.execute("note.txt", "new")
+
+    assert "already exists" in result
+    assert target.read_text(encoding="utf-8") == "old"
+
+
+async def test_write_file_can_overwrite_existing_file() -> None:
+    workspace = make_workspace("write-overwrite")
+    target = workspace / "note.txt"
+    target.write_text("old", encoding="utf-8")
+    tool = WriteFileTool(workspace)
+
+    result = await tool.execute("note.txt", "new", overwrite=True)
+
+    assert "Wrote" in result
+    assert target.read_text(encoding="utf-8") == "new"
+
+
+async def test_list_dir_missing_path_suggests_workspace_root() -> None:
+    workspace = make_workspace("missing")
+    tool = ListDirTool(workspace)
+
+    result = await tool.execute("does-not-exist")
+
+    assert "Directory not found" in result
+    assert "path='.'" in result
 
 
 async def test_default_registry_includes_read_only_file_tools() -> None:
@@ -78,3 +124,4 @@ async def test_default_registry_includes_read_only_file_tools() -> None:
 
     assert registry.has("list_dir")
     assert registry.has("read_file")
+    assert registry.has("write_file")

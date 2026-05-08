@@ -585,3 +585,68 @@ python -m pytest
 ContextBuilder v2A 做的是 report / tier / budget / history selection。
 Compaction 不是取消，而是等 Skills / Tools / SubAgent / Session pipeline 形成真实压力后再做。
 ```
+
+### Required Follow-Up: Runtime Environment Section
+
+本地测试发现：当用户让 Agent 做前端 HTML 页面时，模型在触发 `frontend-design` skill 后调用了：
+
+```text
+list_dir path=/Users/liuguanglin/workspace/claude-didi-9527
+```
+
+但当前实际运行环境是 Windows / PowerShell / `E:\ClaudeCode\openSource\MyAgent`。
+
+这说明 ContextBuilder 还缺少基础运行环境信息，导致模型可能凭空猜测 macOS/Linux 风格路径。
+
+后续必须新增：
+
+```text
+# Runtime Environment
+
+- OS: Windows
+- Shell: PowerShell
+- Workspace root: E:\ClaudeCode\openSource\MyAgent
+- Path style: Windows paths
+- Prefer relative paths such as "." unless the user gives an explicit path.
+- Filesystem tools are scoped to the workspace root.
+- Do not invent absolute paths.
+```
+
+建议实现：
+
+```text
+ContextBuilder(runtime_environment=...)
+ContextSection(name="Runtime Environment", tier=protected/high, source="runtime:environment")
+```
+
+来源：
+
+- `platform.system()`
+- `Path.cwd()`
+- shell 信息可由 CLI / AgentLoop 传入，或先用配置值。
+
+这是后续优先修复项，因为它直接影响工具调用路径、安全边界和跨平台行为。
+
+### Runtime Environment Implementation Note
+
+已落地：
+
+- `ContextBuilder(runtime_environment=...)` 支持注入运行环境 section。
+- `AgentLoop` 默认通过 `format_runtime_environment(workspace_root)` 注入：
+  - OS
+  - shell
+  - workspace root
+  - path style
+  - filesystem scope
+  - relative path preference
+- CLI 启动时会把 `Path.cwd()` 同时传给 `create_default_registry(...)` 和 `AgentLoop(workspace_root=...)`，确保工具 workspace 与 prompt 里的 workspace 一致。
+- `list_dir` / `read_file` 的工具描述和错误信息已补充 workspace 约束，明确建议优先使用 `.` 和相对路径。
+
+这次修复的重点不是放开文件访问，而是让模型知道正确边界：当前本地 CLI 运行在 Windows workspace 内，不能凭空生成 `/Users/...` 这类 macOS/Linux 绝对路径。
+
+验证：
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_filesystem_tools.py tests/test_agent_loop.py tests/test_agent_trace.py
+25 passed
+```

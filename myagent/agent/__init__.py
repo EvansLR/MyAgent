@@ -8,6 +8,7 @@ from myagent.agent.context import (
     ContextSection,
     ContextSectionReport,
     ContextTier,
+    format_runtime_environment,
 )
 from myagent.agent.loop import AgentLoop
 from myagent.agent.subagent import DelegateTaskTool, SubAgentProfile, SubAgentRunner
@@ -24,4 +25,5 @@ __all__ = [
     "DelegateTaskTool",
     "SubAgentProfile",
     "SubAgentRunner",
+    "format_runtime_environment",
 ]
