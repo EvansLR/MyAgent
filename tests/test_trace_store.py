@@ -3,6 +3,13 @@ from pathlib import Path
 import shutil
 
 from myagent.tracing import JsonlTraceStore
+from myagent.tracing.inspect import (
+    format_trace_events,
+    format_turn_summary,
+    latest_turn_summary,
+    read_trace_events,
+    summarize_turns,
+)
 
 
 def make_workspace(name: str) -> Path:
@@ -40,3 +47,54 @@ def test_jsonl_trace_store_uses_safe_session_filename() -> None:
 
     assert store.path_for_session("cli:session/with spaces").name == "cli_session_with_spaces.jsonl"
     assert (root / "cli_session_with_spaces.jsonl").exists()
+
+
+def test_trace_inspect_summarizes_latest_turn() -> None:
+    root = make_workspace("inspect-latest")
+    store = JsonlTraceStore(root)
+    store.record("cli:default", "turn-1", "user_message", {"content": "hello"})
+    store.record(
+        "cli:default",
+        "turn-1",
+        "turn_completed",
+        {
+            "stop_reason": "final_output",
+            "iterations": 2,
+            "tool_call_count": 1,
+            "tool_error_count": 0,
+            "warning_count": 0,
+        },
+    )
+
+    events = read_trace_events("cli:default", root)
+    summary = latest_turn_summary(events)
+
+    assert summary is not None
+    assert summary.turn_id == "turn-1"
+    assert summary.stop_reason == "final_output"
+    assert summary.iterations == 2
+    assert summary.tool_call_count == 1
+    assert "stop_reason: final_output" in format_turn_summary(summary)
+
+
+def test_trace_inspect_formats_recent_events() -> None:
+    events = [
+        {
+            "turn_id": "turn-1",
+            "event": "user_message",
+            "data": {"content": "hello"},
+        },
+        {
+            "turn_id": "turn-1",
+            "event": "turn_completed",
+            "data": {"stop_reason": "final_output"},
+        },
+    ]
+
+    summaries = summarize_turns(events)
+    formatted = format_trace_events(events, limit=2)
+
+    assert len(summaries) == 1
+    assert summaries[0].events == ("user_message", "turn_completed")
+    assert "turn-1 user_message - hello" in formatted
+    assert "turn-1 turn_completed - final_output" in formatted

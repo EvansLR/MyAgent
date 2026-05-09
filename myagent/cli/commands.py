@@ -17,12 +17,20 @@ from myagent.mcp import HttpMcpClient, StdioMcpClient
 from myagent.mcp.registry import register_mcp_tools_with_summary
 from myagent.providers import create_provider
 from myagent.tools import create_default_registry
-from myagent.tracing import JsonlTraceStore, TraceStore
+from myagent.tracing import (
+    JsonlTraceStore,
+    TraceStore,
+    format_trace_events,
+    format_turn_summary,
+    latest_turn_summary,
+    read_trace_events,
+)
 
 DEFAULT_SENDER_ID = "local-user"
 DEFAULT_CHAT_ID = "default"
 SUPPORTED_COMMANDS = {"/help", "/new", "/stop"}
 CONSOLE = Console()
+DEFAULT_TRACE_SESSION = "cli:default"
 
 
 @dataclass(slots=True)
@@ -253,10 +261,12 @@ app = typer.Typer(
     help="MyAgent - lightweight ReAct agent runtime.",
     no_args_is_help=False,
 )
+trace_app = typer.Typer(help="Inspect local JSONL trace files.")
 
 
 @app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     config: str | None = typer.Option(
         None,
         "--config",
@@ -265,4 +275,63 @@ def main(
     ),
 ) -> None:
     """Run the local CLI channel."""
+    if ctx.invoked_subcommand is not None:
+        return
     asyncio.run(run_local_chat(config_path=config))
+
+
+@trace_app.command("latest")
+def trace_latest(
+    session: str = typer.Option(
+        DEFAULT_TRACE_SESSION,
+        "--session",
+        "-s",
+        help="Trace session key, for example cli:default.",
+    ),
+    trace_dir: Path = typer.Option(
+        Path("data/traces"),
+        "--trace-dir",
+        help="Directory containing JSONL trace files.",
+    ),
+) -> None:
+    """Show a compact summary of the latest turn in a session trace."""
+    events = read_trace_events(session, trace_dir)
+    if not events:
+        typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
+        raise typer.Exit(code=1)
+    summary = latest_turn_summary(events)
+    if summary is None:
+        typer.echo(f"No turns found for session {session!r}.")
+        raise typer.Exit(code=1)
+    typer.echo(format_turn_summary(summary))
+
+
+@trace_app.command("show")
+def trace_show(
+    session: str = typer.Option(
+        DEFAULT_TRACE_SESSION,
+        "--session",
+        "-s",
+        help="Trace session key, for example cli:default.",
+    ),
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        help="Number of recent events to show.",
+    ),
+    trace_dir: Path = typer.Option(
+        Path("data/traces"),
+        "--trace-dir",
+        help="Directory containing JSONL trace files.",
+    ),
+) -> None:
+    """Show recent events for a session trace."""
+    events = read_trace_events(session, trace_dir)
+    if not events:
+        typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
+        raise typer.Exit(code=1)
+    typer.echo(format_trace_events(events, limit=limit))
+
+
+app.add_typer(trace_app, name="trace")

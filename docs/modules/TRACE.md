@@ -511,3 +511,152 @@ python -m pytest
 - 自动清理旧 trace
 
 这些可以在后续按需补。
+## Phase 2 Review
+
+Trace has become more important after the AgentLoop, MCP, web, memory, skills,
+and SubAgent upgrades. It now records enough events to diagnose most local runs,
+but users still had to open JSONL files manually.
+
+Current trace sources include:
+
+- normal turn events:
+  - `user_message`
+  - `context_built`
+  - `llm_request`
+  - `llm_response`
+  - `tool_call`
+  - `tool_result`
+  - `final_answer`
+  - `turn_completed`
+- memory events:
+  - `memory_candidates_saved`
+  - `memory_extraction_error`
+- SubAgent events:
+  - `subagent_start`
+  - `subagent_tool_call`
+  - `subagent_tool_result`
+  - `subagent_result`
+- runtime startup events:
+  - `mcp_server_registered`
+  - `mcp_server_connect_failed`
+
+### Current Problem
+
+The trace data is useful but not ergonomic:
+
+- JSONL must be opened manually.
+- It is hard to quickly find the latest turn.
+- `turn_completed.stop_reason` is not surfaced in CLI.
+- Tool loops and repeated-call warnings require hand-reading JSON.
+
+### Phase 2 Direction
+
+Do not build a web UI or full replay system yet. The smallest useful step is a
+CLI trace inspect command:
+
+```text
+python -m myagent trace latest
+python -m myagent trace show
+```
+
+Design goals:
+
+- Read local JSONL trace files only.
+- Do not modify trace files.
+- Default to `data/traces` and `cli:default`.
+- Show compact summaries rather than raw JSON dumps.
+- Keep the implementation independent from AgentLoop behavior.
+
+Deferred:
+
+- Web UI
+- SQLite trace store
+- trace replay
+- token accounting
+- automatic cleanup
+- full-message capture
+- redaction policy
+- OpenTelemetry integration
+
+## Phase 2A Implementation Notes
+
+Changed files:
+
+- `myagent/tracing/inspect.py`
+- `myagent/tracing/__init__.py`
+- `myagent/cli/commands.py`
+- `tests/test_trace_store.py`
+- `tests/test_cli_channel.py`
+- `docs/modules/TRACE.md`
+- `docs/NEXT_STEPS.md`
+
+Implemented:
+
+- `read_trace_events(session_key, trace_root)`
+- `summarize_turns(events)`
+- `latest_turn_summary(events)`
+- `format_turn_summary(summary)`
+- `format_trace_events(events, limit)`
+- CLI command:
+  - `python -m myagent trace latest`
+  - `python -m myagent trace show`
+
+Default behavior:
+
+```text
+python -m myagent trace latest
+```
+
+reads:
+
+```text
+data/traces/cli_default.jsonl
+```
+
+and prints a compact latest-turn summary:
+
+```text
+turn_id: ...
+events: ...
+event_names: ...
+stop_reason: final_output
+iterations: 2
+tool_calls: 1
+tool_errors: 0
+warnings: 0
+```
+
+Recent event view:
+
+```text
+python -m myagent trace show --limit 20
+```
+
+prints compact event rows:
+
+```text
+turn-id user_message - ...
+turn-id tool_call - read_file
+turn-id turn_completed - final_output
+```
+
+Options:
+
+```text
+--session cli:default
+--trace-dir data/traces
+--limit 20
+```
+
+Important Typer detail:
+
+- The root callback now checks `ctx.invoked_subcommand`.
+- This prevents `python -m myagent trace latest` from also starting the chat
+  loop.
+
+Verification:
+
+```text
+python -m pytest tests/test_trace_store.py tests/test_cli_channel.py
+21 passed
+```

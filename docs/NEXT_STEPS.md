@@ -962,3 +962,64 @@ Recommended next step:
 1. Commit AgentLoop Phase 2A as a focused checkpoint after user confirmation.
 2. After that, decide whether the next module should be Trace inspect commands
    or Tool loop diagnostics.
+
+## Trace Phase 2A
+
+After AgentLoop Phase 2A, Trace became the next documented priority because the
+trace now contains richer events such as `turn_completed`, `stop_reason`,
+SubAgent child tool calls, and MCP startup diagnostics.
+
+Design recorded in:
+
+```text
+docs/modules/TRACE.md
+```
+
+Implemented:
+
+- `myagent/tracing/inspect.py`
+- `python -m myagent trace latest`
+- `python -m myagent trace show`
+- compact turn summaries
+- compact recent-event rendering
+- `--session`
+- `--trace-dir`
+- `--limit`
+
+Examples:
+
+```text
+python -m myagent trace latest
+python -m myagent trace show --limit 20
+python -m myagent trace latest --session cli:default --trace-dir data/traces
+```
+
+Current boundary:
+
+- local JSONL only
+- read-only
+- no replay
+- no Web UI
+- no full-message dump
+- no automatic redaction
+- no SQLite/OpenTelemetry
+
+Focused verification:
+
+```text
+python -m pytest tests/test_trace_store.py tests/test_cli_channel.py
+21 passed
+```
+
+Next recommended validation:
+
+```text
+python -m pytest
+```
+
+Manual test:
+
+```text
+python -m myagent trace latest
+python -m myagent trace show --limit 10
+```
