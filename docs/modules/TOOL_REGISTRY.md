@@ -812,3 +812,56 @@ python -m myagent
 python -m pytest tests/test_filesystem_tools.py tests/test_agent_loop.py tests/test_agent_trace.py tests/test_subagent.py
 25 passed
 ```
+
+## Web Search Tool Implementation Note
+
+用户在本地使用过程中发现 MyAgent 缺少 web search 能力。对于个人助理型 Agent，这属于高价值能力：当本地文件、memory 和 MCP tools 不够时，Agent 应该能查询公开网页信息。
+
+本阶段新增内置工具：
+
+```text
+web_search
+web_fetch
+```
+
+默认注册位置：
+
+```text
+create_default_registry(...)
+```
+
+参数：
+
+```text
+query: str
+max_results: int = 5
+```
+
+第一版实现：
+
+- 使用 `httpx` 访问公开搜索页面。
+- 解析标题、URL、摘要。
+- 返回紧凑文本结果，适合继续交给 LLM 总结。
+- `web_fetch` 可以打开 `web_search` 返回的 URL，并提取可读正文。
+- 自动测试使用 fake HTTP response，不依赖真实网络。
+
+当前边界：
+
+- 不做浏览器渲染。
+- 不做搜索供应商账号/API key 配置。
+- 搜索页 HTML 结构可能变化，后续如果要稳定生产使用，可以替换为正式 search API 或 MCP search server。
+
+本地天气测试暴露了一个重要边界：`web_search` 成功返回了天气站点结果，但模型需要更具体的页面内容时只能反复换关键词搜索，最后触发工具调用上限。因此补充 `web_fetch`，让通用 web 能力形成：
+
+```text
+web_search -> web_fetch -> final answer
+```
+
+这不是天气专用工具，而是通用网页读取能力。
+
+测试：
+
+```text
+tests/test_web_tool.py
+tests/test_tool_registry.py
+```

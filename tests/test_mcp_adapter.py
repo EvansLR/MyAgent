@@ -37,7 +37,7 @@ async def test_mcp_tool_adapter_exposes_tool_schema_and_calls_client() -> None:
     result = await adapter.execute(query="bug")
 
     assert adapter.name == "mcp_github_search_issues"
-    assert adapter.description == "Search repository issues."
+    assert adapter.description == "Search repository issues. (MCP server: github.)"
     assert adapter.parameters["required"] == ["query"]
     assert result == "called Search Issues"
     assert client.calls == [("Search Issues", {"query": "bug"})]

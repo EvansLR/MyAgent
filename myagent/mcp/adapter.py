@@ -29,7 +29,10 @@ class McpToolAdapter(Tool):
     @property
     def description(self) -> str:
         """Return the MCP tool description."""
-        return self.definition.description
+        source = f"MCP server: {self.server_name}."
+        if not self.definition.description:
+            return source
+        return f"{self.definition.description} ({source})"
 
     @property
     def parameters(self) -> dict[str, Any]:

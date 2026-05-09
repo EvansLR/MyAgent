@@ -73,3 +73,12 @@ def test_registry_returns_openai_tool_definitions() -> None:
 
     assert definitions[0]["type"] == "function"
     assert definitions[0]["function"]["name"] == "add"
+
+
+def test_default_registry_includes_web_search() -> None:
+    from myagent.tools import create_default_registry
+
+    registry = create_default_registry()
+
+    assert registry.has("web_search")
+    assert registry.has("web_fetch")

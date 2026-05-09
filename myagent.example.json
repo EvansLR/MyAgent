@@ -7,5 +7,13 @@
     "systemPrompt": "You are MyAgent, a concise and helpful assistant.",
     "retries": 2
   },
-  "mcpServers": {}
+  "mcpServers": {
+    "example": {
+      "enabled": false,
+      "command": "python",
+      "args": ["path/to/server.py"],
+      "includeTools": [],
+      "excludeTools": []
+    }
+  }
 }

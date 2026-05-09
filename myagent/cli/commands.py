@@ -14,9 +14,10 @@ from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus
 from myagent.config import Settings
 from myagent.mcp import HttpMcpClient, StdioMcpClient
-from myagent.mcp.registry import register_mcp_tools
+from myagent.mcp.registry import register_mcp_tools_with_summary
 from myagent.providers import create_provider
 from myagent.tools import create_default_registry
+from myagent.tracing import JsonlTraceStore, TraceStore
 
 DEFAULT_SENDER_ID = "local-user"
 DEFAULT_CHAT_ID = "default"
@@ -165,11 +166,13 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
     bus = MessageBus()
     workspace_root = Path.cwd()
     registry = create_default_registry(workspace_root)
-    mcp_clients = await _connect_mcp_servers(settings, registry)
+    trace_store = JsonlTraceStore()
+    mcp_clients = await _connect_mcp_servers(settings, registry, trace_store=trace_store)
     agent = AgentLoop(
         bus,
         provider=create_provider(settings),
         tool_registry=registry,
+        trace_store=trace_store,
         workspace_root=workspace_root,
     )
     agent_task = asyncio.create_task(agent.run_until_stopped())
@@ -186,27 +189,63 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
             await client.close()
 
 
-async def _connect_mcp_servers(settings: Settings, registry) -> list:
+async def _connect_mcp_servers(
+    settings: Settings,
+    registry,
+    *,
+    trace_store: TraceStore | None = None,
+) -> list:
     """Connect configured MCP servers and register their tools."""
     clients: list[StdioMcpClient] = []
     for config in settings.mcp_servers:
         client = HttpMcpClient(config) if config.url else StdioMcpClient(config)
+        transport = "http" if config.url else "stdio"
         try:
             await client.connect()
             tools = await client.list_tools()
         except Exception as exc:
             typer.echo(f"MyAgent: Failed to connect MCP server {config.name}: {exc}")
+            _trace_startup(
+                trace_store,
+                "mcp_server_connect_failed",
+                {
+                    "server_name": config.name,
+                    "transport": transport,
+                    "error": str(exc),
+                },
+            )
             await client.close()
             continue
-        register_mcp_tools(
+        summary = register_mcp_tools_with_summary(
             registry,
             server_name=config.name,
+            transport=transport,
             client=client,
             tools=tools,
+            include_tools=config.include_tools,
+            exclude_tools=config.exclude_tools,
         )
-        typer.echo(f"MyAgent: Connected MCP server {config.name} with {len(tools)} tools.")
+        typer.echo(
+            f"MyAgent: Connected MCP server {summary.server_name} "
+            f"({summary.transport}) with {summary.tool_count}/{summary.discovered_tool_count} tools. "
+            "Details saved to startup trace."
+        )
+        _trace_startup(trace_store, "mcp_server_registered", summary.to_dict())
         clients.append(client)
     return clients
+
+
+def _trace_startup(
+    trace_store: TraceStore | None,
+    event: str,
+    data: dict[str, object],
+) -> None:
+    if trace_store is None:
+        return
+    try:
+        trace_store.record("runtime:startup", "startup", event, data)
+    except Exception:
+        pass
 
 
 app = typer.Typer(

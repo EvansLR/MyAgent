@@ -12,6 +12,7 @@ from myagent.tools.memory import (
 )
 from myagent.tools.registry import ToolRegistry
 from myagent.tools.skills import SkillGetTool
+from myagent.tools.web import WebFetchTool, WebSearchTool
 
 
 def create_default_registry(workspace: Path | str | None = None) -> ToolRegistry:
@@ -21,6 +22,8 @@ def create_default_registry(workspace: Path | str | None = None) -> ToolRegistry
     registry.register(ListDirTool(root))
     registry.register(ReadFileTool(root))
     registry.register(WriteFileTool(root))
+    registry.register(WebSearchTool())
+    registry.register(WebFetchTool())
     return registry
 
 
@@ -34,6 +37,8 @@ __all__ = [
     "ReadFileTool",
     "SkillGetTool",
     "ToolRegistry",
+    "WebFetchTool",
+    "WebSearchTool",
     "WriteFileTool",
     "create_default_registry",
 ]

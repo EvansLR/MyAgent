@@ -578,3 +578,315 @@ public/mymusic-club.html
 2. 继续本地 CLI 体验测试：重点看 `skill_get`、`write_file`、Windows workspace 提示是否稳定。
 3. 如果稳定，进入下一块：让 Agent 更高效地完成“创建/修改文件型任务”，包括任务规划、写前检查、写后简短确认。
 4. 后续再考虑更强的 Skills pipeline：active skill 记录、skill 使用 trace、allowed-tools 权限提示是否要变成真正限制。
+
+## MCP Phase 2 Review
+
+已按 Phase 2 文档节奏回到 MCP 模块，并参考外部资料更新：
+
+```text
+docs/modules/MCP.md
+```
+
+参考方向：
+
+- MCP 官方规范：tools/list、tools/call、stdio、Streamable HTTP、capabilities。
+- OpenAI Agents SDK MCP：多 server、server prefix、tool filtering、tool list cache、tracing、server lifecycle。
+
+当前判断：
+
+- MyAgent MCP 已经跑通 stdio 和 URL 型 HTTP。
+- 当前 HTTP 仍是最小实现，不等于完整生产级 Streamable HTTP host/client。
+- 后续最优先不应是 OAuth / resources / prompts / sampling，而是 MCP 可观测性和工具过滤。
+
+建议下一步 MCP Phase 2A：
+
+1. 增加 MCP register summary，记录每个 server 的 transport、tool count、registered tool names。
+2. 把 MCP server/tool 注册摘要写入 trace 或可检查的数据结构。
+3. 在 MCP tool description 里补充 server 来源。
+4. 设计配置层 `enabled`、`include_tools`、`exclude_tools`，先文档后实现。
+
+暂缓：
+
+- OAuth
+- 完整长连接 SSE
+- resources / prompts / sampling
+- MCP server 自动安装
+
+MCP Phase 2A 已开始实现：
+
+- 新增 `McpRegistrationSummary`。
+- 新增 `register_mcp_tools_with_summary(...)`。
+- CLI 成功连接 MCP server 时展示 transport 和 registered tool names。
+- `McpToolAdapter.description` 补充 MCP server 来源。
+
+当前保留边界：
+
+- 先不写入 turn trace，因为 MCP 连接发生在 session/turn 前。
+- 如果要记录启动期 MCP 状态，后续应设计 runtime-level startup diagnostics。
+
+MCP Phase 2B 已继续实现：
+
+- `McpServerConfig` 支持 `enabled`。
+- `McpServerConfig` 支持 `includeTools` / `include_tools`。
+- `McpServerConfig` 支持 `excludeTools` / `exclude_tools`。
+- MCP 注册会按原始 tool name 或注册后的 `mcp_{server}_{tool}` 名过滤。
+- `McpRegistrationSummary` 增加 `discovered_tool_count` 和 `skipped_tool_names`。
+- CLI 只显示 `registered/discovered` 工具数量，不展开完整工具列表。
+- MCP 启动注册/连接失败会写入 `data/traces/runtime_startup.jsonl`。
+
+后续 MCP 可继续考虑：
+
+1. `/mcp` 或 `/tools` CLI inspect 命令。
+2. HTTP MCP headers 配置。
+3. 更清楚的远程 MCP 认证错误提示。
+
+## Web Search Tool Insert
+
+用户在使用过程中发现缺少 web search 能力。该能力对个人助理型 Agent 很重要，因此临时插入 ToolRegistry 路线。
+
+已新增：
+
+- 内置 `web_search` 工具。
+- 内置 `web_fetch` 工具。
+- 默认 registry 会注册 `web_search`。
+- 参数为 `query` 和 `max_results`。
+- 实现使用 `httpx` 查询公开搜索页面并解析标题、URL、摘要。
+- `web_fetch` 用于打开搜索结果 URL 并提取可读正文。
+- 测试使用 fake HTTP response，不依赖真实网络。
+
+当前边界：
+
+- 不抓取搜索结果正文。
+- 不做浏览器渲染。
+- 不引入 search API key。
+- 如果公开搜索页面结构变化，后续可切换到正式 search API 或 MCP search server。
+
+建议测试 prompt：
+
+```text
+帮我搜索一下最近有哪些主流 Agent 框架支持 MCP，给我总结一下。
+```
+
+预期 CLI 状态：
+
+```text
+正在调用工具：web_search query=...
+```
+
+天气测试暴露的问题：
+
+- `web_search` 本身调用成功，trace 里能看到多次返回搜索结果。
+- 但它只有搜索摘要，没有网页正文。
+- 模型为了拿到更具体的天气细节反复搜索，最终触发工具调用上限。
+
+已补充：
+
+```text
+web_fetch
+```
+
+预期天气类查询现在更合理的工具链是：
+
+```text
+web_search query=...
+web_fetch url=...
+```
+
+### Web Search Relative Date Fix
+
+本地测试发现：用户说“看明天的天气”时，模型可能没有把“明天”解析成具体日期，导致搜索命中旧年份页面。
+
+原因不是缺少单独 time/weather 工具，而是 Runtime Environment 里没有当前日期。
+
+已修正：
+
+- `format_runtime_environment(...)` 注入当前日期。
+- `format_runtime_environment(...)` 注入当前时间和本地时区名称。
+- 明确提示模型：调用搜索前，应先把 today / tomorrow / yesterday 这类相对日期解析成绝对日期。
+
+后续测试建议：
+
+```text
+帮我看一下明天北京天气怎么样
+```
+
+预期模型搜索 query 应包含具体日期，例如：
+
+```text
+北京 2026-05-10 天气
+```
+
+## SubAgent Phase 2 Review
+
+已按 Phase 2 正轨进入 SubAgent 模块复盘，并更新：
+
+```text
+docs/modules/SUBAGENT.md
+```
+
+当前结论：
+
+- SubAgent 已完成轻量 `agents-as-tools` 模式。
+- 主 Agent 通过 `delegate_task` 委托小任务。
+- 子 Agent 使用独立 profile 和独立上下文。
+- 子 Agent 默认只继承 `list_dir` / `read_file`。
+- 当前不开放 `write_file`、`web_search`、MCP tools 或递归 `delegate_task`。
+
+下一步建议 SubAgent Phase 2A：
+
+1. 先补可观测性，不扩大权限。
+2. 给 SubAgentRunner 增加可选 trace hook。
+3. 记录 `subagent_tool_call` / `subagent_tool_result`。
+4. 在 trace 中加入 `subagent_task_id` 和 `parent_turn_id`。
+5. CLI 仍保持简洁，不默认展示所有子 Agent 内部工具调用。
+
+暂缓：
+
+- handoff
+- swarm
+- 并发子任务
+- 子 Agent 写文件
+- 子 Agent 任意调用 MCP tools
+- profile 配置化和 skill 绑定
+## SubAgent Phase 2A Implementation
+
+SubAgent Phase 2A has now moved from review to implementation.
+
+Completed:
+
+- `SubAgentRunner` supports an optional trace hook.
+- `DelegateTaskTool` has `execute_with_trace(...)` for AgentLoop integration.
+- `AgentLoop` creates a stable `subagent_task_id` for each `delegate_task` call.
+- Trace now records `subagent_tool_call` and `subagent_tool_result` for child
+  Agent internal tool use.
+- Child trace events include `parent_turn_id`, `parent_tool_call_id`, and
+  `subagent_task_id`.
+- CLI remains quiet: users still only see the top-level `delegate_task` status.
+
+Current SubAgent boundary remains unchanged:
+
+- Child Agent can use read-only tools: `list_dir`, `read_file`, `web_search`,
+  and `web_fetch`.
+- Child Agent cannot use `write_file`, MCP tools, or recursive `delegate_task`.
+
+Focused verification:
+
+```text
+python -m pytest tests/test_subagent.py tests/test_agent_loop.py tests/test_agent_trace.py
+15 passed
+```
+
+Next recommended step after this is full verification:
+
+```text
+python -m pytest
+```
+
+If full verification passes and the user accepts the behavior, commit the current
+MCP + web + runtime context + SubAgent observability batch as a focused Phase 2
+checkpoint, or split it into smaller commits if the diff feels too broad.
+## SubAgent Delegation Strategy Refresh
+
+User feedback corrected an important design point: everyday prompts should not
+require the user to say "delegate to researcher." That wording is useful for
+manual testing, but a personal Agent framework should decide delegation itself.
+
+External references checked:
+
+- Claude Code subagents: automatic delegation by subagent description and
+  context, with explicit invocation only when the user wants to force a subagent.
+- OpenAI Agents SDK: LLM-driven orchestration and agents-as-tools, where a
+  manager agent can autonomously call specialist agents.
+- LangGraph supervisor: a central supervisor routes work to specialist agents.
+- CrewAI: agents have roles, tools, and explicit collaboration/delegation
+  controls.
+
+Current conclusion:
+
+- Keep MyAgent's `delegate_task` primitive. It matches the agents-as-tools
+  pattern.
+- Change the expected UX: the main Agent should call `delegate_task`
+  automatically when a task needs isolated research, review, or file exploration.
+- Keep explicit "use researcher" prompts only as a test/debug path.
+- Stay synchronous for now; async/background subagents are deferred until
+  cancellation/status/trace inspection are stronger.
+- Allow read-only local + web tools for researcher-style SubAgents.
+- Keep child write tools, recursive delegation, arbitrary MCP tools, and handoff
+  deferred.
+
+Recommended next implementation:
+
+1. Add a protected `Delegation Policy` section to the main Agent context.
+2. Tell the model when to proactively use `delegate_task`.
+3. Add trace metadata for the delegation reason and whether the user explicitly
+   requested the subagent.
+4. Add tests that verify the policy text appears in context and that existing
+   explicit delegation still works.
+## SubAgent Capability Level Plan
+
+SubAgent design has been widened so it does not get trapped as only a single
+`researcher` tool.
+
+The current design model is:
+
+```text
+Level 1: agents-as-tools
+Level 2: profile-based subagents
+Level 3: automatic delegation policy
+Level 4: background or parallel subagents
+Level 5: supervisor workflow
+Level 6: handoff
+```
+
+Current Phase 2 target:
+
+- Complete Level 1: keep `delegate_task` as the working primitive.
+- Partially implement Level 2: profiles exist, next should add profile-specific
+  tool allowlists.
+- Minimally implement Level 3: add a protected Delegation Policy so the main
+  Agent can call `delegate_task` automatically.
+- Defer Level 4/5/6 until trace inspection, cancellation, status, and workflow
+  needs are clearer.
+
+The next concrete implementation should be:
+
+1. Add `allowed_tools` to `SubAgentProfile`. Done.
+2. Give `researcher` local read + web read tools. Done.
+3. Give `reviewer` local read tools first; safe checks can be added later. Done.
+4. Give `interviewer` web read tools for interview-topic lookup. Done.
+5. Add a main-context `Delegation Policy` section after profile permissions are
+   clear. Done.
+
+Implemented Phase 2B:
+
+- `SubAgentProfile.allowed_tools`
+- profile-specific child tool registries
+- protected `Delegation Policy` context section
+- optional `delegate_task.reason`
+- trace metadata: `delegation_reason` and `delegation_mode`
+
+Focused verification:
+
+```text
+python -m pytest tests/test_subagent.py tests/test_context_builder.py tests/test_agent_trace.py tests/test_agent_loop.py
+24 passed
+```
+
+Next recommended validation:
+
+```text
+python -m pytest
+```
+
+Manual CLI test after full verification:
+
+```text
+帮我查一下主流 Agent 框架是怎么做 SubAgent 自动委托的，并结合当前项目给出下一步建议
+```
+
+Expected behavior:
+
+- The user does not need to say "委托 researcher".
+- The main Agent may proactively call `delegate_task`.
+- Trace should show `subagent_start` with `delegation_mode=automatic` when the
+  user did not explicitly request a subagent.

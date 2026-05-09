@@ -1,3 +1,6 @@
+from pathlib import Path
+import shutil
+
 import pytest
 
 from myagent.cli.commands import (
@@ -7,8 +10,10 @@ from myagent.cli.commands import (
     make_inbound_message,
     parse_cli_command,
     run_chat,
+    _trace_startup,
 )
 from myagent.bus import MessageBus, OutboundMessage
+from myagent.tracing import JsonlTraceStore
 
 
 def test_parse_help_command() -> None:
@@ -94,6 +99,27 @@ async def test_run_chat_handles_help_and_stop() -> None:
 
     assert any("/help" in output for output in outputs)
     assert outputs[-1] == "Stopping MyAgent CLI."
+
+
+def test_trace_startup_records_runtime_event() -> None:
+    root = Path(".test-workspaces") / "cli-channel" / "startup-trace"
+    if root.exists():
+        shutil.rmtree(root)
+    store = JsonlTraceStore(root)
+
+    _trace_startup(
+        store,
+        "mcp_server_registered",
+        {
+            "server_name": "demo",
+            "transport": "stdio",
+            "tool_count": 1,
+        },
+    )
+
+    content = (root / "runtime_startup.jsonl").read_text(encoding="utf-8")
+    assert "mcp_server_registered" in content
+    assert '"server_name": "demo"' in content
 
 
 async def test_run_chat_sends_message_and_prints_outbound() -> None:

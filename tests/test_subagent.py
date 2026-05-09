@@ -1,8 +1,14 @@
+import json
 from pathlib import Path
 import shutil
 
 from myagent.agent import AgentLoop
-from myagent.agent.subagent import DelegateTaskTool, SubAgentRunner, create_subagent_registry
+from myagent.agent.subagent import (
+    DelegateTaskTool,
+    SubAgentRunner,
+    create_subagent_registry,
+    get_subagent_profile,
+)
 from myagent.bus import InboundMessage, MessageBus
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.tools import ToolRegistry, create_default_registry
@@ -83,9 +89,9 @@ async def test_subagent_runner_uses_restricted_tools() -> None:
 
     assert result == "Child summary: note says hello."
     assert provider.calls == 2
-    assert child_registry.tool_names == ["list_dir", "read_file"]
+    assert child_registry.tool_names == ["list_dir", "read_file", "web_search", "web_fetch"]
     first_tools = [tool["function"]["name"] for tool in provider.seen_tools[0]]
-    assert first_tools == ["list_dir", "read_file"]
+    assert first_tools == ["list_dir", "read_file", "web_search", "web_fetch"]
     assert provider.seen_messages[1][-1]["role"] == "tool"
     assert "hello from child" in provider.seen_messages[1][-1]["content"]
 
@@ -125,6 +131,7 @@ class MainDelegatingProvider:
                         arguments={
                             "task": "Read note.txt and summarize it.",
                             "agent_type": "researcher",
+                            "reason": "Need isolated file reading.",
                         },
                     )
                 ]
@@ -169,17 +176,68 @@ async def test_agent_loop_registers_and_executes_delegate_task() -> None:
     main_tool_names = [tool["function"]["name"] for tool in provider.seen_tools[0]]
     child_tool_names = [tool["function"]["name"] for tool in provider.seen_tools[1]]
     assert "delegate_task" in main_tool_names
-    assert child_tool_names == ["list_dir", "read_file"]
+    assert child_tool_names == ["list_dir", "read_file", "web_search", "web_fetch"]
+
+    events = [
+        json.loads(line)
+        for line in (root / "traces" / "cli_default.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    event_names = [event["event"] for event in events]
+    assert "subagent_tool_call" in event_names
+    assert "subagent_tool_result" in event_names
+
+    subagent_start = next(event for event in events if event["event"] == "subagent_start")
+    child_tool_call = next(event for event in events if event["event"] == "subagent_tool_call")
+    child_tool_result = next(event for event in events if event["event"] == "subagent_tool_result")
+    assert child_tool_call["data"]["subagent_task_id"] == subagent_start["data"]["subagent_task_id"]
+    assert child_tool_result["data"]["subagent_task_id"] == subagent_start["data"]["subagent_task_id"]
+    assert child_tool_call["data"]["parent_turn_id"] == subagent_start["turn_id"]
+    assert child_tool_result["data"]["parent_tool_call_id"] == "main-call-1"
+    assert subagent_start["data"]["delegation_reason"] == "Need isolated file reading."
+    assert subagent_start["data"]["delegation_mode"] == "explicit"
+    assert child_tool_result["data"]["delegation_reason"] == "Need isolated file reading."
+    assert child_tool_call["data"]["tool_name"] == "read_file"
+    assert "hello from agent loop" in child_tool_result["data"]["result_preview"]
 
 
-def test_create_subagent_registry_excludes_delegate_task_and_write_tools() -> None:
-    registry = ToolRegistry()
-    default_registry = create_default_registry(make_workspace("restricted"))
-    registry.register(default_registry.get("list_dir"))
-    registry.register(default_registry.get("read_file"))
+def test_create_subagent_registry_allows_read_only_file_and_web_tools() -> None:
+    registry = create_default_registry(make_workspace("restricted"))
     registry.register(WriteLikeTool())
     registry.register(DelegateTaskTool(provider=SubagentProvider(), parent_registry=registry))
 
-    child_registry = create_subagent_registry(registry)
+    child_registry = create_subagent_registry(
+        registry,
+        get_subagent_profile("researcher").allowed_tools,
+    )
 
-    assert child_registry.tool_names == ["list_dir", "read_file"]
+    assert child_registry.tool_names == ["list_dir", "read_file", "web_search", "web_fetch"]
+    assert "write_file" not in child_registry.tool_names
+    assert "delegate_task" not in child_registry.tool_names
+
+
+def test_subagent_profiles_have_distinct_tool_allowlists() -> None:
+    registry = create_default_registry(make_workspace("profile-tools"))
+    registry.register(WriteLikeTool())
+    registry.register(DelegateTaskTool(provider=SubagentProvider(), parent_registry=registry))
+
+    researcher = create_subagent_registry(
+        registry,
+        get_subagent_profile("researcher").allowed_tools,
+    )
+    reviewer = create_subagent_registry(
+        registry,
+        get_subagent_profile("reviewer").allowed_tools,
+    )
+    interviewer = create_subagent_registry(
+        registry,
+        get_subagent_profile("interviewer").allowed_tools,
+    )
+
+    assert researcher.tool_names == ["list_dir", "read_file", "web_search", "web_fetch"]
+    assert reviewer.tool_names == ["list_dir", "read_file"]
+    assert interviewer.tool_names == ["web_search", "web_fetch"]
+    for child_registry in (researcher, reviewer, interviewer):
+        assert "write_file" not in child_registry.tool_names
+        assert "delegate_task" not in child_registry.tool_names

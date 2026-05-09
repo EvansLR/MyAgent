@@ -1,6 +1,7 @@
 """Context assembly for model calls."""
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 import os
 from pathlib import Path
@@ -11,6 +12,17 @@ from myagent.bus import InboundMessage
 from myagent.skills import SkillRegistry
 
 Message = dict[str, Any]
+DEFAULT_DELEGATION_POLICY = (
+    "Use delegate_task proactively when a user request benefits from isolated "
+    "research, codebase exploration, review, or large intermediate analysis. "
+    "Do not require the user to explicitly ask for a subagent. Keep final "
+    "control in the main assistant: use the subagent result as evidence, then "
+    "synthesize the final answer yourself. Prefer researcher for factual "
+    "research and local/web evidence gathering, reviewer for checking risks or "
+    "gaps, and interviewer for interview-style explanations. Do not delegate "
+    "simple direct answers or tasks where the main assistant can answer clearly "
+    "without extra exploration."
+)
 
 
 class ContextTier(StrEnum):
@@ -114,6 +126,7 @@ class ContextBuilder:
         self,
         identity: str | None = None,
         runtime_environment: str | None = None,
+        delegation_policy: str | None = DEFAULT_DELEGATION_POLICY,
         core_memory_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
         budget: ContextBudget | None = None,
@@ -124,6 +137,7 @@ class ContextBuilder:
             "current limitations."
         )
         self.runtime_environment = runtime_environment
+        self.delegation_policy = delegation_policy
         self.core_memory_provider = core_memory_provider
         self.skill_registry = skill_registry
         self.budget = budget or ContextBudget()
@@ -151,6 +165,16 @@ class ContextBuilder:
                 )
             )
         core_memory = self.read_core_memory()
+        if self.delegation_policy:
+            sections.append(
+                ContextSection(
+                    name="Delegation Policy",
+                    content=self.delegation_policy,
+                    priority=8,
+                    tier=ContextTier.PROTECTED,
+                    source="agent:delegation_policy",
+                )
+            )
         if core_memory:
             sections.append(
                 ContextSection(
@@ -290,18 +314,26 @@ def _estimate_tokens(text: str, chars_per_token: int) -> int:
     return max((len(text) + divisor - 1) // divisor, 0)
 
 
-def format_runtime_environment(workspace_root: Path | str | None = None) -> str:
+def format_runtime_environment(
+    workspace_root: Path | str | None = None,
+    now: datetime | None = None,
+) -> str:
     """Return stable runtime facts that help the model call local tools correctly."""
     root = Path(workspace_root or ".").resolve()
+    current = now or datetime.now().astimezone()
     os_name = platform.system() or "Unknown"
     shell = _detect_shell(os_name)
     path_style = "Windows paths" if os_name == "Windows" else "POSIX paths"
+    timezone = current.tzname() or "local timezone"
     return "\n".join(
         [
+            f"- Current date: {current.date().isoformat()}",
+            f"- Current time: {current.strftime('%H:%M:%S')} {timezone}",
             f"- OS: {os_name}",
             f"- Shell: {shell}",
             f"- Workspace root: {root}",
             f"- Path style: {path_style}",
+            "- Resolve relative dates such as today, tomorrow, and yesterday to absolute dates before searching.",
             "- Filesystem tools are scoped to the workspace root.",
             "- Prefer relative paths such as '.' unless the user provides an explicit in-workspace path.",
             "- Do not invent absolute paths.",

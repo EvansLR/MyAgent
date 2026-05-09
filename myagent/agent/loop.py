@@ -8,7 +8,8 @@ from uuid import uuid4
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
 from myagent.agent.subagent import DelegateTaskTool
-from myagent.memory import JsonlMemoryStore, MarkdownMemoryStore, MemoryExtractor
+from myagent.memory import JsonlMemoryStore, MarkdownMemoryStore
+from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.skills import SkillRegistry
@@ -193,7 +194,12 @@ class AgentLoop:
             working_messages.append(_assistant_tool_call_message(response))
             for tool_call in response.tool_calls:
                 await self._publish_tool_status(inbound, tool_call)
-                result = await self._execute_tool_call(tool_call, inbound.session_key, turn_id)
+                result = await self._execute_tool_call(
+                    tool_call,
+                    inbound.session_key,
+                    turn_id,
+                    inbound.content,
+                )
                 working_messages.append(_tool_result_message(tool_call, result))
 
         return "工具调用次数已达到上限，暂时还没有生成最终回答。"
@@ -203,6 +209,7 @@ class AgentLoop:
         tool_call: ToolCall,
         session_key: str,
         turn_id: str,
+        user_content: str = "",
     ) -> str:
         """Run one requested tool call through the registry."""
         self._trace(
@@ -215,19 +222,29 @@ class AgentLoop:
                 "arguments": tool_call.arguments,
             },
         )
+        subagent_task_id = ""
         if tool_call.name == "delegate_task":
+            subagent_task_id = uuid4().hex[:8]
             self._trace(
                 session_key,
                 turn_id,
                 "subagent_start",
                 {
                     "tool_call_id": tool_call.id,
+                    "subagent_task_id": subagent_task_id,
                     "agent_type": tool_call.arguments.get("agent_type", "researcher"),
+                    "delegation_reason": tool_call.arguments.get("reason", ""),
+                    "delegation_mode": _delegation_mode(tool_call.arguments, user_content),
                     "task_preview": _preview(str(tool_call.arguments.get("task", ""))),
                 },
             )
         try:
-            result = await self.tool_registry.execute(tool_call.name, tool_call.arguments)
+            result = await self._execute_delegate_task_with_trace(
+                tool_call,
+                session_key,
+                turn_id,
+                subagent_task_id,
+            )
         except Exception as exc:
             result = f"Error executing tool {tool_call.name}: {exc}"
         if tool_call.name == "delegate_task":
@@ -237,6 +254,8 @@ class AgentLoop:
                 "subagent_result",
                 {
                     "tool_call_id": tool_call.id,
+                    "subagent_task_id": subagent_task_id,
+                    "delegation_reason": tool_call.arguments.get("reason", ""),
                     "result_preview": _preview(result),
                     "result_length": len(result),
                 },
@@ -253,6 +272,41 @@ class AgentLoop:
             },
         )
         return result
+
+    async def _execute_delegate_task_with_trace(
+        self,
+        tool_call: ToolCall,
+        session_key: str,
+        turn_id: str,
+        subagent_task_id: str,
+    ) -> str:
+        """Run delegate_task with child trace events when possible."""
+        if tool_call.name != "delegate_task":
+            return await self.tool_registry.execute(tool_call.name, tool_call.arguments)
+
+        tool = self.tool_registry.get(tool_call.name)
+        if not isinstance(tool, DelegateTaskTool):
+            return await self.tool_registry.execute(tool_call.name, tool_call.arguments)
+
+        casted = tool.cast_params(tool_call.arguments)
+        errors = tool.validate_params(casted)
+        if errors:
+            return f"Error: Invalid parameters for tool '{tool_call.name}': " + "; ".join(errors)
+
+        def trace_child(event: str, data: dict[str, object]) -> None:
+            child_data = {
+                "parent_turn_id": turn_id,
+                "parent_tool_call_id": tool_call.id,
+                "delegation_reason": casted.get("reason", ""),
+                **data,
+            }
+            self._trace(session_key, turn_id, event, child_data)
+
+        return await tool.execute_with_trace(
+            **casted,
+            trace_hook=trace_child,
+            subagent_task_id=subagent_task_id,
+        )
 
     async def _publish_tool_status(self, inbound: InboundMessage, tool_call: ToolCall) -> None:
         """Publish a user-visible status message before running a tool."""
@@ -417,6 +471,24 @@ def _format_tool_arguments(arguments: dict[str, object]) -> str:
             text = f"{text[:57]}..."
         parts.append(f"{key}={text}")
     return " ".join(parts)
+
+
+def _delegation_mode(arguments: dict[str, object], user_content: str) -> str:
+    """Return a lightweight hint for whether delegation was user-forced."""
+    marker_text = " ".join(
+        [
+            user_content.lower(),
+            *[
+                str(value).lower()
+                for key, value in arguments.items()
+                if key in {"task", "context", "reason"}
+            ],
+        ]
+    )
+    explicit_markers = ("subagent", "sub-agent", "delegate", "researcher", "reviewer", "委托", "子 agent")
+    if any(marker in marker_text for marker in explicit_markers):
+        return "explicit"
+    return "automatic"
 
 
 def _preview(text: str, limit: int = 300) -> str:

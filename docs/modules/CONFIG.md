@@ -304,6 +304,33 @@ python -m pytest
 - 配置校验错误提示。
 - secret placeholder 展开策略。
 
+### MCP Phase 2B 配置更新
+
+MCP server 配置已支持轻量开关和工具过滤：
+
+```json
+{
+  "mcpServers": {
+    "demo": {
+      "enabled": true,
+      "command": "python",
+      "args": ["server.py"],
+      "includeTools": ["search"],
+      "excludeTools": ["delete"]
+    }
+  }
+}
+```
+
+字段说明：
+
+- `enabled: false`：跳过该 MCP server，不连接、不注册工具。
+- `includeTools` / `include_tools`：只注册指定工具。
+- `excludeTools` / `exclude_tools`：排除指定工具。
+- 工具过滤支持匹配 MCP 原始工具名，也支持匹配 MyAgent 注册后的 `mcp_{server}_{tool}` 名。
+
+这属于 MCP 工具面控制，不是安全权限系统。真正的工具安全仍应由具体 MCP server 和 MyAgent 工具边界共同保证。
+
 ### 面试表达更新
 
 可以这样讲：

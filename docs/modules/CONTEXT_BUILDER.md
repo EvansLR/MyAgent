@@ -633,6 +633,8 @@ ContextSection(name="Runtime Environment", tier=protected/high, source="runtime:
 
 - `ContextBuilder(runtime_environment=...)` 支持注入运行环境 section。
 - `AgentLoop` 默认通过 `format_runtime_environment(workspace_root)` 注入：
+  - current date
+  - current time
   - OS
   - shell
   - workspace root
@@ -643,6 +645,18 @@ ContextSection(name="Runtime Environment", tier=protected/high, source="runtime:
 - `list_dir` / `read_file` 的工具描述和错误信息已补充 workspace 约束，明确建议优先使用 `.` 和相对路径。
 
 这次修复的重点不是放开文件访问，而是让模型知道正确边界：当前本地 CLI 运行在 Windows workspace 内，不能凭空生成 `/Users/...` 这类 macOS/Linux 绝对路径。
+
+后续本地测试 web search 时又发现一个相关问题：用户说“明天的天气”时，如果上下文没有当前日期，模型可能把“明天”交给搜索引擎乱匹配，甚至命中旧年份页面。
+
+因此 Runtime Environment 继续补充：
+
+```text
+- Current date: YYYY-MM-DD
+- Current time: HH:MM:SS <timezone>
+- Resolve relative dates such as today, tomorrow, and yesterday to absolute dates before searching.
+```
+
+这不是新增 time/weather 工具，而是让模型在调用 `web_search` 前先把相对日期解析成绝对日期。
 
 验证：
 

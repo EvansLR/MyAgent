@@ -545,3 +545,596 @@ python -m myagent
 - 不支持 handoff。
 
 这些都可以作为第二版继续扩展。
+
+## Phase 2 Review
+
+### 当前实现
+
+当前 SubAgent 已经完成一个轻量、可运行的 `agents-as-tools` 版本。
+
+主链路：
+
+```text
+Main Agent
+  -> delegate_task(task, agent_type, context)
+  -> DelegateTaskTool
+  -> create_subagent_registry(parent_registry)
+  -> SubAgentRunner
+  -> read-only tool loop
+  -> formatted subagent result
+  -> Main Agent final answer
+```
+
+已内置三个 profile：
+
+```text
+researcher
+reviewer
+interviewer
+```
+
+子 Agent 工具集当前固定为只读：
+
+```text
+list_dir
+read_file
+```
+
+这意味着即使主 Agent 拥有 `write_file`、`web_search`、MCP tools 或 `delegate_task`，子 Agent 默认也不能使用这些工具。
+
+Trace 当前记录主 Agent 视角：
+
+```text
+tool_call: delegate_task
+subagent_start
+subagent_result
+tool_result: delegate_task
+```
+
+子 Agent 内部每一次 `read_file` / `list_dir` 暂时不会作为独立 trace tree 展开。
+
+### 和原设计的差异
+
+二期调研里提到过更完整的能力：
+
+- SubAgent profile 配置化
+- 独立模型配置
+- 子 Agent 内部工具调用展示
+- trace tree
+- skills 绑定 profile
+- handoff / supervisor / swarm 等多 Agent 模式
+
+当前实现选择了最小、稳定、容易解释的版本：
+
+- 只做 `delegate_task`，不做 handoff。
+- 子 Agent 和主 Agent 共用 provider。
+- profile 写在代码里。
+- 子 Agent 只读，不开放写文件、MCP 和 web tools。
+- 子 Agent 运行是同步的，结果回到主 Agent 后再生成最终答复。
+
+这个差异是合理取舍：当前 MyAgent 仍然是个人助理 runtime，优先保证“能跑、能测、能讲清楚”，不急着引入多 Agent 平台复杂度。
+
+### 当前问题
+
+1. 子 Agent 内部过程对用户不可见。
+
+用户只能看到：
+
+```text
+正在调用工具：delegate_task ...
+```
+
+看不到子 Agent 内部是否读了哪些文件、是否遇到工具错误。
+
+2. Trace 还不是树形。
+
+当前 trace 可以知道发生过委托，但很难展开成：
+
+```text
+main turn
+  subagent task id
+    child tool call
+    child tool result
+    child final summary
+```
+
+3. profile 仍写在代码里。
+
+这对第一版足够，但后续如果用户想自定义 `researcher` / `reviewer` 的行为，需要配置化。
+
+4. 子 Agent 不能使用 skills。
+
+`reviewer` profile 和 `code-review` skill、`interviewer` profile 和 `interview-prep` skill 之间还没有绑定关系。
+
+5. 子 Agent 不能联网。
+
+这是刻意限制，但会影响 researcher 类型任务。现在主 Agent 已经有 `web_search` / `web_fetch`，后续要不要给 researcher 开放只读 web tools，需要单独决策。
+
+### 二期建议
+
+优先级 1：补可观测性，不扩大权限。
+
+- 为 SubAgentRunner 增加可选 trace hook。
+- 记录 `subagent_tool_call` / `subagent_tool_result`。
+- 在 trace data 中加入 `subagent_task_id` 和 `parent_turn_id`。
+- CLI 仍然保持简洁，不默认刷出所有子工具调用。
+
+优先级 2：profile 结构变清楚。
+
+- 把 `SubAgentProfile` 扩展为包含：
+  - name
+  - description
+  - instructions
+  - allowed_tools
+  - max_iterations
+  - optional skill ids
+- 暂时仍可写在代码里，先把结构拉平。
+
+优先级 3：再考虑配置化和 skill 绑定。
+
+- `myagent.json` 可覆盖或新增 profile。
+- reviewer 默认绑定 `code-review`。
+- interviewer 默认绑定 `interview-prep`。
+- researcher 是否允许 `web_search` / `web_fetch` 需要用户确认后再做。
+
+暂不建议现在做：
+
+- handoff
+- swarm
+- 并发子任务
+- 子 Agent 写文件
+- 子 Agent 执行 shell
+- 子 Agent 调任意 MCP tools
+
+### 暂不处理
+
+当前不把 SubAgent 升级成完整多 Agent 编排系统。
+
+MyAgent 现阶段的 SubAgent 目标是：
+
+```text
+把复杂任务的一小段只读分析工作委托出去，并让主 Agent 保持最终控制。
+```
+
+不是：
+
+```text
+让多个 Agent 自治协作、交接会话或并发执行长期任务。
+```
+
+### 测试计划
+
+已有测试：
+
+```text
+tests/test_subagent.py
+tests/test_agent_loop.py
+tests/test_agent_trace.py
+```
+
+后续如果做 SubAgent Phase 2A，应新增：
+
+- 子 Agent 内部 tool call trace 测试。
+- subagent task id 稳定写入 trace 的测试。
+- profile allowed_tools 生效测试。
+- 子 Agent 不继承 `write_file`、`web_search`、`delegate_task` 的回归测试。
+
+### 面试表达更新
+
+可以这样解释 SubAgent 模块：
+
+```text
+MyAgent 的 SubAgent 采用 agents-as-tools 模式，而不是 handoff。
+主 Agent 通过 delegate_task 把一个边界清楚的小任务交给子 Agent。
+子 Agent 有独立 profile 和独立上下文，只拿到 task、context 和受限只读工具。
+这样主 Agent 仍然负责用户对话和最终答案，子 Agent 负责局部分析。
+第一版刻意不开放写文件和递归委托，保证安全、可测试、容易解释。
+第二阶段最值得增强的是 trace tree 和 profile 结构，而不是一上来做复杂多 Agent 协作。
+```
+## Phase 2A Implementation Notes
+
+This phase implements the first observability upgrade without changing the
+SubAgent permission model.
+
+Changed files:
+
+- `myagent/agent/subagent.py`
+- `myagent/agent/loop.py`
+- `tests/test_subagent.py`
+
+Runtime flow:
+
+```text
+AgentLoop receives delegate_task
+  -> creates subagent_task_id
+  -> records subagent_start
+  -> calls DelegateTaskTool.execute_with_trace(...)
+  -> SubAgentRunner records each child tool call/result through trace_hook
+  -> records subagent_result
+```
+
+New trace events:
+
+```text
+subagent_tool_call
+subagent_tool_result
+subagent_iteration_limit
+```
+
+Each child trace event includes:
+
+```text
+subagent_task_id
+parent_turn_id
+parent_tool_call_id
+tool_call_id
+tool_name
+```
+
+What stays intentionally unchanged:
+
+- SubAgent receives read-only tools: `list_dir`, `read_file`, `web_search`, and
+  `web_fetch`.
+- SubAgent still cannot call `write_file`, MCP tools, or nested `delegate_task`.
+- CLI still only shows the top-level `delegate_task` status by default.
+- Profiles are still code-defined for now.
+
+Verification:
+
+```text
+python -m pytest tests/test_subagent.py tests/test_agent_loop.py tests/test_agent_trace.py
+15 passed
+```
+
+The important user-visible change is not a new terminal message. The visible
+change is in trace files: a delegated task now exposes which read-only tools the
+child Agent used internally.
+## External Research Refresh: Delegation Strategy
+
+This section recalibrates the SubAgent design against current public framework
+patterns. The key correction is that normal users should not need to say
+"delegate to researcher" in everyday prompts. Explicit invocation is useful for
+debugging, testing, and power users, but the product behavior should be
+automatic delegation.
+
+Sources checked:
+
+- Claude Code subagents:
+  - https://code.claude.com/docs/en/subagents
+- Claude Code SDK subagents:
+  - https://code.claude.com/docs/en/agent-sdk/subagents
+- OpenAI Agents SDK orchestration:
+  - https://openai.github.io/openai-agents-js/guides/multi-agent/
+- OpenAI Agents SDK agents/tools:
+  - https://openai.github.io/openai-agents-js/guides/agents/
+  - https://openai.github.io/openai-agents-js/guides/tools/
+- LangGraph supervisor:
+  - https://reference.langchain.com/javascript/modules/_langchain_langgraph-supervisor.html
+- CrewAI collaboration:
+  - https://docs.crewai.com/en/concepts/collaboration
+  - https://docs.crewai.com/en/learn/customizing-agents
+
+Research conclusions:
+
+1. Automatic delegation is normal.
+
+Claude Code automatically delegates when the user task matches a subagent's
+description and current context. Explicit prompts such as "use the code-reviewer
+subagent" exist, but they are fallback or forcing mechanisms, not the desired
+default UX.
+
+OpenAI Agents SDK describes two orchestration styles: LLM-driven orchestration
+and code-driven orchestration. In LLM-driven orchestration, the main agent can
+autonomously plan, use tools, and delegate to sub-agents. Code-driven
+orchestration is used when the product needs deterministic routing.
+
+2. Our current `delegate_task` matches the "agents as tools" pattern, but the
+prompting is incomplete.
+
+OpenAI calls this "agents as tools": a manager agent keeps conversation control
+and invokes specialist agents as tools. This is a good fit for MyAgent because
+the main personal assistant should own the final answer and synthesize results.
+The missing piece is not the primitive; it is the policy that tells the main
+agent when to use it proactively.
+
+3. Handoff is a different pattern and should remain deferred.
+
+Handoff means the specialist becomes the active user-facing agent. That is
+useful for customer-service-style routing or domain-specific chat ownership.
+MyAgent currently wants a single personal assistant persona, so handoff is not
+the next step.
+
+4. Sync and async both exist.
+
+Claude Code supports foreground blocking subagents and background concurrent
+subagents. OpenAI's orchestration guide also describes code-driven parallel
+execution for independent tasks. MyAgent's current synchronous implementation is
+acceptable for Phase 2 because it is simple and traceable. Async/background
+subagents should be a later UX feature once cancellation, status, and trace
+inspection are better.
+
+5. Tool permissions vary by profile.
+
+Claude Code supports allowlists, denylists, permission modes, hooks, and
+skills per subagent. Built-in Explore and Plan agents are read-only; a
+general-purpose subagent can have broader tools. CrewAI agents can be given
+tools such as web search, memory, and delegation, and delegation is explicitly
+controlled through configuration.
+
+For MyAgent, the right Phase 2 rule is:
+
+- researcher: read local files and public web sources
+- reviewer: read local files and possibly run safe checks later
+- interviewer: mostly no tools or read/search tools depending on task
+- no default write access for child agents yet
+- no recursive delegation yet
+- no arbitrary MCP inheritance yet
+
+Updated design direction:
+
+```text
+User asks a normal task
+  -> Main Agent decides whether it needs isolated research/review work
+  -> If yes, it calls delegate_task automatically
+  -> SubAgent performs bounded read-only work
+  -> Main Agent synthesizes final answer for the user
+```
+
+The user should only need explicit wording when they want to force or debug a
+specific agent:
+
+```text
+Use the researcher subagent to inspect this.
+```
+
+Recommended next implementation:
+
+1. Add a protected prompt section named `# Delegation Policy`.
+2. Tell the main Agent to use `delegate_task` proactively for:
+   - independent research
+   - codebase exploration
+   - review/checking work
+   - large-output operations that should not pollute the main context
+3. Keep explicit invocation available for testing.
+4. Add trace fields that make the automatic decision visible:
+   - `delegation_reason`
+   - `selected_agent_type`
+   - `delegation_mode: automatic | explicit`
+5. Do not build a separate deterministic router yet. Start with LLM-driven
+   routing because it matches Claude Code and OpenAI Agents SDK patterns and is
+   smaller to implement.
+
+Deferred:
+
+- Background subagents
+- Parallel subagent fan-out
+- Handoff where the child agent speaks directly to the user
+- Configurable profile files
+- Profile-specific MCP inheritance
+- Child-agent write/edit permissions
+## SubAgent Capability Levels
+
+SubAgent should not be understood as one fixed "researcher tool." Public Agent
+frameworks use several related but different patterns. MyAgent should keep this
+space open, then implement only the levels that are useful for the current
+phase.
+
+### Level 1: Agents As Tools
+
+The main Agent keeps control of the user conversation and calls a specialist
+Agent as a tool. The child Agent does bounded work and returns a result to the
+main Agent.
+
+Examples in other frameworks:
+
+- OpenAI Agents SDK: manager agent uses specialist agents as tools.
+- Claude Code: task-matched subagents run in isolated contexts.
+- CrewAI: agents can delegate work to other agents.
+
+MyAgent current status:
+
+- Implemented as `delegate_task`.
+- Synchronous.
+- Main Agent still writes the final answer.
+- Child Agent uses bounded read-only tools.
+
+This is the right Phase 2 foundation.
+
+### Level 2: Profile-Based SubAgents
+
+Each SubAgent has its own profile:
+
+- name
+- description
+- instructions
+- allowed tools
+- max iterations
+- optional model
+- optional skills
+- optional memory scope
+
+Examples:
+
+- `researcher`: local files + public web search/fetch.
+- `reviewer`: local files + later safe checks.
+- `interviewer`: explanations, questions, and answer structure.
+- `planner`: break down tasks without editing.
+- `executor`: later, possibly controlled write/edit permissions.
+
+MyAgent current status:
+
+- Partially implemented: profiles exist in code.
+- Not yet configurable.
+- Tool permissions are still one shared child allowlist, not profile-specific.
+
+Recommended Phase 2 direction:
+
+- Keep profiles code-defined for now.
+- Add `allowed_tools` to `SubAgentProfile`.
+- Let each profile select a different read-only tool set.
+- Do not move to user config until the behavior is proven.
+
+### Level 3: Automatic Delegation Policy
+
+The user should not need to say "use researcher" in normal interaction. The
+main Agent should decide when delegated work is useful.
+
+Examples in other frameworks:
+
+- Claude Code uses subagent descriptions and context to trigger automatic
+  delegation.
+- OpenAI Agents SDK supports LLM-driven orchestration where the manager agent
+  plans and invokes agent tools.
+- Supervisor-style frameworks route tasks to specialist agents.
+
+MyAgent current status:
+
+- Not implemented yet.
+- Explicit invocation works and is useful for testing.
+
+Recommended next implementation:
+
+- Add a protected `Delegation Policy` section to the main Agent context.
+- Make `delegate_task` description clearer.
+- Trace the reason/mode when a delegation happens.
+
+### Level 4: Background Or Parallel SubAgents
+
+SubAgents can run in the background or in parallel, then report back when done.
+
+Examples in other frameworks:
+
+- Claude Code supports foreground and background subagents.
+- OpenAI orchestration examples can run independent agent calls concurrently.
+
+MyAgent current status:
+
+- Deferred.
+
+Why deferred:
+
+- Needs task status.
+- Needs cancellation.
+- Needs trace inspection.
+- Needs result merge rules.
+- Needs a better CLI/user notification model.
+
+### Level 5: Supervisor Workflow
+
+A supervisor or state graph controls a multi-step workflow and routes between
+multiple specialist agents.
+
+Examples in other frameworks:
+
+- LangGraph supervisor.
+- CrewAI process/task orchestration.
+- AutoGen teams/group chat.
+
+MyAgent current status:
+
+- Deferred.
+
+Why deferred:
+
+- Useful for bigger workflows, but too heavy before the core personal assistant
+  loop is stable.
+
+### Level 6: Handoff
+
+The child Agent takes over the user-facing conversation.
+
+Examples in other frameworks:
+
+- OpenAI Agents SDK handoffs.
+
+MyAgent current status:
+
+- Deferred.
+
+Why deferred:
+
+- MyAgent should feel like one coherent personal assistant.
+- Handoff is better for customer service or multi-domain chat ownership.
+
+### Current Target
+
+For the current Phase 2 work, MyAgent should aim for:
+
+```text
+Level 1 complete
+Level 2 partially complete
+Level 3 minimal implementation
+```
+
+This means:
+
+- Keep `delegate_task`.
+- Make delegation automatic through policy.
+- Keep child Agents synchronous.
+- Keep child Agents bounded and observable.
+- Add profile-specific tool permissions before adding broader permissions.
+- Defer background execution, supervisor workflows, and handoff.
+
+This keeps the design broad enough to avoid a narrow "researcher only" trap,
+while still small enough to implement and explain.
+
+## Phase 2B Implementation Notes
+
+Phase 2B implements the first slice of profile-based SubAgents and automatic
+delegation guidance.
+
+Changed files:
+
+- `myagent/agent/subagent.py`
+- `myagent/agent/context.py`
+- `myagent/agent/loop.py`
+- `tests/test_subagent.py`
+- `tests/test_context_builder.py`
+
+Implemented:
+
+- `SubAgentProfile` now includes `allowed_tools`.
+- `researcher` can use:
+  - `list_dir`
+  - `read_file`
+  - `web_search`
+  - `web_fetch`
+- `reviewer` can use:
+  - `list_dir`
+  - `read_file`
+- `interviewer` can use:
+  - `web_search`
+  - `web_fetch`
+- `ContextBuilder` now injects a protected `Delegation Policy` section into the
+  main system prompt.
+- `delegate_task` accepts an optional `reason` argument.
+- `subagent_start`, `subagent_result`, and child SubAgent trace events include
+  `delegation_reason` when available.
+- `subagent_start` includes `delegation_mode`, currently a lightweight
+  `automatic` / `explicit` hint based on the user request and tool arguments.
+
+Runtime behavior:
+
+```text
+User asks a normal task
+  -> Main Agent sees Delegation Policy in the protected context
+  -> Main Agent may call delegate_task without the user explicitly asking
+  -> DelegateTaskTool picks the requested profile
+  -> create_subagent_registry copies only that profile's allowed tools
+  -> SubAgent runs synchronously and returns a result
+  -> Main Agent synthesizes the final answer
+```
+
+Important boundary:
+
+- This is still LLM-driven routing, not a deterministic code router.
+- The user can still force a SubAgent for testing.
+- Child Agents still cannot write files, call MCP tools, or recursively delegate.
+- Background/parallel SubAgents remain deferred.
+
+Verification:
+
+```text
+python -m pytest tests/test_subagent.py tests/test_context_builder.py tests/test_agent_trace.py tests/test_agent_loop.py
+24 passed
+```

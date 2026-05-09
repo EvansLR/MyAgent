@@ -901,3 +901,336 @@ AgentLoop(tool_registry=registry)
 python -m pytest
 76 passed, 1 skipped
 ```
+
+## Phase 2 External Research
+
+本轮 MCP 复盘先参考外部资料，再决定 MyAgent 要做什么。
+
+### 参考来源
+
+- MCP 官方规范：`modelcontextprotocol.io`
+- OpenAI Agents SDK MCP 文档：`openai.github.io/openai-agents-python/mcp/`
+
+### 外部做法摘要
+
+MCP 官方规范把 MCP 设计成 client 和 server 之间的 JSON-RPC 协议。对 MyAgent 最相关的是：
+
+- 工具能力使用 `tools/list` 发现，使用 `tools/call` 调用。
+- server 还可以提供 resources 和 prompts，但 MyAgent 当前只接 tools。
+- 官方传输层重点包括 stdio 和 Streamable HTTP。
+- 老式 HTTP+SSE transport 在新规范里属于旧方案，后续应避免继续围绕它做复杂增强。
+- client/server 初始化后有 capabilities 协商，后续如果要支持 resources/prompts/sampling，需要从 capabilities 边界开始设计。
+
+OpenAI Agents SDK 的 MCP 支持给 MyAgent 的启发更直接：
+
+- Agent 可以挂多个 MCP server，server 暴露的 tools 会并入 Agent tools。
+- tool 名称需要避免冲突。SDK 有 server name prefix 这类机制。
+- tool list 可能需要 cache，因为每次 list tools 都有延迟和成本。
+- MCP server 调用需要能进入 tracing，方便知道模型为什么调用某个外部工具。
+- 实际项目需要 tool filtering，避免把过多、不该用的工具暴露给模型。
+- MCP 连接生命周期最好由一个 manager/context 管理，避免进程或 HTTP client 泄漏。
+- MCP 工具调用失败时，不应该让整个 Agent 崩掉；应把错误以可理解方式返回给模型和用户。
+
+## Phase 2 Review
+
+### 当前实现
+
+MyAgent 当前 MCP 已经支持两类接入：
+
+```text
+StdioMcpClient
+HttpMcpClient
+```
+
+stdio 流程：
+
+```text
+create subprocess
+-> initialize
+-> notifications/initialized
+-> tools/list
+-> tools/call
+```
+
+HTTP 流程：
+
+```text
+POST <url>
+Accept: application/json, text/event-stream
+Content-Type: application/json
+-> initialize
+-> tools/list
+-> tools/call
+```
+
+工具接入方式：
+
+```text
+McpToolDefinition
+-> McpToolAdapter
+-> ToolRegistry.register(...)
+-> AgentLoop 使用统一 ToolRegistry
+```
+
+命名策略已经有：
+
+```text
+mcp_{server_name}_{tool_name}
+```
+
+这点和外部框架的实践一致：需要 prefix 避免不同 server、不同本地工具之间冲突。
+
+### 和原设计的差异
+
+原设计第一阶段只计划做 stdio MCP。
+
+当前实现已经额外支持了 URL 型 HTTP MCP，这是实际测试需要推动出来的能力。它是有价值的，但文档口径要明确：当前 HTTP 支持仍是最小实现，不等于完整生产级 Streamable HTTP client。
+
+另外，早期文档把 SSE 放在“暂不做”里，但当前 HTTP client 已经能解析 `text/event-stream` response。这个能力应描述为兼容部分 SSE response，而不是完整长连接 SSE transport。
+
+### 当前问题
+
+1. 缺少 MCP server 状态可观测性。
+
+当前 CLI 只会显示连接成功或失败：
+
+```text
+Connected MCP server didi-mcp with 13 tools.
+```
+
+但没有更细的 inspect 能力，例如：
+
+```text
+server name
+transport
+tool count
+registered tool names
+last error
+```
+
+2. 缺少 tool filtering。
+
+现在一个 MCP server 暴露多少工具，MyAgent 就注册多少。随着外部 server 增多，模型上下文里的 tool schema 会膨胀，也会增加误调用概率。
+
+3. HTTP MCP 仍是最小实现。
+
+当前不处理：
+
+- session id
+- auth / OAuth
+- headers 配置
+- reconnect
+- server 主动 request
+- 长连接事件流
+
+4. MCP tool result 只压成文本。
+
+当前 `_content_to_text(...)` 只保留 text 或 JSON 字符串化，足够第一版使用，但还不适合处理 image/resource link/structured content。
+
+5. trace 里没有 MCP 专属视角。
+
+工具调用 trace 能看到 tool name，但没有单独记录：
+
+```text
+mcp server
+original tool name
+transport
+```
+
+排查“为什么调用了这个 MCP 工具”时还不够直观。
+
+### 二期建议
+
+短期建议优先做文档和轻量可观测性，而不是继续扩展协议面。
+
+优先级 1：
+
+- 增加 MCP connection summary：启动时记录每个 server 的 transport、tool count、registered tool names。
+- 把 MCP register 结果写入 trace，便于复盘工具列表。
+- 在 `McpToolAdapter` 的 description 里补充 server 来源，帮助模型区分本地工具和外部工具。
+
+优先级 2：
+
+- 配置层支持 `enabled` / `disabled`。
+- 配置层支持简单 `include_tools` / `exclude_tools`。
+- 避免所有 MCP tools 无条件暴露给模型。
+
+优先级 3：
+
+- HTTP config 支持 headers。
+- 为 HTTP MCP 增加更清楚的错误提示。
+- 如果真实 server 需要 session id，再设计 session manager。
+
+暂时不建议马上做：
+
+- OAuth
+- resource / prompt / sampling
+- 完整长连接 SSE
+- MCP server 自动安装
+- 图形化权限 UI
+
+这些属于生产级复杂度，不是当前个人助理第二轮最优先的瓶颈。
+
+### 暂不处理
+
+当前先不把 MCP 做成完整平台。
+
+MyAgent 的定位仍然是个人助理 runtime。MCP 在这里的目标是：
+
+```text
+让外部工具稳定、安全、可观察地进入 Agent 工具层。
+```
+
+不是：
+
+```text
+实现完整 MCP host 的全部规范能力。
+```
+
+### 测试计划
+
+继续保留当前测试：
+
+```text
+tests/test_mcp_stdio.py
+tests/test_mcp_http.py
+tests/test_mcp_config.py
+tests/test_mcp_adapter.py
+tests/test_mcp_registry.py
+```
+
+如果后续做 MCP Phase 2A，建议新增：
+
+- register summary 测试
+- include/exclude tools 配置测试
+- adapter description 包含 server 来源测试
+- MCP 连接失败不会阻塞 CLI 启动测试
+
+### 面试表达更新
+
+可以这样解释 MCP 模块：
+
+```text
+MyAgent 没有把所有外部能力都硬编码成本地工具，而是通过 MCP 接入外部 server。
+MCP client 负责 initialize、tools/list 和 tools/call。
+每个 MCP tool 会被 McpToolAdapter 包装成统一 ToolRegistry 里的 Tool。
+AgentLoop 不需要知道工具来自本地还是 MCP，所有工具都走同一套 schema、参数校验和执行流程。
+为了避免命名冲突，MCP tool 会加 server 前缀。
+第二阶段我重点关注可观测性和工具过滤，因为 MCP server 一多，最先出现的问题不是协议不够全，而是工具太多、来源不清楚、失败不好排查。
+```
+
+## MCP Phase 2A Implementation Note
+
+本阶段先落地最小可观测性，不扩展 MCP 协议面。
+
+新增：
+
+```text
+McpRegistrationSummary
+register_mcp_tools_with_summary(...)
+```
+
+summary 字段：
+
+```text
+server_name
+transport
+tool_count
+registered_tool_names
+```
+
+`register_mcp_tools(...)` 保留原行为，继续返回 registered tool names，避免破坏已有调用方。
+
+CLI 连接 MCP server 成功后，现在会打印：
+
+```text
+MyAgent: Connected MCP server didi-mcp (http) with 13 tools: mcp_didi_xxx, ...
+```
+
+`McpToolAdapter.description` 也会带上 server 来源：
+
+```text
+Search repository issues. (MCP server: github.)
+```
+
+这样模型和调试者都能更容易区分本地工具与外部 MCP 工具。
+
+当前还没有把 summary 写入 trace。原因是 MCP server 连接发生在 `AgentLoop` 启动前，而当前 trace 是 session/turn 维度。后续如果要记录启动期 trace，应先设计 runtime-level trace 或 startup diagnostics。
+
+## MCP Phase 2B Implementation Note
+
+本阶段继续补齐 MCP 工具过滤和启动期持久记录。
+
+### 配置字段
+
+`McpServerConfig` 新增：
+
+```text
+enabled: bool = true
+include_tools: tuple[str, ...] = ()
+exclude_tools: tuple[str, ...] = ()
+```
+
+JSON 支持 camelCase 和 snake_case：
+
+```json
+{
+  "mcpServers": {
+    "demo": {
+      "enabled": true,
+      "command": "python",
+      "args": ["server.py"],
+      "includeTools": ["search", "mcp_demo_read"],
+      "excludeTools": ["delete"]
+    }
+  }
+}
+```
+
+规则：
+
+- `enabled: false` 的 server 不会连接。
+- `includeTools` 非空时，只注册命中的工具。
+- `excludeTools` 会排除命中的工具。
+- 匹配既支持 MCP 原始工具名，也支持 MyAgent 注册后的安全工具名。
+
+### 注册摘要
+
+`McpRegistrationSummary` 现在记录：
+
+```text
+server_name
+transport
+discovered_tool_count
+tool_count
+registered_tool_names
+skipped_tool_names
+```
+
+CLI 输出会显示：
+
+```text
+Connected MCP server demo (stdio) with 1/2 tools. Details saved to startup trace.
+```
+
+其中 `1/2` 表示注册 1 个、发现 2 个。
+交互层不展开完整工具名，避免个人 Agent 启动时刷屏。完整 registered / skipped 工具列表保存在 startup trace 里。
+
+### 启动期 trace
+
+MCP 连接发生在普通对话 turn 之前，因此本轮采用 runtime startup trace：
+
+```text
+session_key = runtime:startup
+turn_id = startup
+event = mcp_server_registered
+event = mcp_server_connect_failed
+```
+
+默认写入：
+
+```text
+data/traces/runtime_startup.jsonl
+```
+
+这让用户可以在不进入具体聊天 session 的情况下，复盘启动时 MCP server 连接和工具注册情况。

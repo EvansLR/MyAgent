@@ -1,5 +1,6 @@
 from pathlib import Path
 import shutil
+from datetime import datetime, timezone
 
 from myagent.agent import ContextBudget, ContextBuilder, format_runtime_environment
 from myagent.bus import InboundMessage
@@ -34,7 +35,7 @@ def test_context_builder_builds_system_prompt() -> None:
 
 
 def test_context_builder_builds_messages_with_history() -> None:
-    builder = ContextBuilder(identity="Test identity.")
+    builder = ContextBuilder(identity="Test identity.", delegation_policy=None)
     history = [
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": "second"},
@@ -54,13 +55,18 @@ def test_context_builder_includes_runtime_environment() -> None:
     workspace = make_workspace("runtime")
     builder = ContextBuilder(
         identity="Test identity.",
-        runtime_environment=format_runtime_environment(workspace),
+        runtime_environment=format_runtime_environment(
+            workspace,
+            now=datetime(2026, 5, 9, 10, 30, tzinfo=timezone.utc),
+        ),
     )
 
     messages, report = builder.build_messages_with_report(make_message("hello"))
 
     assert "# Runtime Environment" in messages[0]["content"]
     assert str(workspace.resolve()) in messages[0]["content"]
+    assert "Current date: 2026-05-09" in messages[0]["content"]
+    assert "Resolve relative dates" in messages[0]["content"]
     assert "Do not invent absolute paths." in messages[0]["content"]
     sections = {section.name: section for section in report.sections}
     assert sections["Runtime Environment"].tier == "protected"
@@ -100,6 +106,7 @@ def test_context_builder_reports_sections_and_core_memory_tier() -> None:
 def test_context_builder_trims_history_by_budget() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
+        delegation_policy=None,
         budget=ContextBudget(max_history_messages=2),
     )
     history = [
@@ -144,3 +151,16 @@ def test_context_builder_includes_available_skills() -> None:
     assert "# Available Skills" in messages[0]["content"]
     assert "code-review" in messages[0]["content"]
     assert "skills/code-review/SKILL.md" in messages[0]["content"]
+
+
+def test_context_builder_includes_delegation_policy_as_protected_section() -> None:
+    builder = ContextBuilder(identity="Test identity.")
+
+    messages, report = builder.build_messages_with_report(make_message("research this"))
+
+    assert "# Delegation Policy" in messages[0]["content"]
+    assert "Use delegate_task proactively" in messages[0]["content"]
+    assert "Do not require the user to explicitly ask for a subagent" in messages[0]["content"]
+    sections = {section.name: section for section in report.sections}
+    assert sections["Delegation Policy"].tier == "protected"
+    assert sections["Delegation Policy"].source == "agent:delegation_policy"
