@@ -54,6 +54,7 @@ async def test_agent_loop_records_basic_trace_events() -> None:
         "llm_request",
         "llm_response",
         "final_answer",
+        "turn_completed",
     ]
     assert events[0]["data"]["content"] == "hello"
     context = events[1]["data"]["context"]
@@ -61,7 +62,10 @@ async def test_agent_loop_records_basic_trace_events() -> None:
     assert context["history"]["included_messages"] == 0
     assert context["sections"][0]["name"] == "Identity"
     assert context["sections"][0]["tier"] == "protected"
-    assert events[-1]["data"]["content_preview"] == "Echo: hello"
+    assert events[-2]["data"]["content_preview"] == "Echo: hello"
+    assert events[-1]["data"]["stop_reason"] == "final_output"
+    assert events[-1]["data"]["iterations"] == 1
+    assert events[-1]["data"]["tool_call_count"] == 0
 
 
 class TraceToolProvider:
@@ -112,6 +116,10 @@ async def test_agent_loop_records_tool_trace_events() -> None:
     assert tool_call["data"]["tool_name"] == "read_file"
     assert tool_result["data"]["tool_name"] == "read_file"
     assert "hello from file" in tool_result["data"]["result_preview"]
+    completed = next(event for event in events if event["event"] == "turn_completed")
+    assert completed["data"]["stop_reason"] == "final_output"
+    assert completed["data"]["iterations"] == 2
+    assert completed["data"]["tool_call_count"] == 1
 
 
 class TraceFailingProvider:
@@ -139,3 +147,48 @@ async def test_agent_loop_records_error_trace_event() -> None:
     error = next(event for event in events if event["event"] == "error")
     assert error["data"]["type"] == "RuntimeError"
     assert error["data"]["message"] == "provider down"
+    completed = next(event for event in events if event["event"] == "turn_completed")
+    assert completed["data"]["stop_reason"] == "provider_error"
+
+
+class RepeatingToolProvider:
+    async def generate(self, messages):
+        return "fallback"
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        return ProviderResponse(
+            tool_calls=[
+                ToolCall(
+                    id="repeat-call",
+                    name="read_file",
+                    arguments={"path": "note.txt"},
+                )
+            ]
+        )
+
+
+async def test_agent_loop_records_max_iteration_stop_and_repeated_tool_warning() -> None:
+    root = make_workspace("max-iterations")
+    workspace = root / "workspace"
+    workspace.mkdir()
+    (workspace / "note.txt").write_text("loop evidence", encoding="utf-8")
+    bus = MessageBus()
+    agent = AgentLoop(
+        bus,
+        provider=RepeatingToolProvider(),
+        tool_registry=create_default_registry(workspace),
+        trace_store=JsonlTraceStore(root / "traces"),
+        max_tool_iterations=3,
+    )
+
+    await bus.publish_inbound(make_message("read note repeatedly"))
+    outbound = await agent.process_next()
+
+    assert "Tool call limit reached" in outbound.content
+    events = read_events(root / "traces" / "cli_default.jsonl")
+    completed = next(event for event in events if event["event"] == "turn_completed")
+    assert completed["data"]["stop_reason"] == "max_tool_iterations"
+    assert completed["data"]["iterations"] == 3
+    assert completed["data"]["tool_call_count"] == 3
+    assert completed["data"]["tool_error_count"] == 0
+    assert "repeated_tool_call:read_file" in completed["data"]["warnings"]

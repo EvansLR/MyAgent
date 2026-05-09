@@ -171,7 +171,7 @@ async def test_agent_loop_registers_and_executes_delegate_task() -> None:
     assert outbound.content == "Main answer with delegated result."
     status = await bus.consume_outbound()
     final = await bus.consume_outbound()
-    assert status.content.startswith("正在调用工具：delegate_task")
+    assert status.content.startswith("Calling tool: delegate_task")
     assert final == outbound
     main_tool_names = [tool["function"]["name"] for tool in provider.seen_tools[0]]
     child_tool_names = [tool["function"]["name"] for tool in provider.seen_tools[1]]

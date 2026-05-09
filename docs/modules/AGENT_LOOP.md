@@ -525,3 +525,295 @@ InboundMessage -> Provider -> OutboundMessage
 - ReAct 多轮工具循环
 
 OpenAI-compatible Provider 已经接入。下一步建议做 ContextBuilder，让 AgentLoop 从“单条用户消息”升级为“结构化上下文消息”。
+## Phase 2 Review
+
+AgentLoop has evolved from the original Echo-only message bridge into the main
+runtime coordinator. It now handles context assembly, LLM calls, tool loops,
+trace events, memory extraction, skills, MCP tools, web tools, and SubAgent
+delegation.
+
+Current runtime flow:
+
+```text
+InboundMessage
+  -> trace user_message
+  -> ContextBuilder.build_messages_with_report
+  -> trace context_built
+  -> provider.generate_response(...)
+  -> if tool calls:
+       publish tool status
+       execute tool
+       append tool result
+       repeat
+  -> final answer
+  -> trace final_answer
+  -> post-turn memory extraction
+  -> update in-memory history
+```
+
+### External Research
+
+OpenAI Agents SDK Runner:
+
+- Reference: https://openai.github.io/openai-agents-python/ref/run/
+- The runner loop is explicit:
+  - invoke the agent
+  - stop when final output exists
+  - switch agent if there is a handoff
+  - otherwise run tool calls and loop again
+- It treats `max_turns`, hooks, run config, sessions, and guardrail exceptions as
+  first-class runtime concerns.
+
+AutoGen AgentChat termination:
+
+- Reference: https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/termination.html
+- AutoGen makes termination conditions explicit and composable.
+- Examples include max messages, text mention, token usage, timeout, handoff,
+  external stop, and function-call termination.
+- The important lesson for MyAgent: "tool iteration limit" is only one stop
+  condition. A mature loop should make stopping reasons observable and
+  extensible.
+
+CrewAI tasks/processes/guardrails:
+
+- References:
+  - https://docs.crewai.com/concepts/tasks
+  - https://docs.crewai.com/en/concepts/processes
+- CrewAI separates tasks, agents, process strategy, task output, and guardrails.
+- Task guardrails can validate output and send feedback back for retry, bounded
+  by retry limits.
+- Processes can be sequential or hierarchical.
+- The useful lesson for MyAgent is not to copy CrewAI's heavier abstraction, but
+  to separate "run state", "stop reason", and "validation/fallback" from the
+  raw tool loop.
+
+LangGraph:
+
+- LangGraph-style systems model control flow as state graphs with explicit
+  nodes, edges, checkpoints, and resumability.
+- MyAgent does not need that level now, but the design suggests a future path:
+  if AgentLoop grows too complex, split it into run-state transitions instead of
+  more nested conditionals.
+
+### Current Problems
+
+1. AgentLoop owns too many responsibilities.
+
+It currently coordinates:
+
+- context building
+- LLM requests
+- tool iteration
+- user-visible tool status
+- tool execution
+- SubAgent special tracing
+- memory tool registration
+- post-turn memory extraction
+- session history
+- trace writes
+- error handling
+
+This is still acceptable for Phase 2, but it is becoming the central pressure
+point.
+
+2. Stop reasons are not structured.
+
+Current stop cases are implicit:
+
+- provider returns no tool calls
+- max tool iteration count is reached
+- provider/tool exception becomes an error string
+
+The model-facing fallback for max tool iterations is a plain final message. Trace
+does not yet record a structured `stop_reason`.
+
+3. Tool-loop behavior is too naive.
+
+The loop does not yet detect:
+
+- repeated identical tool calls
+- repeated failing tool calls
+- search/fetch loops that do not improve evidence
+- oversized tool results
+- when a partial answer is better than another tool call
+
+4. Error handling is coarse.
+
+Tool execution failures become text in the conversation. That is simple and
+useful, but trace should also record error category and recovery/fallback path.
+
+5. Memory extraction is embedded directly in the turn.
+
+This is currently fine, but it means AgentLoop owns post-turn background work.
+Later it may be better represented as a post-turn hook.
+
+6. SubAgent integration is special-cased.
+
+`delegate_task` needs special trace handling. This is useful now, but future
+tool categories may need a cleaner hook/event mechanism.
+
+### Phase 2 Direction
+
+Do not jump straight to a full workflow graph. The next useful upgrade is a
+small run-state layer inspired by OpenAI Runner and AutoGen termination
+conditions.
+
+Recommended Phase 2A for AgentLoop:
+
+1. Add an `AgentRunState` / `AgentTurnState` data object.
+
+It should hold:
+
+```text
+session_key
+turn_id
+iteration
+max_iterations
+tool_call_count
+tool_error_count
+last_tool_names
+stop_reason
+warnings
+```
+
+2. Add explicit stop reasons.
+
+Initial values:
+
+```text
+final_output
+max_tool_iterations
+provider_error
+tool_loop_error
+cancelled
+```
+
+3. Trace stop reason.
+
+Add a compact event near the end of each turn:
+
+```text
+turn_completed
+  stop_reason
+  iterations
+  tool_call_count
+  tool_error_count
+  warning_count
+```
+
+4. Improve max-tool fallback.
+
+When the tool limit is reached, the final answer should say what happened in a
+clear, user-facing way and should encourage a smaller follow-up request if
+needed. Trace should preserve the technical details.
+
+5. Add lightweight repeated-tool detection.
+
+First version can be conservative:
+
+- if the same tool name and same arguments repeat more than N times in one turn,
+  add a warning to trace
+- do not block the call yet
+- use this to diagnose loops before enforcing policy
+
+6. Keep guardrails simple.
+
+Do not build a full guardrail framework now. For Phase 2, treat guardrails as
+future hooks and implement only structured stop/error reporting.
+
+### Deferred
+
+- Full graph runtime
+- Persistent resumable runs
+- Background runs
+- Human approval workflow
+- Token-usage termination
+- Tool result summarization/pruning
+- Deterministic planner/router
+- Complex guardrail retry chains
+
+### Test Strategy
+
+Focused tests should cover:
+
+- final output stop reason
+- max tool iteration stop reason
+- repeated tool call warning
+- provider error stop reason
+- trace contains `turn_completed`
+- existing tool-loop behavior remains unchanged
+
+### Interview Explanation
+
+MyAgent's AgentLoop started as a minimal message bridge, but by Phase 2 it became
+the runtime coordinator for context, LLM calls, tools, memory, tracing, and
+SubAgents. Rather than immediately replacing it with a heavy workflow graph, the
+next improvement is to make the run state explicit: track iterations, stop
+reasons, tool counts, warnings, and errors. This follows the same design
+direction as OpenAI's Runner loop and AutoGen's explicit termination conditions,
+while staying small enough for the current local personal assistant runtime.
+
+## Phase 2A Implementation Notes
+
+This phase adds a small observable run-state layer without changing the overall
+AgentLoop architecture.
+
+Changed files:
+
+- `myagent/agent/loop.py`
+- `tests/test_agent_trace.py`
+
+Implemented:
+
+- Added `AgentTurnState`.
+- Tracks:
+  - current iteration
+  - max iterations
+  - tool call count
+  - tool error count
+  - stop reason
+  - warnings
+  - repeated tool call signatures
+- Added `turn_completed` trace event.
+- Added stop reasons:
+  - `final_output`
+  - `max_tool_iterations`
+  - `provider_error`
+- Added repeated tool call diagnostics:
+  - records `repeated_tool_call:<tool_name>` after the same tool and arguments
+    repeat more than the current threshold.
+- Improved max-tool-limit fallback text.
+
+Trace example:
+
+```text
+turn_completed
+  stop_reason: final_output
+  iterations: 2
+  max_iterations: 8
+  tool_call_count: 1
+  tool_error_count: 0
+  warnings: []
+```
+
+Important boundary:
+
+- Repeated tool calls are only traced as warnings.
+- The loop does not block repeated calls yet.
+- This phase does not add graph runtime, background runs, approval, or complex
+  guardrail retry chains.
+
+Verification:
+
+```text
+python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py
+12 passed
+
+python -m pytest
+110 passed, 1 skipped
+```
+
+Small cleanup included:
+
+- The user-facing tool status prefix in `loop.py` was normalized from an older
+  mojibake string to ASCII: `Calling tool: ...`.

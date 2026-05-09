@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,6 +27,43 @@ from myagent.tools import (
 from myagent.tracing import JsonlTraceStore, TraceStore
 
 MAX_TOOL_ITERATIONS = 8
+MAX_REPEATED_TOOL_CALLS = 2
+
+
+@dataclass(slots=True)
+class AgentTurnState:
+    """Small observable state object for one AgentLoop turn."""
+
+    session_key: str
+    turn_id: str
+    max_iterations: int
+    iteration: int = 0
+    tool_call_count: int = 0
+    tool_error_count: int = 0
+    stop_reason: str = ""
+    warnings: list[str] = field(default_factory=list)
+    _tool_call_counts: dict[str, int] = field(default_factory=dict)
+
+    def record_tool_result(self, tool_call: ToolCall, result: str) -> None:
+        self.tool_call_count += 1
+        if result.startswith("Error"):
+            self.tool_error_count += 1
+        signature = _tool_call_signature(tool_call)
+        self._tool_call_counts[signature] = self._tool_call_counts.get(signature, 0) + 1
+        if self._tool_call_counts[signature] == MAX_REPEATED_TOOL_CALLS + 1:
+            self.warnings.append(f"repeated_tool_call:{tool_call.name}")
+
+    def to_completion_data(self) -> dict[str, object]:
+        """Return trace data for the end of the turn."""
+        return {
+            "stop_reason": self.stop_reason or "unknown",
+            "iterations": self.iteration,
+            "max_iterations": self.max_iterations,
+            "tool_call_count": self.tool_call_count,
+            "tool_error_count": self.tool_error_count,
+            "warnings": list(self.warnings),
+            "warning_count": len(self.warnings),
+        }
 
 
 class AgentLoop:
@@ -88,6 +126,11 @@ class AgentLoop:
     async def process_message(self, inbound: InboundMessage) -> OutboundMessage:
         """Generate and publish an outbound response for one inbound message."""
         turn_id = uuid4().hex
+        turn_state = AgentTurnState(
+            session_key=inbound.session_key,
+            turn_id=turn_id,
+            max_iterations=self.max_tool_iterations,
+        )
         self._trace(
             inbound.session_key,
             turn_id,
@@ -115,8 +158,9 @@ class AgentLoop:
             },
         )
         try:
-            content = await self._generate_with_tools(messages, inbound, turn_id)
+            content = await self._generate_with_tools(messages, inbound, turn_state)
         except Exception as exc:
+            turn_state.stop_reason = "provider_error"
             content = f"Error: {exc}"
             self._trace(
                 inbound.session_key,
@@ -127,6 +171,8 @@ class AgentLoop:
                     "message": str(exc),
                 },
             )
+        if not turn_state.stop_reason:
+            turn_state.stop_reason = "final_output"
         outbound = OutboundMessage(
             channel=inbound.channel,
             chat_id=inbound.chat_id,
@@ -140,6 +186,12 @@ class AgentLoop:
                 "content_preview": _preview(content),
                 "content_length": len(content),
             },
+        )
+        self._trace(
+            inbound.session_key,
+            turn_id,
+            "turn_completed",
+            turn_state.to_completion_data(),
         )
         await self.bus.publish_outbound(outbound)
         await self._extract_memory_after_turn(inbound, content, turn_id)
@@ -155,23 +207,28 @@ class AgentLoop:
         self,
         messages: list[Message],
         inbound: InboundMessage,
-        turn_id: str,
+        turn_state: AgentTurnState,
     ) -> str:
         """Generate a response, allowing the provider to call registered tools."""
         if not hasattr(self.provider, "generate_response"):
-            self._trace_llm_request(inbound.session_key, turn_id, 1, len(messages), 0)
+            turn_state.iteration = 1
+            turn_state.stop_reason = "final_output"
+            self._trace_llm_request(inbound.session_key, turn_state.turn_id, 1, len(messages), 0)
             return await self.provider.generate(messages)
 
         tools = self.tool_registry.get_definitions()
         if not tools:
-            self._trace_llm_request(inbound.session_key, turn_id, 1, len(messages), 0)
+            turn_state.iteration = 1
+            turn_state.stop_reason = "final_output"
+            self._trace_llm_request(inbound.session_key, turn_state.turn_id, 1, len(messages), 0)
             return await self.provider.generate(messages)
 
         working_messages = list(messages)
         for iteration in range(1, self.max_tool_iterations + 1):
+            turn_state.iteration = iteration
             self._trace_llm_request(
                 inbound.session_key,
-                turn_id,
+                turn_state.turn_id,
                 iteration,
                 len(working_messages),
                 len(tools),
@@ -179,7 +236,7 @@ class AgentLoop:
             response = await self.provider.generate_response(working_messages, tools=tools)
             self._trace(
                 inbound.session_key,
-                turn_id,
+                turn_state.turn_id,
                 "llm_response",
                 {
                     "iteration": iteration,
@@ -189,6 +246,7 @@ class AgentLoop:
                 },
             )
             if not response.tool_calls:
+                turn_state.stop_reason = "final_output"
                 return response.content
 
             working_messages.append(_assistant_tool_call_message(response))
@@ -197,12 +255,18 @@ class AgentLoop:
                 result = await self._execute_tool_call(
                     tool_call,
                     inbound.session_key,
-                    turn_id,
+                    turn_state.turn_id,
                     inbound.content,
                 )
+                turn_state.record_tool_result(tool_call, result)
                 working_messages.append(_tool_result_message(tool_call, result))
 
-        return "工具调用次数已达到上限，暂时还没有生成最终回答。"
+        turn_state.stop_reason = "max_tool_iterations"
+        return (
+            "Tool call limit reached before a stable final answer was produced. "
+            "Please narrow the request, or ask me to continue with one specific direction."
+        )
+
 
     async def _execute_tool_call(
         self,
@@ -459,7 +523,7 @@ def _format_tool_status(tool_call: ToolCall) -> str:
     """Build a short human-readable status line for a tool call."""
     args = _format_tool_arguments(tool_call.arguments)
     suffix = f" {args}" if args else ""
-    return f"正在调用工具：{tool_call.name}{suffix}"
+    return f"Calling tool: {tool_call.name}{suffix}"
 
 
 def _format_tool_arguments(arguments: dict[str, object]) -> str:
@@ -489,6 +553,12 @@ def _delegation_mode(arguments: dict[str, object], user_content: str) -> str:
     if any(marker in marker_text for marker in explicit_markers):
         return "explicit"
     return "automatic"
+
+
+def _tool_call_signature(tool_call: ToolCall) -> str:
+    """Return a stable signature for repeated tool-call diagnostics."""
+    arguments = json.dumps(tool_call.arguments, sort_keys=True, ensure_ascii=False)
+    return f"{tool_call.name}:{arguments}"
 
 
 def _preview(text: str, limit: int = 300) -> str:

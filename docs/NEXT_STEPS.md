@@ -890,3 +890,75 @@ Expected behavior:
 - The main Agent may proactively call `delegate_task`.
 - Trace should show `subagent_start` with `delegation_mode=automatic` when the
   user did not explicitly request a subagent.
+## AgentLoop Phase 2 Review
+
+After the SubAgent checkpoint, the next module is AgentLoop because it is now the
+runtime coordinator for context, tools, memory, skills, MCP, web search, trace,
+and SubAgent delegation.
+
+External framework lessons recorded in:
+
+```text
+docs/modules/AGENT_LOOP.md
+```
+
+References used:
+
+- OpenAI Agents SDK Runner: explicit run loop, max turns, handoffs, tools,
+  guardrails, hooks.
+- AutoGen AgentChat: explicit termination conditions such as max messages,
+  timeout, handoff, external stop, and function-call termination.
+- CrewAI: separates task, process, output, and guardrail concepts.
+- LangGraph: suggests future state-graph direction, but that is too heavy for
+  current Phase 2.
+
+Current conclusion:
+
+- Do not rewrite AgentLoop as a full graph runtime now.
+- Do not add complex guardrails yet.
+- First add a small explicit run-state layer.
+
+Recommended next implementation:
+
+1. Add `AgentTurnState` or `AgentRunState`. Done.
+2. Track. Done:
+   - iteration
+   - tool call count
+   - tool error count
+   - repeated tool call warnings
+   - stop reason
+3. Add structured stop reasons. Partially done:
+   - `final_output`
+   - `max_tool_iterations`
+   - `provider_error`
+   - `tool_loop_error` deferred
+   - `cancelled` deferred
+4. Add a `turn_completed` trace event. Done.
+5. Improve the max-tool-iteration fallback message. Done.
+6. Add focused tests before broader refactors. Done.
+
+Implemented AgentLoop Phase 2A:
+
+- `AgentTurnState`
+- `turn_completed` trace event
+- `stop_reason`
+- tool call/error counts
+- repeated tool call warning
+- clearer max-tool-limit fallback
+- normalized AgentLoop tool status text to `Calling tool: ...`
+
+Verification:
+
+```text
+python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py
+12 passed
+
+python -m pytest
+110 passed, 1 skipped
+```
+
+Recommended next step:
+
+1. Commit AgentLoop Phase 2A as a focused checkpoint after user confirmation.
+2. After that, decide whether the next module should be Trace inspect commands
+   or Tool loop diagnostics.
