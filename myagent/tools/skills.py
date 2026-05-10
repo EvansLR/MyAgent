@@ -62,6 +62,15 @@ class SkillGetTool(Tool):
                     "content_length": len(content),
                 },
             )
+            self.trace_hook(
+                "active_skill_set",
+                {
+                    "skill_id": skill.id,
+                    "name": skill.name,
+                    "scope": "turn",
+                    "reason": "loaded_by_skill_get",
+                },
+            )
         allowed = ", ".join(skill.allowed_tools) if skill.allowed_tools else "not specified"
         return (
             f"Skill: {skill.id}\n"

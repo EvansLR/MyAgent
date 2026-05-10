@@ -81,7 +81,16 @@ async def test_skill_get_tool_traces_loaded_skill() -> None:
                 "path": (root / "code-review" / "SKILL.md").as_posix(),
                 "content_length": len((root / "code-review" / "SKILL.md").read_text(encoding="utf-8")),
             },
-        )
+        ),
+        (
+            "active_skill_set",
+            {
+                "skill_id": "code-review",
+                "name": "code-review",
+                "scope": "turn",
+                "reason": "loaded_by_skill_get",
+            },
+        ),
     ]
 
 

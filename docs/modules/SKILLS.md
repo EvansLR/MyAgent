@@ -890,6 +890,7 @@ Implemented direction:
 skill_get(skill_id)
   -> load full SKILL.md
   -> emit trace event: skill_loaded
+  -> emit trace event: active_skill_set
 ```
 
 Trace event:
@@ -904,6 +905,19 @@ data:
   description
   path
   content_length
+```
+
+Trace event:
+
+```text
+session: runtime:skills
+turn: skills
+event: active_skill_set
+data:
+  skill_id
+  name
+  scope: turn
+  reason: loaded_by_skill_get
 ```
 
 Deferred:
@@ -1029,9 +1043,9 @@ subagent skill inheritance:
 These are intentionally deferred because they need clearer task boundaries,
 conflict handling, and token budgeting.
 
-### Proposed Next Step
+### Implementation Note
 
-Implement only:
+Implemented in the first Active Skill step:
 
 ```text
 skill_get success

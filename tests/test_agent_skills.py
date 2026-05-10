@@ -123,10 +123,19 @@ async def test_agent_loop_traces_skill_get_usage() -> None:
     await bus.publish_inbound(make_message("Use code-review skill."))
     await agent.process_next()
 
-    events = [
+    lines = (root / "traces" / "runtime_skills.jsonl").read_text(encoding="utf-8").splitlines()
+    load_events = [
         line
-        for line in (root / "traces" / "runtime_skills.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in lines
         if "skill_loaded" in line
     ]
-    assert events
-    assert "code-review" in events[0]
+    active_events = [
+        line
+        for line in lines
+        if "active_skill_set" in line
+    ]
+    assert load_events
+    assert active_events
+    assert "code-review" in load_events[0]
+    assert "code-review" in active_events[0]
+    assert "loaded_by_skill_get" in active_events[0]
