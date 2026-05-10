@@ -334,8 +334,11 @@ def format_runtime_environment(
             f"- Workspace root: {root}",
             f"- Path style: {path_style}",
             "- Resolve relative dates such as today, tomorrow, and yesterday to absolute dates before searching.",
-            "- Filesystem tools are scoped to the workspace root.",
-            "- Prefer relative paths such as '.' unless the user provides an explicit in-workspace path.",
+            "- Filesystem tools resolve relative paths inside the workspace root.",
+            "- Common personal folder aliases such as Desktop, Downloads, Documents, and 桌面 are recognized.",
+            "- Read-only filesystem operations do not require approval.",
+            "- Mutating filesystem operations outside the workspace require explicit user approval from the current channel.",
+            "- Prefer relative paths such as '.' unless the user asks for a specific external location.",
             "- Do not invent absolute paths.",
         ]
     )

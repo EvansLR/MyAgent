@@ -12,6 +12,7 @@ from myagent.cli.commands import (
     make_inbound_message,
     parse_cli_command,
     run_chat,
+    format_approval_prompt,
     _trace_startup,
 )
 from myagent.bus import MessageBus, OutboundMessage
@@ -84,6 +85,15 @@ def test_help_text_mentions_supported_commands() -> None:
     assert "/help" in help_text
     assert "/new" in help_text
     assert "/stop" in help_text
+
+
+def test_format_approval_prompt_is_structured() -> None:
+    text = format_approval_prompt("Action: move_file\nDestination: Desktop/note.txt")
+
+    assert "Permission request" in text
+    assert "Action: move_file" in text
+    assert "Destination: Desktop/note.txt" in text
+    assert "allow this one action" in text
 
 
 def test_handle_unknown_command_raises() -> None:
@@ -234,3 +244,47 @@ async def test_run_chat_prints_status_before_final_reply() -> None:
     assert outputs.index("MyAgent: 正在调用工具：list_dir path=docs/modules") < outputs.index(
         "MyAgent: Final summary"
     )
+async def test_run_chat_handles_approval_request_before_final_reply(monkeypatch) -> None:
+    bus = MessageBus()
+    inputs = iter(["move file", "/stop"])
+    outputs: list[str] = []
+    decisions: list[bool] = []
+
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    async def publish_reply() -> None:
+        inbound = await bus.consume_inbound()
+        import asyncio
+
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        await bus.publish_outbound(
+            OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.chat_id,
+                content="Move note.txt to Desktop?",
+                metadata={"kind": "approval_request", "future": future},
+            )
+        )
+        decisions.append(await future)
+        await bus.publish_outbound(
+            OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.chat_id,
+                content="Moved.",
+            )
+        )
+
+    import asyncio
+
+    reply_task = asyncio.create_task(publish_reply())
+    await run_chat(
+        bus,
+        input_func=lambda _prompt: next(inputs),
+        output_func=outputs.append,
+    )
+    await reply_task
+
+    assert decisions == [True]
+    assert any("Permission request" in output for output in outputs)
+    assert any("allow this one action" in output for output in outputs)
+    assert "MyAgent: Moved." in outputs

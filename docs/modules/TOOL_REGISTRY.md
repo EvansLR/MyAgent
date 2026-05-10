@@ -865,3 +865,238 @@ web_search -> web_fetch -> final answer
 tests/test_web_tool.py
 tests/test_tool_registry.py
 ```
+## File Task Phase 2 Review
+
+Recent local testing showed that MyAgent can now create files through
+`write_file`, but file-modification tasks are still awkward. If the user asks to
+adjust an existing file, the model currently has two weak options:
+
+- read the file and rewrite the whole file with `write_file overwrite=true`
+- explain the change instead of applying it
+
+That is enough for demos, but not smooth for a personal assistant that should be
+able to handle small project edits.
+
+### Current File Tool Capability
+
+Available in the default registry:
+
+```text
+list_dir
+read_file
+write_file
+```
+
+Strengths:
+
+- workspace-scoped paths
+- relative paths encouraged
+- `write_file` creates parent directories
+- `write_file` refuses accidental overwrite unless `overwrite=true`
+
+Gap:
+
+- no minimal local edit tool
+- no way to replace a small section without rewriting the whole file
+
+### Phase 2 Decision
+
+Add one small, explainable edit tool:
+
+```text
+edit_file(path, old_text, new_text, replace_all=false)
+```
+
+Behavior:
+
+- reads a UTF-8 file inside the workspace
+- finds exact `old_text`
+- replaces it with `new_text`
+- default replaces exactly one occurrence
+- if `old_text` is missing, return an error
+- if multiple occurrences exist and `replace_all=false`, return an error asking
+  for more specific text
+- if `replace_all=true`, replace every occurrence
+
+Why exact string replacement:
+
+- simpler than patch/diff
+- easy to test
+- easy to explain
+- good enough for small file tasks
+- avoids inventing a large editor subsystem
+
+Deferred:
+
+- diff patch parser
+- AST-aware edits
+- multi-file transactions
+- user approval workflow
+- automatic formatting
+- shell-based editing
+
+### Expected User Workflow
+
+For create-file tasks:
+
+```text
+write_file path=...
+```
+
+For small edit tasks:
+
+```text
+read_file path=...
+edit_file path=... old_text=... new_text=...
+```
+
+For larger edits, the model can still choose `write_file overwrite=true`, but
+small targeted changes should prefer `edit_file`.
+
+### Implementation Note
+
+Implemented files:
+
+- `myagent/tools/filesystem.py`
+- `myagent/tools/__init__.py`
+- `tests/test_filesystem_tools.py`
+- `tests/test_tool_registry.py`
+
+Runtime behavior:
+
+- `create_default_registry(...)` now registers `edit_file` with the other
+  built-in tools.
+- `edit_file` uses the same workspace path boundary as `list_dir`, `read_file`,
+  and `write_file`.
+- `edit_file` only handles exact UTF-8 text replacement.
+- Ambiguous edits are rejected by default when `old_text` appears more than
+  once.
+- `replace_all=true` is available when replacing every occurrence is explicitly
+  intended.
+
+Manual test path:
+
+```text
+python -m myagent
+You: read note.txt, then replace "old text" with "new text"
+```
+
+Expected observable behavior:
+
+```text
+Calling tool: read_file ...
+Calling tool: edit_file ...
+```
+
+The file should be changed in the current workspace without the model rewriting
+the whole file through `write_file overwrite=true`.
+
+## File Access Approval Phase 2 Review
+
+The workspace-only file boundary is safe, but it is too limited for a personal
+assistant. A user may reasonably ask MyAgent to copy a generated file to the
+Desktop, Downloads, or another personal folder.
+
+The first CLI confirmation experiment was not good enough because the tool
+called terminal input directly from the background agent task. That made the
+terminal output uglier and bypassed the Channel abstraction.
+
+### Phase 2 Decision
+
+Use one shared file-access approval policy:
+
+```text
+workspace root: allowed without prompt
+read-only outside workspace: allowed
+write/mutate outside workspace: requires approval from the current channel
+```
+
+Behavior:
+
+- relative paths are resolved against the workspace
+- common personal folder aliases such as `Desktop`, `Downloads`, `Documents`,
+  and `桌面` are resolved to real paths
+- `list_dir` and `read_file` are read-only and do not create approval requests
+- `write_file`, `edit_file`, `copy_file`, and `move_file` create approval
+  requests when they touch paths outside the workspace
+- CLI displays the approval request through the channel loop, not from inside
+  the tool
+- if the current channel has no approval callback, outside-workspace access is
+  denied
+- overwrite is rejected unless `overwrite=true`
+- missing external destination directories are not created silently
+
+The shared policy currently applies to:
+
+```text
+list_dir
+read_file
+write_file
+edit_file
+copy_file
+move_file
+```
+
+This means "create a file on Desktop", "copy a file to Desktop", and "move a
+file to Desktop" all go through the same approval path. The CLI keeps the
+original Rich spinner behavior for normal tool status; when approval is needed,
+the channel temporarily displays a permission request and then resumes the turn.
+
+Current permission matrix:
+
+```text
+list_dir:
+  read-only, allowed
+
+read_file:
+  read-only, allowed
+
+write_file:
+  workspace path: allowed
+  outside workspace: approval required
+
+edit_file:
+  workspace path: allowed
+  outside workspace: approval required
+
+copy_file:
+  source read: allowed
+  destination write outside workspace: approval required
+
+move_file:
+  mutates source/destination
+  outside workspace: approval required
+```
+
+CLI approval display stays intentionally small:
+
+```text
+Permission request
+------------------
+Action: move_file
+Workspace: E:\...
+Destination: C:\...\Desktop\note.txt
+Risk: this operation changes files outside the workspace.
+
+Choose y to allow this one action, or press Enter to deny.
+Allow once? [y/N]:
+```
+
+This is not a multi-option permission system yet. It only supports allow-once
+or deny, which keeps the terminal workflow simple and leaves persistent rules
+for later configuration work.
+
+Why add `move_file`:
+
+- it directly solves the current "move this file to Desktop" use case
+- it prevents the model from repeatedly trying copy operations for a move task
+- it is lower risk than general shell execution
+- it keeps file access explicit and channel-owned
+
+Deferred:
+
+- QQ button integration
+- Telegram inline keyboard integration
+- allowedDirectories config
+- delete operations
+- persistent approval rules such as "always allow Desktop"

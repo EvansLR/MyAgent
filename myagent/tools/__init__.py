@@ -1,8 +1,16 @@
 """Built-in tool layer."""
 
 from pathlib import Path
+from typing import Awaitable, Callable
 
-from myagent.tools.filesystem import ListDirTool, ReadFileTool, WriteFileTool
+from myagent.tools.filesystem import (
+    CopyFileTool,
+    EditFileTool,
+    ListDirTool,
+    MoveFileTool,
+    ReadFileTool,
+    WriteFileTool,
+)
 from myagent.tools.memory import (
     MemoryAppendDailyTool,
     MemoryForgetTool,
@@ -15,20 +23,32 @@ from myagent.tools.skills import SkillGetTool
 from myagent.tools.web import WebFetchTool, WebSearchTool
 
 
-def create_default_registry(workspace: Path | str | None = None) -> ToolRegistry:
+ApprovalCallback = Callable[[str], Awaitable[bool]]
+
+
+def create_default_registry(
+    workspace: Path | str | None = None,
+    approval_callback: ApprovalCallback | None = None,
+) -> ToolRegistry:
     """Create a registry with first-stage built-in tools."""
     root = Path(workspace or ".").resolve()
     registry = ToolRegistry()
-    registry.register(ListDirTool(root))
-    registry.register(ReadFileTool(root))
-    registry.register(WriteFileTool(root))
+    registry.register(ListDirTool(root, approval_callback=approval_callback))
+    registry.register(ReadFileTool(root, approval_callback=approval_callback))
+    registry.register(WriteFileTool(root, approval_callback=approval_callback))
+    registry.register(EditFileTool(root, approval_callback=approval_callback))
+    registry.register(CopyFileTool(root, approval_callback=approval_callback))
+    registry.register(MoveFileTool(root, approval_callback=approval_callback))
     registry.register(WebSearchTool())
     registry.register(WebFetchTool())
     return registry
 
 
 __all__ = [
+    "CopyFileTool",
+    "EditFileTool",
     "ListDirTool",
+    "MoveFileTool",
     "MemoryAppendDailyTool",
     "MemoryForgetTool",
     "MemoryGetTool",

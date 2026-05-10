@@ -1023,3 +1023,73 @@ Manual test:
 python -m myagent trace latest
 python -m myagent trace show --limit 10
 ```
+
+## Current Work: File Task Phase 2A
+
+The current active work is a small ToolRegistry improvement for practical file
+tasks.
+
+Goal:
+
+- Let MyAgent make small targeted edits to existing workspace files.
+- Avoid building a large editor subsystem too early.
+
+Implemented direction:
+
+- Add `edit_file(path, old_text, new_text, replace_all=false)`.
+- Register it in `create_default_registry(...)`.
+- Keep the tool workspace-scoped and UTF-8 text only.
+- Reject ambiguous replacements by default.
+
+How to test locally:
+
+```text
+python -m myagent
+You: create note.txt with "hello old world"
+You: read note.txt and replace "old" with "new"
+```
+
+Expected behavior:
+
+- The first task should use `write_file`.
+- The second task should use `read_file` and `edit_file`.
+- The model should not need to rewrite the whole file for a small edit.
+
+Recommended next step after this is tested:
+
+- Commit this File Task Phase 2A change.
+- Then return to the Phase 2 review plan and choose the next practical
+  user-visible capability, without adding broad policy machinery yet.
+
+## Current Work: File Access Approval Phase 2B
+
+The next active work is a channel-owned approval path for practical
+personal-assistant file tasks.
+
+Goal:
+
+- Let MyAgent copy or move a workspace file to places such as Desktop.
+- Require Yes/No approval when a file tool touches paths outside the workspace.
+- Keep the CLI spinner/display behavior for normal tool status.
+- Do not let tools call terminal input directly.
+
+Implemented direction:
+
+- Add `copy_file(source_path, destination_path, overwrite=false)`.
+- Add `move_file(source_path, destination_path, overwrite=false)`.
+- Keep `list_dir` and `read_file` as read-only operations that do not require
+  approval.
+- Apply one shared outside-workspace approval policy to mutating file tools:
+  `write_file`, `edit_file`, `copy_file`, and `move_file`.
+- Resolve common personal folder aliases: Desktop, Downloads, Documents, 桌面.
+- Publish approval requests through the CLI channel via MessageBus metadata.
+- CLI displays the permission request, collects Yes/No, and resumes the turn.
+- Do not create guessed external parent directories silently.
+
+Deferred:
+
+- QQ/Telegram buttons.
+- Text-code approvals such as `approve 8F3A`.
+- `allowedDirectories` config.
+- Persistent rules such as "always allow Desktop".
+- delete tools.

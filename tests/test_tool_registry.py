@@ -80,5 +80,8 @@ def test_default_registry_includes_web_search() -> None:
 
     registry = create_default_registry()
 
+    assert registry.has("edit_file")
+    assert registry.has("copy_file")
+    assert registry.has("move_file")
     assert registry.has("web_search")
     assert registry.has("web_fetch")

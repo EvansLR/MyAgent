@@ -608,7 +608,10 @@ list_dir path=/Users/liuguanglin/workspace/claude-didi-9527
 - Workspace root: E:\ClaudeCode\openSource\MyAgent
 - Path style: Windows paths
 - Prefer relative paths such as "." unless the user gives an explicit path.
-- Filesystem tools are scoped to the workspace root.
+- Filesystem tools resolve relative paths inside the workspace root.
+- Common personal folder aliases such as Desktop, Downloads, Documents, and 桌面 are recognized.
+- Read-only filesystem operations do not require approval.
+- Mutating filesystem operations outside the workspace require explicit user approval from the current channel.
 - Do not invent absolute paths.
 ```
 
@@ -639,7 +642,7 @@ ContextSection(name="Runtime Environment", tier=protected/high, source="runtime:
   - shell
   - workspace root
   - path style
-  - filesystem scope
+  - filesystem path policy
   - relative path preference
 - CLI 启动时会把 `Path.cwd()` 同时传给 `create_default_registry(...)` 和 `AgentLoop(workspace_root=...)`，确保工具 workspace 与 prompt 里的 workspace 一致。
 - `list_dir` / `read_file` 的工具描述和错误信息已补充 workspace 约束，明确建议优先使用 `.` 和相对路径。

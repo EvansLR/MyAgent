@@ -26,7 +26,7 @@ from myagent.tools import (
 )
 from myagent.tracing import JsonlTraceStore, TraceStore
 
-MAX_TOOL_ITERATIONS = 8
+MAX_TOOL_ITERATIONS = 50
 MAX_REPEATED_TOOL_CALLS = 2
 
 
