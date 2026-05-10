@@ -11,6 +11,7 @@ from myagent.agent.subagent import (
 )
 from myagent.bus import InboundMessage, MessageBus
 from myagent.providers.base import ProviderResponse, ToolCall
+from myagent.skills import SkillRegistry
 from myagent.tools import ToolRegistry, create_default_registry
 from myagent.tools.base import Tool
 from myagent.tracing import JsonlTraceStore
@@ -151,6 +152,46 @@ class MainDelegatingProvider:
         return ProviderResponse(content="Main answer with delegated result.")
 
 
+class MainSkillThenDelegatingProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.seen_messages: list[list[dict]] = []
+
+    async def generate(self, messages):
+        return "fallback"
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        self.seen_messages.append(messages)
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="skill-call-1",
+                        name="skill_get",
+                        arguments={"skill_id": "frontend-design"},
+                    )
+                ]
+            )
+        if self.calls == 2:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="delegate-call-1",
+                        name="delegate_task",
+                        arguments={
+                            "task": "Review the page plan.",
+                            "agent_type": "reviewer",
+                            "reason": "Check the active design workflow.",
+                        },
+                    )
+                ]
+            )
+        if self.calls == 3:
+            return ProviderResponse(content="Child reviewed the page plan.")
+        return ProviderResponse(content="Main answer with skill-aware delegated result.")
+
+
 async def test_agent_loop_registers_and_executes_delegate_task() -> None:
     root = make_workspace("agent-loop")
     workspace = root / "workspace"
@@ -200,6 +241,55 @@ async def test_agent_loop_registers_and_executes_delegate_task() -> None:
     assert child_tool_result["data"]["delegation_reason"] == "Need isolated file reading."
     assert child_tool_call["data"]["tool_name"] == "read_file"
     assert "hello from agent loop" in child_tool_result["data"]["result_preview"]
+
+
+async def test_delegate_task_receives_compact_parent_active_skill_context() -> None:
+    root = make_workspace("active-skill-context")
+    workspace = root / "workspace"
+    skills_root = root / "skills"
+    workspace.mkdir()
+    skill_path = skills_root / "frontend-design" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "\n".join(
+            [
+                "---",
+                "name: frontend-design",
+                "description: Build polished frontend interfaces.",
+                "---",
+                "",
+                "# Frontend Design",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    provider = MainSkillThenDelegatingProvider()
+    bus = MessageBus()
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        tool_registry=create_default_registry(workspace),
+        skill_registry=SkillRegistry.from_directory(skills_root),
+        trace_store=JsonlTraceStore(root / "traces"),
+    )
+
+    await bus.publish_inbound(make_message("use the frontend skill, then delegate review"))
+    outbound = await agent.process_next()
+
+    assert outbound.content == "Main answer with skill-aware delegated result."
+    child_messages = provider.seen_messages[2]
+    assert "# Parent Active Skills" in child_messages[1]["content"]
+    assert "frontend-design" in child_messages[1]["content"]
+    assert "loaded_by_skill_get" in child_messages[1]["content"]
+
+    events = [
+        json.loads(line)
+        for line in (root / "traces" / "cli_default.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    subagent_start = next(event for event in events if event["event"] == "subagent_start")
+    assert subagent_start["data"]["inherited_active_skills"] == ["frontend-design"]
 
 
 def test_create_subagent_registry_allows_read_only_file_and_web_tools() -> None:

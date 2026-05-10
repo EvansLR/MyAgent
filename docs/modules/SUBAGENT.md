@@ -1138,3 +1138,270 @@ Verification:
 python -m pytest tests/test_subagent.py tests/test_context_builder.py tests/test_agent_trace.py tests/test_agent_loop.py
 24 passed
 ```
+
+## Skills Alignment Design
+
+This section records how SubAgent should relate to Skills and Active Skills.
+It is a design checkpoint only. No runtime behavior changes are required yet.
+
+### Problem
+
+MyAgent now has two separate capability concepts:
+
+```text
+Skill:
+  a reusable workflow or instruction file loaded from SKILL.md
+
+SubAgent:
+  a bounded execution unit with its own profile, prompt, and allowed tools
+```
+
+After Skills Phase 2B, the runtime can also record:
+
+```text
+active_skill_set skill_id=... scope=turn
+```
+
+The missing design question is:
+
+```text
+If the main Agent has activated a skill in the current turn,
+should a delegated SubAgent receive that skill context?
+```
+
+### Core Principle
+
+SubAgent profile remains the authority for execution boundaries.
+
+Skills can inform how work is done, but they must not silently expand what a
+child Agent is allowed to do.
+
+```text
+SubAgentProfile decides:
+  role
+  instructions
+  allowed tools
+  max iterations
+
+Skill decides:
+  workflow guidance
+  task-specific method
+  output style or checklist
+```
+
+This keeps the boundary explainable:
+
+> A Skill can shape a SubAgent's thinking, but the SubAgent profile still
+> controls its permissions.
+
+### Three Possible Link Modes
+
+#### Mode 1: No Skill Transfer
+
+The main Agent may use a skill, but the child Agent receives only its profile
+prompt and task.
+
+Pros:
+
+- Very simple.
+- No extra prompt budget.
+- No risk of sending irrelevant skill text.
+
+Cons:
+
+- The child Agent may repeat work the main Agent already did.
+- A reviewer or researcher may miss the workflow the main Agent selected.
+
+Current status:
+
+```text
+Implemented behavior today.
+```
+
+#### Mode 2: Active Skill Summary Transfer
+
+The main Agent delegates a task and the runtime includes a compact hint:
+
+```text
+Active Skill Context:
+- frontend-design was active in the parent turn.
+- Scope: turn.
+- Reason: loaded_by_skill_get.
+```
+
+The child Agent receives the fact that a skill was active, but not necessarily
+the full `SKILL.md`.
+
+Pros:
+
+- Cheap.
+- Easy to trace.
+- Keeps the child context small.
+- Gives the child Agent useful alignment without forcing the whole skill body.
+
+Cons:
+
+- The child Agent may still need full instructions for detailed workflows.
+
+Implemented first slice:
+
+```text
+If parent turn has active_skill_set
+and main Agent calls delegate_task
+then include a compact Active Skill Context block in the child prompt.
+```
+
+This remains compact-context only. The child Agent does not receive the full
+`SKILL.md`, and `SubAgentProfile.allowed_tools` is unchanged.
+
+#### Mode 3: Full Skill Inheritance
+
+The child Agent receives the full loaded `SKILL.md` content.
+
+Pros:
+
+- Strongest workflow alignment.
+- Useful when the child Agent is doing the main skill-heavy work.
+
+Cons:
+
+- More tokens.
+- More conflict risk if the skill conflicts with the child profile.
+- Needs a clear rule for multiple active skills.
+
+Deferred.
+
+### Recommended Phase 2 Rule
+
+For Phase 2, do not automatically inherit full skills.
+
+Use this rule instead:
+
+```text
+Active Skill can be transferred to a SubAgent only as compact context.
+SubAgentProfile.allowed_tools remains unchanged.
+Full SKILL.md inheritance is explicit and deferred.
+```
+
+In plain language:
+
+> Tell the child Agent what workflow the parent was using, but do not let that
+> workflow grant new powers.
+
+### Data Flow
+
+The current implementation follows this flow:
+
+```text
+Main Agent turn
+  -> skill_get(frontend-design)
+  -> runtime records active_skill_set(scope=turn)
+  -> main Agent calls delegate_task(agent_type=reviewer, task=...)
+  -> DelegateTaskTool reads current turn active skills
+  -> SubAgentRunner receives compact active_skill_context
+  -> child system prompt includes:
+       # Parent Active Skills
+       - frontend-design: active in parent turn, reason=loaded_by_skill_get
+```
+
+Trace should make this visible:
+
+```text
+subagent_start:
+  agent_type
+  delegation_reason
+  inherited_active_skills: ["frontend-design"]
+```
+
+### Conflict Rules
+
+If profile and skill disagree, profile wins.
+
+Examples:
+
+```text
+Skill says:
+  Use browser or write files.
+
+Reviewer profile allows:
+  list_dir, read_file
+
+Result:
+  Child Agent can only list/read files.
+```
+
+If multiple active skills exist:
+
+```text
+Phase 2:
+  pass only compact names/reasons, not full text
+
+Later:
+  introduce scoring, explicit parent selection, or task-level skill state
+```
+
+### Relationship To Automatic SkillSelector
+
+This design does not require automatic SkillSelector.
+
+The current sequence remains:
+
+```text
+Model sees Available Skills
+Model calls skill_get when needed
+Runtime records active_skill_set
+SubAgent may later receive compact active skill context
+```
+
+Automatic selection can be considered later after:
+
+- task/run state is clearer
+- multiple skill conflicts are better understood
+- prompt budget pressure is visible in trace
+
+### What Not To Build Yet
+
+Do not implement these yet:
+
+- SubAgent automatically calling `skill_get` before every task.
+- Full `SKILL.md` injection into every SubAgent.
+- Skill-defined tool permissions.
+- Skill-to-profile binding config.
+- Persistent active skills across sessions.
+- Background SubAgent skill inheritance.
+
+### Interview Explanation
+
+MyAgent separates "how to do work" from "who executes work."
+
+Skills describe reusable methods, while SubAgents are bounded workers with their
+own prompts and permissions. Active Skill is the bridge between them: it records
+which workflow the parent Agent actually used. In the first safe design, a
+SubAgent may receive that active skill as compact context, but the SubAgent
+profile still controls tools and safety boundaries. This keeps the system useful
+without turning Skills into hidden permission grants.
+
+### Implementation Note
+
+Changed files:
+
+- `myagent/agent/loop.py`
+- `myagent/agent/subagent.py`
+- `tests/test_subagent.py`
+
+Runtime details:
+
+- `AgentLoop` keeps a turn-local active skill list while one message is being
+  processed.
+- `SkillGetTool` still emits `active_skill_set` through the existing trace hook.
+- `AgentLoop` records that active skill in the current turn-local list.
+- When `delegate_task` runs, `AgentLoop` formats a compact `# Parent Active
+  Skills` block and passes it as extra child context.
+- `subagent_start` trace includes `inherited_active_skills`.
+- The list is cleared after the turn, so this is not persistent memory.
+
+Verification:
+
+```text
+python -m pytest tests/test_subagent.py tests/test_agent_skills.py tests/test_skill_tools.py
+```

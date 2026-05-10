@@ -217,6 +217,7 @@ class DelegateTaskTool(Tool):
         agent_type: str = DEFAULT_SUBAGENT_PROFILE,
         context: str = "",
         reason: str = "",
+        active_skill_context: str = "",
         trace_hook: SubAgentTraceHook | None = None,
         subagent_task_id: str | None = None,
     ) -> str:
@@ -233,7 +234,8 @@ class DelegateTaskTool(Tool):
             trace_hook=trace_hook,
             subagent_task_id=task_id,
         )
-        result = await runner.run(task=task, agent_type=profile.name, context=context)
+        merged_context = _merge_context(context, active_skill_context)
+        result = await runner.run(task=task, agent_type=profile.name, context=merged_context)
         return _format_subagent_result(profile.name, task, result, task_id)
 
 
@@ -314,6 +316,11 @@ def _format_subagent_result(
         f"task: {task}\n\n"
         f"{result}"
     )
+
+
+def _merge_context(context: str, active_skill_context: str) -> str:
+    parts = [part.strip() for part in (context, active_skill_context) if part.strip()]
+    return "\n\n".join(parts)
 
 
 def _preview(text: str, limit: int = 300) -> str:

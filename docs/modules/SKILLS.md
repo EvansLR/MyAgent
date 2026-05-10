@@ -1053,3 +1053,61 @@ skill_get success
 ```
 
 No behavior change. No new prompt section. No persistence.
+
+## SubAgent Alignment
+
+Active Skill is intentionally designed so it can later help SubAgents without
+making Skills responsible for execution boundaries.
+
+The boundary is:
+
+```text
+Skill:
+  workflow guidance
+
+Active Skill:
+  runtime observation that a skill was used in the current turn
+
+SubAgentProfile:
+  role, instructions, allowed tools, and execution limits
+```
+
+Recommended future behavior:
+
+```text
+Parent turn activates a skill
+Parent delegates a task
+Child SubAgent may receive compact active skill context
+Child SubAgent does not automatically receive new tools
+```
+
+Implemented first slice:
+
+```text
+skill_get
+  -> active_skill_set
+  -> later delegate_task in the same turn
+  -> child prompt receives compact # Parent Active Skills context
+  -> subagent_start trace records inherited_active_skills
+```
+
+This means Active Skill can answer:
+
+```text
+Which workflow was the parent Agent using?
+Should the child Agent be aware of that workflow?
+```
+
+It should not answer:
+
+```text
+What tools is the child Agent allowed to use?
+Should the child Agent receive every full SKILL.md?
+Should this skill remain active forever?
+```
+
+Full skill inheritance, skill/profile binding, and automatic SkillSelector stay
+deferred until task/run state and conflict handling are clearer.
+
+The implementation is intentionally turn-local. Active skills are not saved into
+memory and are not carried into future turns.

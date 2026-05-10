@@ -1208,3 +1208,53 @@ Next validation:
 python -m pytest tests/test_trace_store.py tests/test_cli_channel.py
 python -m pytest
 ```
+
+## SubAgent + Skills Alignment Design
+
+The next design checkpoint has been recorded in:
+
+```text
+docs/modules/SUBAGENT.md
+docs/modules/SKILLS.md
+```
+
+Decision:
+
+- Keep SubAgent profile as the authority for execution boundaries.
+- Treat Skill as workflow guidance.
+- Treat Active Skill as a runtime observation that can later be passed to a
+  child Agent as compact context.
+- Do not let Skill silently grant child Agent tools.
+- Do not automatically inject full `SKILL.md` into SubAgents.
+
+Implemented minimal bridge:
+
+```text
+Parent turn records active_skill_set
+Parent calls delegate_task
+DelegateTaskTool passes compact active_skill_context to SubAgentRunner
+SubAgent prompt includes # Parent Active Skills
+subagent_start trace records inherited_active_skills
+```
+
+Runtime boundary:
+
+- The bridge is turn-local only.
+- It does not persist active skills.
+- It does not pass full `SKILL.md`.
+- It does not grant child Agents new tools.
+
+Deferred:
+
+- automatic SkillSelector
+- full skill inheritance
+- skill-defined tool permissions
+- profile/skill binding config
+- persistent active skills
+
+Recommended next step after validation:
+
+```text
+Run focused SubAgent/Skill tests, then let the user test a real CLI task that
+uses a skill before delegation.
+```

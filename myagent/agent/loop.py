@@ -104,6 +104,8 @@ class AgentLoop:
         self.trace_store = trace_store or JsonlTraceStore()
         self.max_tool_iterations = max_tool_iterations
         self._history: dict[str, list[Message]] = {}
+        self._active_skills_by_turn: dict[tuple[str, str], list[dict[str, object]]] = {}
+        self._current_turn_key: tuple[str, str] | None = None
         self._lock = asyncio.Lock()
         self._running = False
 
@@ -157,6 +159,7 @@ class AgentLoop:
                 "context": context_report.to_dict(),
             },
         )
+        self._current_turn_key = (inbound.session_key, turn_id)
         try:
             content = await self._generate_with_tools(messages, inbound, turn_state)
         except Exception as exc:
@@ -201,6 +204,8 @@ class AgentLoop:
                 {"role": "assistant", "content": content},
             ]
         )
+        self._active_skills_by_turn.pop((inbound.session_key, turn_id), None)
+        self._current_turn_key = None
         return outbound
 
     async def _generate_with_tools(
@@ -289,6 +294,7 @@ class AgentLoop:
         subagent_task_id = ""
         if tool_call.name == "delegate_task":
             subagent_task_id = uuid4().hex[:8]
+            inherited_active_skills = self._active_skill_ids_for_turn(session_key, turn_id)
             self._trace(
                 session_key,
                 turn_id,
@@ -299,6 +305,7 @@ class AgentLoop:
                     "agent_type": tool_call.arguments.get("agent_type", "researcher"),
                     "delegation_reason": tool_call.arguments.get("reason", ""),
                     "delegation_mode": _delegation_mode(tool_call.arguments, user_content),
+                    "inherited_active_skills": inherited_active_skills,
                     "task_preview": _preview(str(tool_call.arguments.get("task", ""))),
                 },
             )
@@ -368,6 +375,7 @@ class AgentLoop:
 
         return await tool.execute_with_trace(
             **casted,
+            active_skill_context=self._format_active_skill_context(session_key, turn_id),
             trace_hook=trace_child,
             subagent_task_id=subagent_task_id,
         )
@@ -422,6 +430,35 @@ class AgentLoop:
     def _trace_skill_event(self, event: str, data: dict[str, object]) -> None:
         """Record skill tool events without coupling SkillGetTool to AgentLoop state."""
         self._trace("runtime:skills", "skills", event, data)
+        if event != "active_skill_set" or self._current_turn_key is None:
+            return
+        active_skills = self._active_skills_by_turn.setdefault(self._current_turn_key, [])
+        skill_id = str(data.get("skill_id") or "")
+        if skill_id and any(str(skill.get("skill_id") or "") == skill_id for skill in active_skills):
+            return
+        active_skills.append(dict(data))
+
+    def _active_skill_ids_for_turn(self, session_key: str, turn_id: str) -> list[str]:
+        """Return active skill ids recorded during this turn."""
+        return [
+            str(skill.get("skill_id") or "")
+            for skill in self._active_skills_by_turn.get((session_key, turn_id), [])
+            if skill.get("skill_id")
+        ]
+
+    def _format_active_skill_context(self, session_key: str, turn_id: str) -> str:
+        """Format compact parent active skill context for delegated subagents."""
+        active_skills = self._active_skills_by_turn.get((session_key, turn_id), [])
+        if not active_skills:
+            return ""
+        lines = ["# Parent Active Skills"]
+        for skill in active_skills:
+            skill_id = str(skill.get("skill_id") or "")
+            name = str(skill.get("name") or skill_id)
+            scope = str(skill.get("scope") or "turn")
+            reason = str(skill.get("reason") or "")
+            lines.append(f"- {skill_id} ({name}): scope={scope}; reason={reason}")
+        return "\n".join(lines)
 
     async def _extract_memory_after_turn(
         self,
