@@ -33,6 +33,8 @@ DEFAULT_CHAT_ID = "default"
 SUPPORTED_COMMANDS = {"/help", "/new", "/stop"}
 CONSOLE = Console()
 DEFAULT_TRACE_SESSION = "cli:default"
+SKILLS_TRACE_SESSION = "runtime:skills"
+STARTUP_TRACE_SESSION = "runtime:startup"
 
 
 @dataclass(slots=True)
@@ -410,6 +412,50 @@ def trace_show(
     events = read_trace_events(session, trace_dir)
     if not events:
         typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
+        raise typer.Exit(code=1)
+    typer.echo(format_trace_events(events, limit=limit))
+
+
+@trace_app.command("skills")
+def trace_skills(
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        help="Number of recent skill events to show.",
+    ),
+    trace_dir: Path = typer.Option(
+        Path("data/traces"),
+        "--trace-dir",
+        help="Directory containing JSONL trace files.",
+    ),
+) -> None:
+    """Show recent runtime skill events such as skill_loaded and active_skill_set."""
+    events = read_trace_events(SKILLS_TRACE_SESSION, trace_dir)
+    if not events:
+        typer.echo(f"No skill trace events found in {trace_dir}.")
+        raise typer.Exit(code=1)
+    typer.echo(format_trace_events(events, limit=limit))
+
+
+@trace_app.command("startup")
+def trace_startup(
+    limit: int = typer.Option(
+        20,
+        "--limit",
+        "-n",
+        help="Number of recent startup events to show.",
+    ),
+    trace_dir: Path = typer.Option(
+        Path("data/traces"),
+        "--trace-dir",
+        help="Directory containing JSONL trace files.",
+    ),
+) -> None:
+    """Show recent runtime startup events such as MCP server registration."""
+    events = read_trace_events(STARTUP_TRACE_SESSION, trace_dir)
+    if not events:
+        typer.echo(f"No startup trace events found in {trace_dir}.")
         raise typer.Exit(code=1)
     typer.echo(format_trace_events(events, limit=limit))
 

@@ -98,3 +98,38 @@ def test_trace_inspect_formats_recent_events() -> None:
     assert summaries[0].events == ("user_message", "turn_completed")
     assert "turn-1 user_message - hello" in formatted
     assert "turn-1 turn_completed - final_output" in formatted
+
+
+def test_trace_inspect_formats_runtime_events() -> None:
+    events = [
+        {
+            "turn_id": "skills",
+            "event": "skill_loaded",
+            "data": {"skill_id": "frontend-design", "content_length": 123},
+        },
+        {
+            "turn_id": "skills",
+            "event": "active_skill_set",
+            "data": {
+                "skill_id": "frontend-design",
+                "scope": "turn",
+                "reason": "loaded_by_skill_get",
+            },
+        },
+        {
+            "turn_id": "startup",
+            "event": "mcp_server_registered",
+            "data": {
+                "server_name": "didi-mcp",
+                "transport": "http",
+                "tool_count": 13,
+                "discovered_tool_count": 13,
+            },
+        },
+    ]
+
+    formatted = format_trace_events(events, limit=3)
+
+    assert "skills skill_loaded - frontend-design len=123" in formatted
+    assert "skills active_skill_set - frontend-design scope=turn reason=loaded_by_skill_get" in formatted
+    assert "startup mcp_server_registered - didi-mcp http tools=13/13" in formatted

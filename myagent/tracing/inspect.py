@@ -128,6 +128,25 @@ def _event_preview(event_name: str, data: dict[str, Any]) -> str:
         return f"tools={tools}"
     if event_name in {"tool_call", "tool_result"}:
         return str(data.get("tool_name") or "")
+    if event_name == "skill_loaded":
+        return _compact(
+            f"{data.get('skill_id') or ''} "
+            f"len={data.get('content_length') or 0}"
+        )
+    if event_name == "active_skill_set":
+        return _compact(
+            f"{data.get('skill_id') or ''} "
+            f"scope={data.get('scope') or ''} "
+            f"reason={data.get('reason') or ''}"
+        )
+    if event_name == "mcp_server_registered":
+        return _compact(
+            f"{data.get('server_name') or ''} "
+            f"{data.get('transport') or ''} "
+            f"tools={data.get('tool_count') or 0}/{data.get('discovered_tool_count') or 0}"
+        )
+    if event_name == "mcp_server_connect_failed":
+        return _compact(f"{data.get('server_name') or ''} {data.get('error') or ''}")
     if event_name == "turn_completed":
         return str(data.get("stop_reason") or "")
     if event_name == "final_answer":

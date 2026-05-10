@@ -1093,3 +1093,118 @@ Deferred:
 - `allowedDirectories` config.
 - Persistent rules such as "always allow Desktop".
 - delete tools.
+
+## Skills Phase 2B: Active Skill Trace
+
+Skills Phase 2B is now complete and committed.
+
+Recent commits:
+
+```text
+a4fe099 feat: trace skill loading
+5d1c5c1 feat: trace active skills
+```
+
+What changed:
+
+- `skill_get(skill_id)` still loads the full `SKILL.md` on demand.
+- A successful `skill_get` now records `skill_loaded`.
+- The same success path also records `active_skill_set`.
+- `active_skill_set` is turn-scoped only.
+- It does not inject a new prompt section.
+- It does not persist into session memory.
+- It does not change tool permissions.
+
+The trace event shape is:
+
+```text
+event: active_skill_set
+data:
+  skill_id
+  name
+  scope: turn
+  reason: loaded_by_skill_get
+```
+
+Why this matters:
+
+- The runtime can now answer which skill was actually used in a turn.
+- Future task-level active skills can build on this without changing the first
+  implementation.
+- This keeps Skills v2 explainable: summary in prompt, full instructions loaded
+  by tool, active usage visible in trace.
+
+Verification:
+
+```text
+python -m pytest tests/test_skill_tools.py tests/test_agent_skills.py tests/test_skills.py tests/test_context_builder.py
+17 passed
+
+python -m pytest
+133 passed, 1 skipped
+```
+
+Current Skills boundary:
+
+- Do not implement automatic SkillSelector yet.
+- Do not persist active skills yet.
+- Do not bind Skills to SubAgent profiles yet.
+- Do not enforce `allowed-tools` at runtime yet.
+
+Those need clearer task/run state and conflict handling before they are worth
+building.
+
+## Recommended Next Step
+
+The next mainline step should be a short project-status cleanup, then one of two
+practical module choices:
+
+1. Continue with Trace / runtime observability:
+   make it easier to inspect `runtime_skills.jsonl`, startup trace, and turn
+   trace together from one command.
+
+2. Continue with SubAgent + Skills alignment:
+   document how a future SubAgent could inherit a turn-level active skill, but
+   keep implementation deferred until task/run boundaries are clearer.
+
+Recommended choice for the next coding step:
+
+```text
+Trace inspect improvement
+```
+
+Reason:
+
+- It is user-visible immediately.
+- It helps debug Skills, MCP, web search, file approval, memory, and SubAgent
+  behavior.
+- It does not force premature automatic SkillSelector or complex policy design.
+
+## Trace Inspect Runtime Convenience Update
+
+Trace inspect has started this recommended follow-up.
+
+Implemented direction:
+
+- Add readable previews for runtime events:
+  - `skill_loaded`
+  - `active_skill_set`
+  - `mcp_server_registered`
+  - `mcp_server_connect_failed`
+- Add convenience commands:
+  - `python -m myagent trace skills`
+  - `python -m myagent trace startup`
+
+Why:
+
+- Users no longer need to remember `--session runtime:skills`.
+- Users no longer need to remember `--session runtime:startup`.
+- Active Skill and MCP startup behavior become easier to inspect after local
+  testing.
+
+Next validation:
+
+```text
+python -m pytest tests/test_trace_store.py tests/test_cli_channel.py
+python -m pytest
+```

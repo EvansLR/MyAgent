@@ -600,6 +600,8 @@ Implemented:
 - CLI command:
   - `python -m myagent trace latest`
   - `python -m myagent trace show`
+  - `python -m myagent trace skills`
+  - `python -m myagent trace startup`
 
 Default behavior:
 
@@ -640,6 +642,43 @@ turn-id tool_call - read_file
 turn-id turn_completed - final_output
 ```
 
+Runtime skill event view:
+
+```text
+python -m myagent trace skills --limit 20
+```
+
+reads:
+
+```text
+data/traces/runtime_skills.jsonl
+```
+
+and prints compact rows such as:
+
+```text
+skills skill_loaded - frontend-design len=123
+skills active_skill_set - frontend-design scope=turn reason=loaded_by_skill_get
+```
+
+Startup event view:
+
+```text
+python -m myagent trace startup --limit 20
+```
+
+reads:
+
+```text
+data/traces/runtime_startup.jsonl
+```
+
+and prints compact rows such as:
+
+```text
+startup mcp_server_registered - didi-mcp http tools=13/13
+```
+
 Options:
 
 ```text
@@ -647,6 +686,10 @@ Options:
 --trace-dir data/traces
 --limit 20
 ```
+
+Runtime convenience commands intentionally do not change trace storage. They only
+avoid requiring users to remember internal session keys such as
+`runtime:skills` and `runtime:startup`.
 
 Important Typer detail:
 
