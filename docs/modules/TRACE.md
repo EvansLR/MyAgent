@@ -600,6 +600,9 @@ Implemented:
 - CLI command:
   - `python -m myagent trace latest`
   - `python -m myagent trace show`
+  - `python -m myagent trace context`
+  - `python -m myagent trace report`
+  - `python -m myagent trace viewer`
   - `python -m myagent trace skills`
   - `python -m myagent trace startup`
 
@@ -678,6 +681,93 @@ and prints compact rows such as:
 ```text
 startup mcp_server_registered - didi-mcp http tools=13/13
 ```
+
+Context assembly view:
+
+```text
+python -m myagent trace context
+```
+
+reads the latest `context_built` event from:
+
+```text
+data/traces/cli_default.jsonl
+```
+
+and prints the ContextBuilder report in a readable shape:
+
+```text
+turn_id: ...
+message_count: 3
+estimated_tokens: 1200
+total_chars: 4800
+history: 2/4 included, 2 dropped
+warnings: history_trimmed
+sections:
+- Identity: tier=protected, source=identity, tokens=25, chars=100, included=yes
+- Runtime Environment: tier=protected, source=runtime:environment, ...
+- Available Skills: tier=medium, source=skills:summary, ...
+```
+
+This is different from `trace latest`: `trace latest` summarizes the turn result,
+while `trace context` explains what went into the model context before the
+provider call.
+
+Static HTML report:
+
+```text
+python -m myagent trace report
+```
+
+writes:
+
+```text
+data/traces/report.html
+```
+
+The report is a self-contained local page. It reads the same JSONL trace files
+and presents:
+
+- latest turn summary
+- ContextBuilder sections and token estimates
+- recent skill events
+- MCP startup events
+- recent session event stream
+
+This is intentionally not a web server or dashboard app. For the current phase,
+a static report is enough to make trace analysis easier without introducing a
+frontend build pipeline, database, or long-running local service.
+
+Interactive local viewer:
+
+```text
+python -m myagent trace viewer
+```
+
+writes:
+
+```text
+data/traces/viewer.html
+```
+
+The viewer is different from `trace report`:
+
+- `trace report` renders the current known trace files into one fixed report.
+- `trace viewer` is an interactive local page.
+- The user opens the page and selects one or more saved JSONL files.
+- The browser parses the selected files locally and displays Context, Skills,
+  Startup, Events, and Raw JSON views.
+
+Recommended files to load together:
+
+```text
+data/traces/cli_default.jsonl
+data/traces/runtime_skills.jsonl
+data/traces/runtime_startup.jsonl
+```
+
+This better matches real analysis because the user can compare different saved
+trace files without regenerating a report for each combination.
 
 Options:
 

@@ -22,10 +22,14 @@ from myagent.tools import create_default_registry
 from myagent.tracing import (
     JsonlTraceStore,
     TraceStore,
+    format_context_summary,
     format_trace_events,
     format_turn_summary,
+    latest_context_event,
     latest_turn_summary,
     read_trace_events,
+    write_trace_report,
+    write_trace_viewer,
 )
 
 DEFAULT_SENDER_ID = "local-user"
@@ -414,6 +418,75 @@ def trace_show(
         typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
         raise typer.Exit(code=1)
     typer.echo(format_trace_events(events, limit=limit))
+
+
+@trace_app.command("context")
+def trace_context(
+    session: str = typer.Option(
+        DEFAULT_TRACE_SESSION,
+        "--session",
+        "-s",
+        help="Trace session key, for example cli:default.",
+    ),
+    trace_dir: Path = typer.Option(
+        Path("data/traces"),
+        "--trace-dir",
+        help="Directory containing JSONL trace files.",
+    ),
+) -> None:
+    """Show the latest ContextBuilder assembly report for a session."""
+    events = read_trace_events(session, trace_dir)
+    if not events:
+        typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
+        raise typer.Exit(code=1)
+    event = latest_context_event(events)
+    if event is None:
+        typer.echo(f"No context_built event found for session {session!r}.")
+        raise typer.Exit(code=1)
+    typer.echo(format_context_summary(event))
+
+
+@trace_app.command("report")
+def trace_report(
+    session: str = typer.Option(
+        DEFAULT_TRACE_SESSION,
+        "--session",
+        "-s",
+        help="Trace session key, for example cli:default.",
+    ),
+    trace_dir: Path = typer.Option(
+        Path("data/traces"),
+        "--trace-dir",
+        help="Directory containing JSONL trace files.",
+    ),
+    output: Path = typer.Option(
+        Path("data/traces/report.html"),
+        "--output",
+        "-o",
+        help="HTML report output path.",
+    ),
+) -> None:
+    """Generate a static HTML report for trace inspection."""
+    path = write_trace_report(
+        output_path=output,
+        trace_root=trace_dir,
+        session_key=session,
+    )
+    typer.echo(f"Trace report written to {path}")
+
+
+@trace_app.command("viewer")
+def trace_viewer(
+    output: Path = typer.Option(
+        Path("data/traces/viewer.html"),
+        "--output",
+        "-o",
+        help="Interactive HTML viewer output path.",
+    ),
+) -> None:
+    """Generate an interactive local HTML viewer that can load JSONL trace files."""
+    path = write_trace_viewer(output)
+    typer.echo(f"Trace viewer written to {path}")
 
 
 @trace_app.command("skills")

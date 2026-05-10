@@ -105,6 +105,46 @@ def format_trace_events(events: list[dict[str, Any]], limit: int = 20) -> str:
     return "\n".join(lines)
 
 
+def latest_context_event(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the latest context_built event, if any."""
+    return next((event for event in reversed(events) if event.get("event") == "context_built"), None)
+
+
+def format_context_summary(event: dict[str, Any]) -> str:
+    """Format one context_built event as a compact CLI summary."""
+    data = event.get("data") or {}
+    context = data.get("context") or {}
+    sections = context.get("sections") or []
+    history = context.get("history") or {}
+    warnings = context.get("warnings") or []
+    lines = [
+        f"turn_id: {event.get('turn_id')}",
+        f"message_count: {context.get('message_count') or data.get('message_count') or 0}",
+        f"estimated_tokens: {context.get('estimated_tokens') or 0}",
+        f"total_chars: {context.get('total_chars') or 0}",
+        (
+            "history: "
+            f"{history.get('included_messages') or 0}/{history.get('total_messages') or 0} included, "
+            f"{history.get('dropped_messages') or 0} dropped"
+        ),
+    ]
+    if warnings:
+        lines.append(f"warnings: {', '.join(str(warning) for warning in warnings)}")
+    lines.append("sections:")
+    for section in sections:
+        included = "yes" if section.get("included") else "no"
+        lines.append(
+            "- "
+            f"{section.get('name')}: "
+            f"tier={section.get('tier')}, "
+            f"source={section.get('source')}, "
+            f"tokens={section.get('estimated_tokens') or 0}, "
+            f"chars={section.get('chars') or 0}, "
+            f"included={included}"
+        )
+    return "\n".join(lines)
+
+
 def _summarize_turn(turn_id: str, events: list[dict[str, Any]]) -> TraceTurnSummary:
     completed = next((event for event in reversed(events) if event.get("event") == "turn_completed"), None)
     data = completed.get("data", {}) if completed else {}

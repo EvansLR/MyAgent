@@ -3,9 +3,17 @@ from pathlib import Path
 import shutil
 
 from myagent.tracing import JsonlTraceStore
+from myagent.tracing.html_report import (
+    build_trace_report_html,
+    build_trace_viewer_html,
+    write_trace_report,
+    write_trace_viewer,
+)
 from myagent.tracing.inspect import (
+    format_context_summary,
     format_trace_events,
     format_turn_summary,
+    latest_context_event,
     latest_turn_summary,
     read_trace_events,
     summarize_turns,
@@ -133,3 +141,163 @@ def test_trace_inspect_formats_runtime_events() -> None:
     assert "skills skill_loaded - frontend-design len=123" in formatted
     assert "skills active_skill_set - frontend-design scope=turn reason=loaded_by_skill_get" in formatted
     assert "startup mcp_server_registered - didi-mcp http tools=13/13" in formatted
+
+
+def test_trace_inspect_formats_latest_context_summary() -> None:
+    events = [
+        {
+            "turn_id": "turn-1",
+            "event": "context_built",
+            "data": {
+                "message_count": 3,
+                "context": {
+                    "total_chars": 1200,
+                    "estimated_tokens": 300,
+                    "message_count": 3,
+                    "sections": [
+                        {
+                            "name": "Identity",
+                            "tier": "protected",
+                            "source": "identity",
+                            "chars": 100,
+                            "estimated_tokens": 25,
+                            "included": True,
+                        },
+                        {
+                            "name": "Available Skills",
+                            "tier": "medium",
+                            "source": "skills:summary",
+                            "chars": 800,
+                            "estimated_tokens": 200,
+                            "included": True,
+                        },
+                    ],
+                    "history": {
+                        "total_messages": 4,
+                        "included_messages": 2,
+                        "dropped_messages": 2,
+                    },
+                    "warnings": ["history_trimmed"],
+                },
+            },
+        }
+    ]
+
+    event = latest_context_event(events)
+    assert event is not None
+    formatted = format_context_summary(event)
+
+    assert "turn_id: turn-1" in formatted
+    assert "estimated_tokens: 300" in formatted
+    assert "history: 2/4 included, 2 dropped" in formatted
+    assert "warnings: history_trimmed" in formatted
+    assert "- Identity: tier=protected, source=identity, tokens=25, chars=100, included=yes" in formatted
+    assert "- Available Skills: tier=medium, source=skills:summary, tokens=200, chars=800, included=yes" in formatted
+
+
+def test_trace_html_report_includes_context_and_runtime_sections() -> None:
+    events = [
+        {
+            "turn_id": "turn-1",
+            "event": "context_built",
+            "data": {
+                "context": {
+                    "total_chars": 1200,
+                    "estimated_tokens": 300,
+                    "message_count": 3,
+                    "sections": [
+                        {
+                            "name": "Identity",
+                            "tier": "protected",
+                            "source": "identity",
+                            "chars": 100,
+                            "estimated_tokens": 25,
+                            "included": True,
+                        }
+                    ],
+                    "history": {
+                        "total_messages": 0,
+                        "included_messages": 0,
+                        "dropped_messages": 0,
+                    },
+                },
+            },
+        },
+        {
+            "turn_id": "turn-1",
+            "event": "turn_completed",
+            "data": {"stop_reason": "final_output", "tool_call_count": 1, "warning_count": 0},
+        },
+    ]
+    skills = [
+        {
+            "turn_id": "skills",
+            "event": "active_skill_set",
+            "data": {"skill_id": "frontend-design", "scope": "turn"},
+        }
+    ]
+    startup = [
+        {
+            "turn_id": "startup",
+            "event": "mcp_server_registered",
+            "data": {"server_name": "didi-mcp", "transport": "http", "tool_count": 13},
+        }
+    ]
+
+    html = build_trace_report_html(events, skills, startup)
+
+    assert "MyAgent Trace Report" in html
+    assert "Context Assembly" in html
+    assert "Identity" in html
+    assert "frontend-design" in html
+    assert "didi-mcp" in html
+
+
+def test_write_trace_report_writes_static_html_file() -> None:
+    root = make_workspace("html-report")
+    store = JsonlTraceStore(root / "traces")
+    store.record(
+        "cli:default",
+        "turn-1",
+        "context_built",
+        {
+            "context": {
+                "total_chars": 1200,
+                "estimated_tokens": 300,
+                "message_count": 3,
+                "sections": [],
+                "history": {
+                    "total_messages": 0,
+                    "included_messages": 0,
+                    "dropped_messages": 0,
+                },
+            }
+        },
+    )
+    output = root / "trace-report.html"
+
+    written = write_trace_report(output, root / "traces")
+
+    assert written == output
+    assert output.exists()
+    assert "MyAgent Trace Report" in output.read_text(encoding="utf-8")
+
+
+def test_trace_viewer_html_supports_file_loading() -> None:
+    html = build_trace_viewer_html()
+
+    assert "MyAgent Trace Viewer" in html
+    assert 'input id="files" type="file" multiple' in html
+    assert "context_built" in html
+    assert "active_skill_set" in html
+
+
+def test_write_trace_viewer_writes_static_viewer_file() -> None:
+    root = make_workspace("html-viewer")
+    output = root / "viewer.html"
+
+    written = write_trace_viewer(output)
+
+    assert written == output
+    assert output.exists()
+    assert "MyAgent Trace Viewer" in output.read_text(encoding="utf-8")

@@ -1258,3 +1258,122 @@ Recommended next step after validation:
 Run focused SubAgent/Skill tests, then let the user test a real CLI task that
 uses a skill before delegation.
 ```
+
+## Context Trace Inspect Update
+
+After committing the SubAgent + Active Skill bridge, the next runtime polish step
+is Context trace inspection.
+
+Why this is different from existing trace:
+
+- Existing `context_built` trace already stores ContextBuilder data.
+- Existing `trace latest` summarizes the latest turn outcome.
+- New `trace context` should summarize what went into the model context:
+  sections, token estimates, history trimming, and warnings.
+
+Implemented command:
+
+```text
+python -m myagent trace context
+```
+
+Expected output shape:
+
+```text
+turn_id: ...
+message_count: ...
+estimated_tokens: ...
+total_chars: ...
+history: included/total, dropped
+sections:
+- Identity: tier=protected, source=identity, tokens=..., chars=..., included=yes
+- Runtime Environment: ...
+- Core Memory: ...
+- Available Skills: ...
+- Delegation Policy: ...
+```
+
+This does not change prompt composition. It only makes the existing
+ContextBuilder report easier to inspect from CLI.
+
+## Trace HTML Report
+
+Because command-line summaries are still hard to scan for larger runs, Trace now
+has HTML inspection pages.
+
+Implemented command:
+
+```text
+python -m myagent trace report
+```
+
+Default output:
+
+```text
+data/traces/report.html
+```
+
+The report shows:
+
+- latest turn summary
+- ContextBuilder section sizes
+- history inclusion/drop information
+- recent Skills runtime events
+- MCP startup events
+- recent session events
+
+Boundary:
+
+- Static HTML only.
+- No server.
+- No frontend framework.
+- No raw full message dump.
+- No trace mutation.
+
+This is meant for local diagnosis: easier than reading JSONL, but still simple
+enough for the current Phase 2 project.
+
+## Trace Interactive Viewer
+
+The fixed HTML report is useful, but the more flexible direction is an
+interactive local viewer.
+
+Implemented command:
+
+```text
+python -m myagent trace viewer
+```
+
+Default output:
+
+```text
+data/traces/viewer.html
+```
+
+Behavior:
+
+- Open the HTML file in a browser.
+- Select one or more saved `.jsonl` trace files.
+- The page parses the files locally with browser JavaScript.
+- The page shows tabs for:
+  - Context
+  - Events
+  - Skills
+  - Startup
+  - Raw parsed JSON
+
+Recommended files:
+
+```text
+data/traces/cli_default.jsonl
+data/traces/runtime_skills.jsonl
+data/traces/runtime_startup.jsonl
+```
+
+Boundary:
+
+- No upload.
+- No server.
+- No database.
+- No frontend build pipeline.
+- No mutation of trace files.
