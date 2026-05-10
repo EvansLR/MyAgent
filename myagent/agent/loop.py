@@ -417,7 +417,11 @@ class AgentLoop:
             if not self.tool_registry.has(tool.name):
                 self.tool_registry.register(tool)
         if self.skill_registry.list_skills() and not self.tool_registry.has("skill_get"):
-            self.tool_registry.register(SkillGetTool(self.skill_registry))
+            self.tool_registry.register(SkillGetTool(self.skill_registry, trace_hook=self._trace_skill_event))
+
+    def _trace_skill_event(self, event: str, data: dict[str, object]) -> None:
+        """Record skill tool events without coupling SkillGetTool to AgentLoop state."""
+        self._trace("runtime:skills", "skills", event, data)
 
     async def _extract_memory_after_turn(
         self,

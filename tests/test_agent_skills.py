@@ -3,8 +3,9 @@ import shutil
 
 from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus
-from myagent.providers.base import ProviderResponse
+from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.skills import SkillRegistry
+from myagent.tracing import JsonlTraceStore
 
 
 def make_message(content: str = "hello") -> InboundMessage:
@@ -55,6 +56,28 @@ class CapturingProvider:
         return ProviderResponse(content="ok")
 
 
+class SkillGetProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, messages):
+        return "fallback"
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="skill-call-1",
+                        name="skill_get",
+                        arguments={"skill_id": "code-review"},
+                    )
+                ]
+            )
+        return ProviderResponse(content="loaded")
+
+
 async def test_agent_loop_injects_available_skills_into_context() -> None:
     root = make_workspace("default")
     write_skill(root, "interview-prep", "Help with interview preparation.")
@@ -82,3 +105,28 @@ async def test_agent_loop_injects_available_skills_into_context() -> None:
         for definition in agent.tool_registry.get_definitions()
     ]
     assert "skill_get" in tool_names
+
+
+async def test_agent_loop_traces_skill_get_usage() -> None:
+    root = make_workspace("trace")
+    write_skill(root, "code-review", "Review code changes.")
+    provider = SkillGetProvider()
+    bus = MessageBus()
+    trace_store = JsonlTraceStore(root / "traces")
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        skill_registry=SkillRegistry.from_directory(root),
+        trace_store=trace_store,
+    )
+
+    await bus.publish_inbound(make_message("Use code-review skill."))
+    await agent.process_next()
+
+    events = [
+        line
+        for line in (root / "traces" / "runtime_skills.jsonl").read_text(encoding="utf-8").splitlines()
+        if "skill_loaded" in line
+    ]
+    assert events
+    assert "code-review" in events[0]

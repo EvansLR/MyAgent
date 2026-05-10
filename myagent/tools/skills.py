@@ -1,16 +1,23 @@
 """Tools for loading full local skill instructions."""
 
-from typing import Any
+from typing import Any, Callable
 
 from myagent.skills import SkillRegistry
 from myagent.tools.base import Tool
+
+SkillTraceHook = Callable[[str, dict[str, object]], None]
 
 
 class SkillGetTool(Tool):
     """Load the full SKILL.md for one discovered skill."""
 
-    def __init__(self, registry: SkillRegistry) -> None:
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        trace_hook: SkillTraceHook | None = None,
+    ) -> None:
         self.registry = registry
+        self.trace_hook = trace_hook
 
     @property
     def name(self) -> str:
@@ -44,6 +51,17 @@ class SkillGetTool(Tool):
         content = self.registry.read_skill(skill.id)
         if content is None:
             return f"Skill '{skill_id}' not found."
+        if self.trace_hook is not None:
+            self.trace_hook(
+                "skill_loaded",
+                {
+                    "skill_id": skill.id,
+                    "name": skill.name,
+                    "description": skill.description,
+                    "path": skill.path.as_posix(),
+                    "content_length": len(content),
+                },
+            )
         allowed = ", ".join(skill.allowed_tools) if skill.allowed_tools else "not specified"
         return (
             f"Skill: {skill.id}\n"

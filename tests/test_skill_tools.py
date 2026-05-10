@@ -47,6 +47,44 @@ async def test_skill_get_tool_loads_full_skill_content() -> None:
     assert "Use a review-first output shape." in result
 
 
+async def test_skill_get_tool_traces_loaded_skill() -> None:
+    root = make_workspace("trace")
+    write_skill(
+        root,
+        "code-review",
+        "\n".join(
+            [
+                "---",
+                "name: code-review",
+                "description: Review code changes.",
+                "---",
+                "",
+                "# Code Review",
+            ]
+        ),
+    )
+    registry = SkillRegistry.from_directory(root)
+    events: list[tuple[str, dict[str, object]]] = []
+
+    result = await SkillGetTool(registry, trace_hook=lambda event, data: events.append((event, data))).execute(
+        "code-review"
+    )
+
+    assert "Skill: code-review" in result
+    assert events == [
+        (
+            "skill_loaded",
+            {
+                "skill_id": "code-review",
+                "name": "code-review",
+                "description": "Review code changes.",
+                "path": (root / "code-review" / "SKILL.md").as_posix(),
+                "content_length": len((root / "code-review" / "SKILL.md").read_text(encoding="utf-8")),
+            },
+        )
+    ]
+
+
 async def test_skill_get_tool_reports_missing_skill() -> None:
     registry = SkillRegistry([])
 

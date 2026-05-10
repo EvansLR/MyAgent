@@ -826,3 +826,216 @@ python -m pytest
 - skill trigger 规则
 
 这些留到第二次迭代。
+## Phase 2B Design Note
+
+### Context Lifecycle
+
+MyAgent rebuilds the system prompt for every user turn. This does not mean skill
+content is appended to conversation history over and over.
+
+Current flow:
+
+```text
+user message
+  -> AgentLoop loads session history
+  -> ContextBuilder renders a fresh system prompt
+  -> Available Skills summary appears once in that prompt
+  -> provider may call skill_get
+  -> skill_get result is used inside the current turn
+  -> only user message and final assistant answer are saved to session history
+```
+
+So there are three different scopes:
+
+```text
+system prompt:
+  skill summaries, rebuilt each turn, not saved into history
+
+current turn working messages:
+  tool calls and tool results, including full SKILL.md from skill_get
+
+session history:
+  user messages and final assistant answers
+```
+
+This matches the usual progressive-disclosure pattern used by agent frameworks:
+metadata stays cheap and always visible; full instructions are loaded only when
+the model decides they are needed.
+
+### Skill / Tool / SubAgent Boundary
+
+```text
+Skill:
+  describes how to approach a class of tasks
+
+Tool:
+  performs an action such as reading files, writing files, searching, or loading
+  a skill
+
+SubAgent:
+  runs a bounded task with its own prompt and restricted tool set
+```
+
+Skills are not a replacement for SubAgents. A skill is a workflow or capability
+guide. A SubAgent is an execution unit that can apply a skill-like workflow while
+keeping context and permissions scoped.
+
+### Phase 2B Scope
+
+The next small improvement is observability, not automatic skill selection.
+
+Implemented direction:
+
+```text
+skill_get(skill_id)
+  -> load full SKILL.md
+  -> emit trace event: skill_loaded
+```
+
+Trace event:
+
+```text
+session: runtime:skills
+turn: skills
+event: skill_loaded
+data:
+  skill_id
+  name
+  description
+  path
+  content_length
+```
+
+Deferred:
+
+- automatic SkillSelector
+- persistent Active Skills section
+- multi-skill conflict handling
+- skill usage scoring
+- skill + SubAgent automatic routing
+
+## Active Skill Proposal
+
+### What It Means
+
+An Active Skill is an explicit runtime observation that a skill is being used for
+the current work.
+
+It is different from Available Skills:
+
+```text
+Available Skills:
+  the model can see that a skill exists
+
+Loaded Skill:
+  the model called skill_get and received the full SKILL.md content
+
+Active Skill:
+  the runtime records that this skill is relevant to the current turn/task
+```
+
+For example:
+
+```text
+User: Help me design a club promotion HTML page.
+Model: skill_get(frontend-design)
+Runtime: active_skill_set skill_id=frontend-design scope=turn
+```
+
+The main purpose is observability and future control. It lets us answer:
+
+```text
+Which skill did the agent actually use for this turn?
+Was this skill only used once, or should it keep affecting the task?
+Should a reviewer/researcher SubAgent inherit this skill context later?
+```
+
+### Why It Exists
+
+Without Active Skill, MyAgent only knows that `skill_get` was called.
+
+That is useful, but incomplete:
+
+```text
+skill_get:
+  means full instructions were loaded
+
+active_skill:
+  means the runtime considers that skill part of the current task state
+```
+
+This distinction matters later because not every loaded skill should become
+long-lived state. A model may inspect a skill and then decide it is not useful.
+
+### First Implementation Scope
+
+The first version should be turn-level only.
+
+```text
+scope = turn
+```
+
+Behavior:
+
+```text
+skill_get succeeds
+  -> trace skill_loaded
+  -> trace active_skill_set
+```
+
+Trace event:
+
+```text
+event: active_skill_set
+data:
+  skill_id
+  name
+  scope: turn
+  reason: loaded_by_skill_get
+```
+
+It should not:
+
+- persist into session history
+- inject a new Active Skills section into future turns
+- automatically select skills before the model asks
+- override model behavior
+- bind SubAgents automatically
+
+This keeps the feature explainable:
+
+```text
+Active Skill v1 is an observation, not a controller.
+```
+
+### Future Versions
+
+Later, after Task/Run state becomes clearer, Active Skill can grow into:
+
+```text
+session-level active skills:
+  continue applying across a short conversation
+
+task-level active skills:
+  attach to a task/run until the task completes
+
+selector-driven active skills:
+  model or heuristic selects likely skills before first provider call
+
+subagent skill inheritance:
+  delegated researcher/reviewer can receive selected skill context
+```
+
+These are intentionally deferred because they need clearer task boundaries,
+conflict handling, and token budgeting.
+
+### Proposed Next Step
+
+Implement only:
+
+```text
+skill_get success
+  -> active_skill_set trace event with scope=turn
+```
+
+No behavior change. No new prompt section. No persistence.
