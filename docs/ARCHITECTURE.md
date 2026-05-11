@@ -347,10 +347,19 @@ docs/modules/MEMORY.md
 - `read_file`
 - `write_file`
 - `edit_file`
+- `copy_file`
+- `move_file`
 - `exec`
 - `web_search`
+- `web_fetch`
 
-第一阶段可以优先实现文件和 shell 工具，`web_search` 可后置。
+当前真实状态：
+
+- 主 Agent 默认已启用：`list_dir`、`read_file`、`write_file`、`edit_file`、`copy_file`、`move_file`、`web_search`、`web_fetch`
+- 工作区外变更型文件操作通过当前 Channel 走审批流程
+- `exec` 仍未实现
+
+第一阶段最初可以优先实现文件和 shell 工具，`web_search` 可后置；但这一点现在已经不再是当前实现状态。
 
 #### Skills
 
@@ -391,7 +400,13 @@ Skills 是“提示词能力扩展”，不是 Python 插件系统。第一阶�
 - 用独立模型配置执行一个子任务
 - 返回子任务结果给主 Agent
 
-第一阶段只做同步委托，不做后台 spawn。
+当前真实状态：
+
+- 继续只做同步委托，不做后台 spawn。
+- 子 Agent 按 profile 暴露受限只读工具集。
+- 本地只读工具仍以 `list_dir`、`read_file` 为主。
+- 部分 profile 可使用只读 web 工具：`web_search`、`web_fetch`。
+- 子 Agent 不继承 `write_file`、`edit_file`、`copy_file`、`move_file`、MCP tools 或递归 `delegate_task`。
 
 ### Observability Layer
 

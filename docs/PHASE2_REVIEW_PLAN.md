@@ -44,6 +44,8 @@ CLI Channel
 - Skills 扫描和上下文注入
 - MCP stdio / HTTP-SSE 风格接入
 - SubAgent 同步委托
+- 主 Agent 默认文件工具：`list_dir`、`read_file`、`write_file`、`edit_file`、`copy_file`、`move_file`
+- 主 Agent 默认 web 工具：`web_search`、`web_fetch`
 
 最近一次全量测试：
 
@@ -66,10 +68,13 @@ python -m pytest
 - `read_file`
 - `write_file`
 - `edit_file`
+- `copy_file`
+- `move_file`
 - `exec`
 - `web_search`
+- `web_fetch`
 
-实际第一版只做了：
+实际第一版最初只做了：
 
 - `list_dir`
 - `read_file`
@@ -80,19 +85,41 @@ python -m pytest
 - 只读工具更安全。
 - 先验证 LLM tool calling 闭环。
 
-Phase 2 要决定是否补写文件、编辑、执行命令、网络搜索工具。
+当前真实状态已经进入 Phase 2 的后续实现：
+
+- 主 Agent 默认已支持 `write_file`、`edit_file`、`copy_file`、`move_file`
+- 主 Agent 默认已支持 `web_search`、`web_fetch`
+- 工作区外变更型文件操作通过当前 Channel 走审批流程
+- `exec` 仍未实现
+
+因此 ToolRegistry 这条线在 Phase 2 的重点已经不再是“是否要不要加这些工具”，
+而是：
+
+- 文档是否和真实默认工具集合一致
+- 审批边界是否清楚
+- 主 Agent 和 SubAgent 的工具权限是否讲得明白
 
 ### SubAgent
 
 早期文档提到“独立模型配置”。
 
-实际第一版：
+实际第一版最初：
 
 - 子 Agent 使用独立 prompt。
 - 子 Agent 使用受限只读工具集。
 - 子 Agent 和主 Agent 共用 provider。
 
-Phase 2 要决定是否做 SubAgent profile 配置化、独立模型配置和 trace tree。
+当前真实状态已经继续演进：
+
+- 子 Agent 按 profile 使用受限只读工具集
+- 部分 profile 已可使用 `web_search` / `web_fetch`
+- 子 Agent 仍不继承写文件工具、MCP tools 或递归 `delegate_task`
+
+因此 Phase 2 的重点已经转为：
+
+- profile 权限边界是否清楚
+- 是否需要独立模型配置
+- 是否要继续增强 trace tree / CLI 展示
 
 ### Trace
 
@@ -104,7 +131,18 @@ Phase 2 要决定是否做 SubAgent profile 配置化、独立模型配置和 tr
 - 基础 turn、LLM、tool、memory、subagent 事件已完成。
 - 高级 trace 诊断和树形 trace 仍未做。
 
-Phase 2 要决定 trace 是只补文档口径，还是继续增强查询、摘要、回放能力。
+当前真实状态已经继续演进：
+
+- 已有 `trace latest`
+- 已有 `trace show`
+- 已有 `trace skills`
+- 已有 `trace startup`
+- 已有 `trace context`
+- 已有 `trace report`
+- 已有 `trace viewer`
+
+因此 Trace 在 Phase 2 的重点已不再是“要不要做 inspect 命令”，
+而是是否还需要继续做少量、对面试表达有帮助的可观察性收口。
 
 ### Memory
 
@@ -229,13 +267,13 @@ Phase 2 建议按下面顺序推进。
 目标：
 
 - 检查工具 schema、参数校验、错误信息
-- 决定是否新增写文件、编辑文件、exec、web_search
+- 校准默认工具集合、审批边界和主/子 Agent 工具差异
 
 重点问题：
 
 - 写工具是否需要确认机制
 - exec 是否需要白名单和超时
-- web_search 是否会破坏轻量定位
+- web 工具是否已经足够，还是仍然过重
 
 ### 9. Trace
 
@@ -363,4 +401,3 @@ Phase 2 第一轮建议先做：
 - Memory 当前太简单，用户已经明确提出后续必须升级。
 - Skills 当前还停留在摘要提示层，和真正“能力调用”还有距离。
 - SubAgent 刚完成第一版，适合先观察测试效果，再决定是否配置化。
-

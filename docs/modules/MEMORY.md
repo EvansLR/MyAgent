@@ -12,6 +12,37 @@ Memory 把用户明确告诉 MyAgent 的长期信息保存到文件里，并在�
 
 它属于 `Intelligence Layer`。
 
+## 当前状态速览
+
+这份文档前半部分保留了 Memory 第一阶段的设计口径，用来解释它最初为什么从
+显式写入 + JSONL append-only 开始。
+
+但当前真实实现已经进入 Memory v2 的最小闭环阶段，主路径不再是早期的
+`facts.jsonl` + 简单关键词召回，而是 Markdown-backed memory workspace：
+
+- `MEMORY.md`
+- `DREAMS.md`
+- `daily/YYYY-MM-DD.md`
+
+当前主线能力：
+
+- ContextBuilder 默认组装 `MEMORY.md` 中的高信号 section。
+- Agent 可用 memory tools：
+  - `memory_append_daily`
+  - `memory_propose_long_term`
+  - `memory_search`
+  - `memory_get`
+  - `memory_forget`
+- `MemoryExtractor` 在 final answer 后运行，但默认只写 daily candidate 或 proposal。
+- 自动提取不会直接污染长期 `MEMORY.md`。
+
+当前边界：
+
+- 不上向量库。
+- 不上 SQLite。
+- 不做 knowledge graph。
+- 不让模型随意直接改长期 memory。
+
 ## 为什么需要它
 
 当前 MyAgent 已经有 session history。
@@ -49,7 +80,7 @@ NanoBot 的 memory 思路更完整，通常会涉及：
 - 分层上下文预算
 - 持久化存储
 
-MyAgent 第一阶段只保留最小可讲、可跑版本：
+MyAgent 第一阶段最初只保留最小可讲、可跑版本：
 
 - 文件型 memory
 - JSONL append-only
@@ -68,6 +99,8 @@ MyAgent 第一阶段只保留最小可讲、可跑版本：
 - 自动判断每句话是否要记住
 
 这样既保留 NanoBot 的“长期信息进入上下文”思想，又不会把项目拖进复杂 RAG。
+
+这段描述的是最初设计口径；当前真实主路径已经演进到 Markdown-backed memory workspace，见本文顶部“当前状态速览”。
 
 ## Memory 和 Session History 的区别
 

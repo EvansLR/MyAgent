@@ -61,6 +61,12 @@ working  # 最近观察、候选信息、临时计划
 
 Phase 2 之后，Skills 应升级为个人助理的可复用工作流手册，而不是只作为 coding prompt 摘要。
 
+当前补充口径：
+
+- `skill_get(skill_id)` 已经是当前真实运行路径的一部分。
+- 成功加载完整 skill 时，runtime 会记录 `skill_loaded` 和 turn-scoped `active_skill_set`。
+- active skill 目前只作为运行时观察和子 Agent 的紧凑上下文来源，不自动授予新工具权限。
+
 ### 5. MCP
 
 目标：stdio + SSE 都可支持。
@@ -96,6 +102,11 @@ Agent workspace
   skills/
 ```
 
+当前补充口径：
+
+- Agent workspace 仍然是未来方向，不是当前主线实现。
+- 当前 Phase 2 的重点是先把 Memory、Skills、ToolRegistry、SubAgent 的真实边界讲清楚。
+
 ### 7. Channel 方向
 
 CLI 是当前第一个入口。
@@ -107,6 +118,49 @@ CLI 是当前第一个入口。
 - allowlist
 - require mention
 - 不让模型自由决定向任意 channel 发消息
+
+### 8. 文件工具审批边界
+
+已确认：文件工具不再只服务源码仓库内的只读任务，当前主 Agent 可以执行实用的个人助理型文件操作。
+
+当前默认文件工具包括：
+
+- `list_dir`
+- `read_file`
+- `write_file`
+- `edit_file`
+- `copy_file`
+- `move_file`
+
+当前审批口径：
+
+- 工作区内路径：允许直接执行。
+- 工作区外只读访问：允许执行。
+- 工作区外变更型文件操作：必须经过当前 Channel 明确审批。
+
+这样做的原因是：
+
+- 比“只能在 workspace 内行动”更符合个人助理使用场景。
+- 比完全放开文件系统更容易解释和测试。
+- 审批逻辑归 Channel 所有，避免工具直接操作终端输入。
+
+### 9. SubAgent 工具权限边界
+
+已确认：SubAgent 的工具边界由 profile 决定，子 Agent 不自动继承主 Agent 的全部能力。
+
+当前口径：
+
+- 主 Agent 可以拥有更完整的文件和 web 工具集合。
+- 子 Agent 只拿受限只读工具集。
+- 本地只读能力以 `list_dir`、`read_file` 为主。
+- 部分 profile 可使用只读 web 工具：`web_search`、`web_fetch`。
+- 子 Agent 不继承 `write_file`、`edit_file`、`copy_file`、`move_file`、MCP tools 或递归 `delegate_task`。
+
+这样做的原因是：
+
+- 让主 Agent 继续负责最终行动和权限升级。
+- 让子 Agent 更像局部分析单元，而不是另一个完整助手。
+- 面试时更容易解释“为什么委托出去但没有把所有权限一起交出去”。
 
 ## 面试表达口径
 

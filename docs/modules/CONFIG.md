@@ -10,6 +10,26 @@ Config 负责把本地 JSON 配置和环境变量统一转换成 MyAgent 运行�
 Settings 是 CLI 启动运行时时读取 provider 和 MCP 配置的入口。
 ```
 
+## 当前状态速览
+
+这份文档主要描述当前已经落地的 `Settings` 行为。
+
+当前真实实现：
+
+- 默认读取 `myagent.json`。
+- 支持 `MYAGENT_CONFIG` 和 CLI `--config` 指定配置文件。
+- 支持 provider 配置和环境变量覆盖。
+- 支持 `mcpServers`，包括 stdio 与 HTTP/SSE 风格 server。
+- `myagent.example.json` 已体现 `mcpServers` 入口。
+- SubAgent 仍不读取独立 provider/profile 配置，而是与主 Agent 共用 provider。
+
+当前边界：
+
+- 暂不支持 `MYAGENT_MAX_ITERATIONS`。
+- 暂不支持 `MYAGENT_WORKSPACE`。
+- 暂不支持 SubAgent profile 配置化。
+- 暂不提供严格配置 schema 校验。
+
 ## 为什么需要它
 
 MyAgent 需要在不同场景下切换运行方式：

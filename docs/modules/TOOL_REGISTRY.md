@@ -12,6 +12,42 @@ ToolRegistry 注册工具、暴露工具 schema、校验参数，并按名称执
 
 第一阶段只做工具层本身，不急着接 LLM tool calling。
 
+## 当前状态速览
+
+这份文档前半部分保留了 ToolRegistry 第一阶段的设计口径，用来解释这个模块最初为什么这样拆。
+
+但当前真实实现已经进入 Phase 2，ToolRegistry 不再只是只读文件工具抽象，而是已经承担：
+
+- 主 Agent 默认工具集合
+- LLM tool calling 接入
+- 文件操作审批边界
+- Web 搜索与网页读取
+- 后续 MCP 动态工具接入基础
+
+当前主 Agent 默认启用的内置工具：
+
+```text
+文件工具：
+- list_dir
+- read_file
+- write_file
+- edit_file
+- copy_file
+- move_file
+
+Web 工具：
+- web_search
+- web_fetch
+```
+
+当前边界：
+
+- 主 Agent 可以调用上述文件工具和 web 工具。
+- 工作区内变更型文件操作默认允许。
+- 工作区外变更型文件操作通过当前 Channel 走审批流程。
+- SubAgent 不继承写文件工具，只拿到受限只读工具集。
+- `exec` 仍未实现。
+
 ## 为什么需要它
 
 现在 MyAgent 已经能聊天，也能保留对话历史，但它还不能“行动”。
@@ -156,6 +192,8 @@ tool_names
 
 ## 第一阶段内置工具
 
+这一节记录的是 ToolRegistry 的第一阶段最小闭环，而不是当前完整默认工具集合。
+
 ### list_dir
 
 功能：列出目录内容。
@@ -217,6 +255,30 @@ limit: int = 2000
 - 面试时可以讲清楚安全边界。
 - 后续 write/exec 工具也能复用同一套路径策略。
 
+## 当前路径与审批策略
+
+随着 `write_file`、`edit_file`、`copy_file`、`move_file` 和个人助理型文件任务落地，
+当前策略已经从“只允许 workspace 内路径”演进为：
+
+```text
+workspace root:
+  允许直接访问
+
+outside workspace + read-only:
+  允许访问
+
+outside workspace + mutating file operation:
+  需要当前 Channel 明确审批
+```
+
+当前行为：
+
+- `list_dir`、`read_file` 是只读操作，不触发审批。
+- `write_file`、`edit_file`、`copy_file`、`move_file` 在触及工作区外路径时触发审批。
+- 常见个人目录别名会被解析：`Desktop`、`Downloads`、`Documents`、`桌面`、`下载`、`文档`。
+- 不会静默创建猜测出来的外部父目录。
+- 如果当前 Channel 没有审批回调，工作区外变更型操作会被拒绝。
+
 ## 第一阶段范围
 
 第一阶段只实现：
@@ -245,6 +307,31 @@ limit: int = 2000
 - 复杂权限策略
 - 文件编码自动探测
 - 二进制文件读取
+
+## 当前默认工具集合
+
+当前主 Agent 默认启用的内置工具是：
+
+```text
+list_dir
+read_file
+write_file
+edit_file
+copy_file
+move_file
+web_search
+web_fetch
+```
+
+说明：
+
+- `write_file` 用于创建或覆盖 UTF-8 文本文件。
+- `edit_file` 用于小范围精确字符串替换。
+- `copy_file` / `move_file` 用于常见个人助理文件搬运任务。
+- `web_search` / `web_fetch` 构成通用网页搜索与网页正文读取闭环。
+- `exec` 依然不在当前默认工具集合中。
+
+当前子 Agent 默认不会继承这整套工具，而是按 `SubAgentProfile.allowed_tools` 获取受限只读工具集合。
 
 ## 最小测试点
 
@@ -376,7 +463,7 @@ await registry.execute(tool_name, arguments)
 
 ### 文件工具做了什么
 
-当前内置两个只读工具：
+第一版最初的内置工具只有两个只读工具：
 
 ```text
 list_dir
@@ -397,7 +484,7 @@ read_file
 
 ### 默认注册入口
 
-`create_default_registry(workspace=None)` 会创建一个默认 registry，并注册：
+第一版最初的 `create_default_registry(workspace=None)` 会创建一个默认 registry，并注册：
 
 ```text
 list_dir
@@ -405,6 +492,19 @@ read_file
 ```
 
 如果没有传 workspace，就默认使用当前运行目录。后续 AgentLoop 接入工具调用时，可以先从这个函数拿到默认工具集合。
+
+当前默认 registry 已经扩展为：
+
+```text
+list_dir
+read_file
+write_file
+edit_file
+copy_file
+move_file
+web_search
+web_fetch
+```
 
 ### 测试说明
 
@@ -438,17 +538,17 @@ python -m pytest
 45 passed
 ```
 
-### 当前边界
+### 第一版边界
 
-现在工具层已经能独立运行，但还没有被 AgentLoop 使用。
+这一段记录的是 ToolRegistry 第一版刚完成时的边界。
 
-也就是说：
+当时：
 
 - 代码里可以手动调用 `registry.execute(...)`
 - LLM 还不会自动选择和调用工具
 - CLI 聊天时暂时还不能让模型直接读取文件
 
-下一步如果继续做工具方向，应该设计并实现 `LLM tool calling -> AgentLoop -> ToolRegistry -> Tool result -> LLM final answer` 这一段闭环。
+后续这条闭环已经完成，下面的 “Tool Calling 接入设计 / 实现记录” 记录的就是后续演进。
 
 ## Tool Calling 接入设计
 
@@ -500,9 +600,9 @@ AgentLoop 新增一个轻量工具循环：
 
 第一版默认 `max_tool_iterations = 8`。这个限制是为了避免模型反复调用工具导致死循环，同时给真实模型浏览目录、读取多个文件留下足够空间。
 
-### 当前支持的工具
+### 当时支持的工具
 
-CLI 默认启用：
+Tool calling 第一轮接入 AgentLoop 时，CLI 默认启用的是：
 
 ```text
 list_dir
@@ -534,7 +634,9 @@ read_file
 
 ## Tool Calling 接入实现记录
 
-本阶段已经把只读工具接入 AgentLoop。现在真实 LLM 在支持 OpenAI-compatible tool calling 的情况下，可以在 CLI 对话中调用：
+这一段保留的是 Tool calling 第一轮接入时的实现记录。
+
+当时只把只读工具接入 AgentLoop。也就是说，当时真实 LLM 在支持 OpenAI-compatible tool calling 的情况下，可以在 CLI 对话中调用：
 
 ```text
 list_dir
@@ -600,13 +702,13 @@ tool_choice="auto"
 
 ### AgentLoop 工具循环
 
-`AgentLoop` 现在默认创建：
+在这个阶段，`AgentLoop` 默认创建：
 
 ```python
 create_default_registry()
 ```
 
-也就是默认启用只读文件工具。
+也就是当时默认启用只读文件工具。
 
 核心流程在 `_generate_with_tools()`：
 
@@ -665,16 +767,18 @@ python -m pytest
 
 ### 当前边界
 
-现在已经可以让支持 tool calling 的真实 LLM 浏览本地目录和读取文件。
+现在已经可以让支持 tool calling 的真实 LLM 调用当前默认工具集合。
 
-但当前仍然只支持只读工具：
+当前真实边界已经变成：
 
 - 能列目录
 - 能读 UTF-8 文本文件
-- 不能写文件
-- 不能编辑文件
-- 不能执行命令
-- 不能访问 workspace 外路径
+- 能写文件和做小范围文本编辑
+- 能复制或移动文件
+- 能做通用网页搜索与正文抓取
+- 不能执行 `exec`
+- 工作区外的变更型文件操作需要审批
+- 子 Agent 仍不继承写文件工具
 
 ## Tool Calling 兼容性修正
 

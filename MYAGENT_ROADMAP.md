@@ -44,7 +44,9 @@ CLI Channel
 - Rich CLI 状态展示和 Markdown 渲染。
 - OpenAI-compatible provider 和 EchoProvider。
 - ToolRegistry 注册、schema、参数校验和执行。
-- 只读文件系统工具：`list_dir`、`read_file`。
+- 默认内置工具：
+  - 文件工具：`list_dir`、`read_file`、`write_file`、`edit_file`、`copy_file`、`move_file`
+  - Web 工具：`web_search`、`web_fetch`
 - JSONL Trace。
 - 文件型 Memory 保存和简单召回。
 - Skills 扫描和上下文注入。
@@ -92,8 +94,11 @@ python -m pytest
 ### 6. 工具层
 - 已实现 ToolRegistry 注册表。
 - 已实现工具描述、JSON Schema、参数校验和执行。
-- 第一版只提供只读工具：`list_dir`、`read_file`。
-- `write_file`、`edit_file`、`exec`、`web_search` 暂未实现，原因是当前阶段优先安全、轻量和演示稳定。
+- 当前主 Agent 默认工具集包括：
+  - 文件工具：`list_dir`、`read_file`、`write_file`、`edit_file`、`copy_file`、`move_file`
+  - Web 工具：`web_search`、`web_fetch`
+- 工作区内变更型文件操作允许直接执行；工作区外变更型文件操作通过当前 Channel 走审批流程。
+- `exec` 仍未实现，原因是当前阶段优先保持安全边界清楚、可解释、可面试。
 
 ### 7. MCP 扩展
 - 已实现 stdio MCP 接入。
@@ -118,9 +123,12 @@ python -m pytest
 
 ### 11. SubAgent（同步委托）
 - 已实现 `delegate_task` 工具。
-- 子 Agent 只暴露只读工具集：`list_dir`、`read_file`。
+- 子 Agent 按 profile 暴露受限只读工具集：
+  - 本地只读：`list_dir`、`read_file`
+  - 部分 profile 可用只读 web 工具：`web_search`、`web_fetch`
 - 已内置 `researcher`、`reviewer`、`interviewer` profile。
-- 当前使用独立 prompt，但与主 Agent 共用 provider；独立模型配置、profile 配置化和 trace tree 属于 Phase 2 复盘项。
+- 子 Agent 不继承 `write_file`、`edit_file`、`copy_file`、`move_file`、MCP tools 或递归 `delegate_task`。
+- 当前使用独立 prompt，但与主 Agent 共用 provider；独立模型配置、profile 配置化和更完整 trace tree 属于 Phase 2 复盘项。
 
 ---
 

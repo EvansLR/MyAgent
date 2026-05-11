@@ -190,7 +190,7 @@ delegate_task(task, agent_type, context)
 
 ### 4. 工具权限要可控
 
-第一版 SubAgent 只给只读工具：
+第一版最初的 SubAgent 只给本地只读工具：
 
 - `list_dir`
 - `read_file`
@@ -646,9 +646,9 @@ main turn
 
 `reviewer` profile 和 `code-review` skill、`interviewer` profile 和 `interview-prep` skill 之间还没有绑定关系。
 
-5. 子 Agent 不能联网。
+5. 第一版最初的子 Agent 不能联网。
 
-这是刻意限制，但会影响 researcher 类型任务。现在主 Agent 已经有 `web_search` / `web_fetch`，后续要不要给 researcher 开放只读 web tools，需要单独决策。
+这是最初的刻意限制，但会影响 researcher 类型任务。后续实现中，部分 profile 已经拿到只读 web tools；因此这里保留的是早期复盘口径，不再代表当前真实状态。
 
 ### 二期建议
 
@@ -675,7 +675,7 @@ main turn
 - `myagent.json` 可覆盖或新增 profile。
 - reviewer 默认绑定 `code-review`。
 - interviewer 默认绑定 `interview-prep`。
-- researcher 是否允许 `web_search` / `web_fetch` 需要用户确认后再做。
+- 继续评估哪些 profile 适合继承只读 web tools，哪些仍应只保留本地只读能力。
 
 暂不建议现在做：
 
@@ -717,7 +717,7 @@ tests/test_agent_trace.py
 - 子 Agent 内部 tool call trace 测试。
 - subagent task id 稳定写入 trace 的测试。
 - profile allowed_tools 生效测试。
-- 子 Agent 不继承 `write_file`、`web_search`、`delegate_task` 的回归测试。
+- 子 Agent 不继承 `write_file`、MCP tools、`delegate_task` 的回归测试。
 
 ### 面试表达更新
 

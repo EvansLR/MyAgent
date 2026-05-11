@@ -12,6 +12,28 @@ Skills 扫描 skills/*/SKILL.md，提取摘要注入 ContextBuilder，让模型�
 
 它属于 `Capability Layer`，但第一版更接近“提示词能力扩展”，不是 Python 插件系统。
 
+## 当前状态速览
+
+这份文档前半部分保留了 Skills 第一阶段的设计口径，用来解释它为什么从
+`skills/*/SKILL.md` 摘要扫描开始。
+
+但当前真实实现已经进入 Phase 2，Skills 不再只是“摘要注入”：
+
+- ContextBuilder 会继续注入 `# Available Skills` 摘要。
+- Agent 可以通过 `skill_get(skill_id)` 按需加载完整 `SKILL.md`。
+- `skill_get` 成功后，runtime 会记录：
+  - `skill_loaded`
+  - `active_skill_set`
+- `active_skill_set` 当前是 turn-scoped runtime observation，不持久化。
+- SubAgent 已能继承紧凑的 active skill context，但不会自动获得新工具。
+
+当前边界：
+
+- 不做 automatic SkillSelector。
+- 不做 persistent active skills。
+- 不做 skill-defined tool permissions。
+- 不自动把完整 `SKILL.md` 注入 SubAgent。
+
 ## 为什么需要它
 
 现在 MyAgent 已经有：
@@ -52,7 +74,7 @@ NanoBot 的 skill 机制更完整，通常包含：
 - context budget
 - 和工具/MCP 的联动
 
-MyAgent 第一阶段只保留：
+MyAgent 第一阶段最初只保留：
 
 - 扫描 `skills/*/SKILL.md`
 - 提取 name / description
@@ -75,6 +97,8 @@ MyAgent 第一阶段只保留：
 ```text
 本地能力文档 -> SkillRegistry -> ContextBuilder -> LLM
 ```
+
+这段描述的是最初设计口径；当前真实实现已经增加 `skill_get`、`skill_loaded`、`active_skill_set` 和 SubAgent 轻量继承路径，见本文顶部“当前状态速览”。
 
 ## Skill 文件结构
 
@@ -224,9 +248,13 @@ process_message
   -> ContextBuilder builds system prompt with Available Skills
 ```
 
-Skills 不直接参与 tool calling。
+第一阶段最初 Skills 不直接参与 tool calling，它只是上下文能力提示。
 
-第一版它只是上下文能力提示。
+当前真实状态已经继续演进：
+
+- AgentLoop 在存在 skill 时会注册 `skill_get`
+- provider 可在当前 turn 中调用 `skill_get`
+- runtime 会把成功加载的 skill 记录为 active skill trace
 
 ## 与 Memory 的区别
 
