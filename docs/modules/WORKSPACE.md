@@ -317,4 +317,4 @@ python -m pytest
 - 不自动生成模板文件（AGENT.md 等），让用户按需创建
 - 不处理 workspace 版本控制或加密
 - 多 workspace 切换暂不支持
-- `data/memory/MEMORY.md`（项目级）和 `~/.myagent/workspace/MEMORY.md`（个人级）并存，由 Memory 模块后续统一
+- Memory 存储已统一到 `~/.myagent/workspace/`，不再保留 `data/memory/`

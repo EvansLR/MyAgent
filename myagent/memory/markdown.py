@@ -26,7 +26,8 @@ class MarkdownMemoryRecord:
 class MarkdownMemoryStore:
     """Store human-reviewable personal memory in local Markdown files."""
 
-    def __init__(self, root: Path | str = "data/memory") -> None:
+    def __init__(self, root: Path | str | None = None) -> None:
+        root = root or (Path.home() / ".myagent" / "workspace")
         self.root = Path(root)
         self.memory_path = self.root / "MEMORY.md"
         self.dreams_path = self.root / "DREAMS.md"

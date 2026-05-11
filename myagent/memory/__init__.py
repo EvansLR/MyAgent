@@ -2,10 +2,8 @@
 
 from myagent.memory.entries import MemoryEntry
 from myagent.memory.markdown import MarkdownMemoryRecord, MarkdownMemoryStore
-from myagent.memory.store import JsonlMemoryStore
 
 __all__ = [
-    "JsonlMemoryStore",
     "MarkdownMemoryRecord",
     "MarkdownMemoryStore",
     "MemoryEntry",

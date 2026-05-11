@@ -9,7 +9,7 @@ from uuid import uuid4
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
 from myagent.agent.subagent import DelegateTaskTool
-from myagent.memory import JsonlMemoryStore, MarkdownMemoryStore
+from myagent.memory import MarkdownMemoryStore
 from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
@@ -77,7 +77,6 @@ class AgentLoop:
         context_builder: ContextBuilder | None = None,
         tool_registry: ToolRegistry | None = None,
         trace_store: TraceStore | None = None,
-        memory_store: JsonlMemoryStore | None = None,
         markdown_memory_store: MarkdownMemoryStore | None = None,
         memory_extractor: MemoryExtractor | None = None,
         skill_registry: SkillRegistry | None = None,
@@ -87,7 +86,6 @@ class AgentLoop:
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
-        self.memory_store = memory_store or JsonlMemoryStore()
         self.markdown_memory_store = markdown_memory_store or MarkdownMemoryStore()
         self.memory_extractor = memory_extractor or MemoryExtractor(
             self.provider,
