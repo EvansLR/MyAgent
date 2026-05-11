@@ -682,7 +682,7 @@ python -m pytest
 结果：
 
 ```text
-29 passed
+144 passed
 ```
 
 也执行了默认 Echo smoke test：
@@ -719,17 +719,79 @@ Settings -> create_provider -> AgentLoop.provider.generate()
 
 这就是模型接入层的核心。
 
+## Phase 2 Review
+
+### 当前实现
+
+LLM Provider 层当前已支持：
+
+- `BaseProvider` Protocol：`generate` 和 `generate_response` 两个接口
+- `EchoProvider`：本地测试替身，无网络依赖
+- `OpenAICompatibleProvider`：基于 `openai.AsyncOpenAI`，支持 Chat Completions
+- `create_provider` 工厂：auto/echo/openai 三种模式
+- `Settings` 配置：JSON 文件 + 环境变量覆盖，支持 api_key、base_url、model、retries
+- Tool calling 解析：`_parse_tool_calls` 提取模型请求的工具调用
+- `reasoning_content` 保留：DeepSeek 等模型的推理字段透传
+- 简单 retry：按 `provider_retries` 循环重试
+
+### 和原设计的差异
+
+原设计第一阶段说"暂不实现 tool calling"，但当前 `generate_response` 已经完整支持 tools 参数和 tool call 解析。这是 Phase 1 后续演进带来的自然扩展，不需要回退。
+
+### 当前问题
+
+1. 没有 provider registry。
+   当前只有 Echo + OpenAICompatible 两种实现。如果要同时支持多个模型供应商，需要一个 registry。但当前个人助理 runtime 只需要一个主模型，registry 属于后续扩展。
+
+2. 没有模型能力检测。
+   当前不检测模型是否支持 tool calling、vision 或 reasoning。由用户通过配置保证模型和用法的匹配。
+
+3. retry 策略过于简单。
+   只是固定次数循环，没有指数退避、错误分类、限流处理。对本地演示足够，但对不稳定网络不够健壮。
+
+4. streaming 未实现。
+   当前只支持完整响应返回。对个人助理交互体验有一定影响，但非当前核心瓶颈。
+
+### 二期建议
+
+短期不建议对 Provider 层做大改动。当前接口稳定，测试覆盖完整。
+
+如果后续要增强，优先级如下：
+
+1. 保留 `reasoning_content` 的支持（已完成）。
+2. 如果接入需要不同消息格式的供应商，再考虑引入轻量 adapter 或 LiteLLM 兼容层。
+3. streaming 可以作为用户体验优化后置。
+4. provider registry 等到真正需要多模型切换时再引入。
+
+### 暂不处理
+
+- provider registry
+- 多模型配置（主模型 / summary 模型 / subagent 模型）
+- streaming
+- token usage 统计
+- 复杂 retry/backoff
+- 模型能力检测
+- OAuth / API key 刷新
+
+### 面试表达更新
+
+可以这样讲：
+
+> MyAgent 的 Provider 层很薄。`BaseProvider` 只要求 `generate` 和 `generate_response` 两个方法。`OpenAICompatibleProvider` 封装了 OpenAI SDK 的调用，支持 tool calling 和 reasoning_content 保留。`EchoProvider` 让没有 API key 时也能跑通主链路。如果后续要换模型供应商，只要实现同样的 Protocol 即可，AgentLoop 不需要改。
+
 ## 当前代码的边界
 
-当前已经能接真实 OpenAI-compatible 文本模型。
+Provider 层已完成其核心职责：把内部消息转成模型 API 调用，把模型回复转成结构化响应。
 
-但还没有：
+已接入：
+- conversation history（AgentLoop 维护）
+- ContextBuilder（生成完整 messages）
+- tool calling（`generate_response` 支持 tools 参数和 tool call 解析）
+- Trace（AgentLoop 记录 llm_request / llm_response）
+- Memory（ContextBuilder 注入 memory sections）
 
-- conversation history
-- ContextBuilder
-- tool calling
+尚未实现：
 - streaming
-- Trace
-- Memory
-
-下一步建议做 ContextBuilder，让 provider 不再只收到单条用户消息，而是收到结构化上下文。
+- provider registry
+- token usage 统计
+- 复杂 retry/backoff

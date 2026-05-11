@@ -441,7 +441,8 @@ class AgentLoop:
 
     def _trace_skill_event(self, event: str, data: dict[str, object]) -> None:
         """Record skill tool events without coupling SkillGetTool to AgentLoop state."""
-        self._trace("runtime:skills", "skills", event, data)
+        turn_id = self._current_turn_key[1] if self._current_turn_key else "skills"
+        self._trace("runtime:skills", turn_id, event, data)
         if event != "active_skill_set" or self._current_turn_key is None:
             return
         active_skills = self._active_skills_by_turn.setdefault(self._current_turn_key, [])

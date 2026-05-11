@@ -684,9 +684,9 @@ Initial values:
 final_output
 max_tool_iterations
 provider_error
-tool_loop_error
-cancelled
 ```
+
+Deferred: `tool_loop_error` and `cancelled` are documented as future stop reasons but not yet used. Individual tool failures currently return error text without halting the turn, and cancellation is handled at the process level rather than as a turn-level stop reason.
 
 3. Trace stop reason.
 
@@ -810,7 +810,7 @@ python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py
 12 passed
 
 python -m pytest
-110 passed, 1 skipped
+144 passed
 ```
 
 Small cleanup included:

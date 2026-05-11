@@ -785,13 +785,11 @@ tools/list
 tools/call
 ```
 
-当前开发沙箱在 Windows 下可能禁止 asyncio subprocess pipe，遇到 `WinError 5` 时该测试会 skip。
-
 验证结果：
 
 ```text
 python -m pytest
-73 passed, 1 skipped
+144 passed
 ```
 
 ## URL / Streamable HTTP MCP 实现记录
@@ -899,7 +897,7 @@ AgentLoop(tool_registry=registry)
 
 ```text
 python -m pytest
-76 passed, 1 skipped
+144 passed
 ```
 
 ## Phase 2 External Research

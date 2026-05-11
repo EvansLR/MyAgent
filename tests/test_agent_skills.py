@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import shutil
 
 from myagent.agent import AgentLoop
@@ -187,6 +188,11 @@ async def test_agent_loop_traces_skill_get_usage() -> None:
     assert "code-review" in load_events[0]
     assert "code-review" in active_events[0]
     assert "loaded_by_skill_get" in active_events[0]
+    # Verify turn_id is a real UUID, not the legacy hardcoded "skills"
+    for event_line in load_events + active_events:
+        event = json.loads(event_line)
+        assert event["turn_id"] != "skills"
+        assert len(event["turn_id"]) == 32
 
 
 async def test_agent_loop_includes_active_skill_section_after_skill_get() -> None:

@@ -516,17 +516,7 @@ python -m pytest tests\test_message_bus.py
 5 passed
 ```
 
-也执行了：
-
-```text
-python -m myagent
-```
-
-结果：
-
-```text
-MyAgent project skeleton is ready.
-```
+当前 MessageBus 是完整 Agent runtime 的一部分，CLI Channel 和 AgentLoop 已通过它跑通主链路。
 
 ### 临时缓存说明
 
@@ -556,15 +546,64 @@ MyAgent project skeleton is ready.
 
 不要先纠结异步细节。`asyncio.Queue` 在这里可以先理解成“可以等待的内存队列”。
 
+## Phase 2 Review
+
+### 当前实现
+
+MessageBus 保持最初设计：两个 `asyncio.Queue` 解耦 Channel 和 AgentLoop。
+
+- `InboundMessage` / `OutboundMessage` 数据结构稳定
+- `session_key` 机制支持多会话隔离
+- 接口：`publish_inbound`、`consume_inbound`、`publish_outbound`、`consume_outbound`
+- 队列 size 属性用于测试和状态观察
+
+### 和原设计的差异
+
+无显著差异。MessageBus 是 Phase 1 最早实现且变化最少的模块之一。
+
+### 当前问题
+
+1. 内存队列在进程退出时丢失消息。
+   这是预期行为。MyAgent 是本地单进程 runtime，不需要持久化队列。
+
+2. 没有 backpressure 机制。
+   当前 CLI 是交互式的，用户一次只发一条消息，AgentLoop 用全局锁串行处理，不存在消息堆积问题。
+
+3. 没有队列关闭和 drain 机制。
+   当前 `stop()` 通过 AgentLoop 的 `_running` 标志控制。MessageBus 本身不需要显式关闭。
+
+### 二期建议
+
+不建议在 Phase 2 改动 MessageBus。当前实现足够稳定。
+
+如果后续要支持多通道并发或后台任务，再考虑：
+- 给消息加 `message_id` 和 `correlation_id`
+- 增加队列关闭和 drain 机制
+- 替换底层为 Redis Streams / RabbitMQ
+
+### 暂不处理
+
+- 消息持久化
+- 消息优先级
+- 多消费者广播
+- 跨进程队列
+- 复杂 backpressure
+
+### 面试表达
+
+> MessageBus 是 MyAgent 里最轻量的模块。两个 asyncio.Queue 解耦了输入通道和 AgentLoop，让 CLI、未来 IM 通道或 Web UI 都不需要关心 AgentLoop 的内部实现。第一阶段我不需要 Redis 或 RabbitMQ，因为本地单进程 runtime 的吞吐和可靠性需求完全可以用内存队列满足。
+
 ## 当前代码的边界
 
-当前 MessageBus 已经能完成单进程消息传递。
+MessageBus 已完成其核心职责：单进程异步消息传递。
 
-但它还不是完整 Agent：
+已接入：
+- CLI Channel（publish_inbound / consume_outbound）
+- AgentLoop（consume_inbound / publish_outbound）
+- 所有测试（直接往 bus 塞消息验证行为）
 
-- 还没有 CLI Channel。
-- 还没有 AgentLoop。
-- 还没有 LLM Provider。
-- 还没有真正的对话逻辑。
-
-下一步要做的是 CLI Channel 或一个最小 AgentLoop/EchoProvider，让消息真正跑一圈。
+尚未实现：
+- 消息持久化
+- 队列关闭和 drain
+- 外部消息队列适配
+- 消息优先级

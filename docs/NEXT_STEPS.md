@@ -167,13 +167,12 @@ python -m pytest
 133 passed, 1 skipped
 ```
 
-已知跳过项仍然是：
+测试基线：
 
 ```text
-tests/test_mcp_stdio.py
+python -m pytest
+144 passed
 ```
-
-原因是当前 Windows 开发沙箱里 `asyncio subprocess pipe` 可能受限。
 
 ## 当前最推荐的下一步
 
