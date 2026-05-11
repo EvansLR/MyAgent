@@ -9,6 +9,7 @@ from uuid import uuid4
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
 from myagent.agent.subagent import DelegateTaskTool
+from myagent.cron.types import CronJob
 from myagent.memory import MarkdownMemoryStore
 from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
@@ -83,6 +84,8 @@ class AgentLoop:
         workspace_root: Path | str | None = None,
         workspace_loader: WorkspaceLoader | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
+        cron_service: "CronService | None" = None,
+        start_cron: bool = True,
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
@@ -104,6 +107,11 @@ class AgentLoop:
         self._register_memory_tools()
         if not self.tool_registry.has("delegate_task"):
             self.tool_registry.register(DelegateTaskTool(self.provider, self.tool_registry))
+        self.cron_service = cron_service or self._create_default_cron_service()
+        self._start_cron = start_cron
+        if not self.tool_registry.has("cron"):
+            from myagent.tools.cron import CronTool
+            self.tool_registry.register(CronTool(self.cron_service))
         self.trace_store = trace_store or JsonlTraceStore()
         self.max_tool_iterations = max_tool_iterations
         self._history: dict[str, list[Message]] = {}
@@ -418,8 +426,14 @@ class AgentLoop:
     async def run_until_stopped(self) -> None:
         """Keep processing messages until stopped or cancelled."""
         self._running = True
-        while self._running:
-            await self.process_next()
+        if self._start_cron:
+            await self.cron_service.start()
+        try:
+            while self._running:
+                await self.process_next()
+        finally:
+            if self._start_cron:
+                self.cron_service.stop()
 
     def stop(self) -> None:
         """Request the processing loop to stop."""
@@ -431,6 +445,25 @@ class AgentLoop:
 
     def _history_for(self, session_key: str) -> list[Message]:
         return self._history.setdefault(session_key, [])
+
+    def _create_default_cron_service(self):
+        from myagent.cron.service import CronService
+        store_path = Path.home() / ".myagent" / "workspace" / "cron" / "jobs.json"
+        return CronService(
+            store_path=store_path,
+            on_job=self._on_cron_job,
+        )
+
+    async def _on_cron_job(self, job: CronJob) -> None:
+        msg = InboundMessage(
+            channel="scheduler",
+            sender_id="cron",
+            chat_id=job.id,
+            content=job.payload.message,
+            metadata={"job_name": job.name, "source": "cron"},
+            session_key_override=f"cron:{job.id}",
+        )
+        await self.bus.publish_inbound(msg)
 
     def _register_memory_tools(self) -> None:
         """Expose local personal memory tools to the main agent."""

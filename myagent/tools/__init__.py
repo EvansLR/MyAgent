@@ -18,6 +18,7 @@ from myagent.tools.memory import (
     MemoryProposeLongTermTool,
     MemorySearchTool,
 )
+from myagent.tools.cron import CronTool
 from myagent.tools.registry import ToolRegistry
 from myagent.tools.skills import SkillGetTool
 from myagent.tools.web import WebFetchTool, WebSearchTool
@@ -46,6 +47,7 @@ def create_default_registry(
 
 __all__ = [
     "CopyFileTool",
+    "CronTool",
     "EditFileTool",
     "ListDirTool",
     "MoveFileTool",

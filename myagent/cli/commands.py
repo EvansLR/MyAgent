@@ -248,6 +248,7 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
         tool_registry=registry,
         trace_store=trace_store,
         workspace_root=workspace_root,
+        start_cron=False,
     )
     agent_task = asyncio.create_task(agent.run_until_stopped())
     try:
