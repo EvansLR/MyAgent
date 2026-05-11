@@ -95,6 +95,7 @@ class AgentLoop:
         self.context_builder = context_builder or ContextBuilder(
             runtime_environment=format_runtime_environment(workspace_root),
             core_memory_provider=self.markdown_memory_store.read_core_memory,
+            active_skills_provider=self._current_active_skills_context,
             skill_registry=self.skill_registry,
         )
         self.tool_registry = tool_registry or create_default_registry()
@@ -230,6 +231,7 @@ class AgentLoop:
 
         working_messages = list(messages)
         for iteration in range(1, self.max_tool_iterations + 1):
+            working_messages = self._refresh_system_message(working_messages)
             turn_state.iteration = iteration
             self._trace_llm_request(
                 inbound.session_key,
@@ -271,6 +273,16 @@ class AgentLoop:
             "Tool call limit reached before a stable final answer was produced. "
             "Please narrow the request, or ask me to continue with one specific direction."
         )
+
+    def _refresh_system_message(self, messages: list[Message]) -> list[Message]:
+        """Rebuild the system prompt so turn-local runtime context can evolve within one turn."""
+        if not messages:
+            return messages
+        refreshed = list(messages)
+        if refreshed[0].get("role") != "system":
+            return refreshed
+        refreshed[0] = {"role": "system", "content": self.context_builder.build_system_prompt()}
+        return refreshed
 
 
     async def _execute_tool_call(
@@ -445,6 +457,26 @@ class AgentLoop:
             for skill in self._active_skills_by_turn.get((session_key, turn_id), [])
             if skill.get("skill_id")
         ]
+
+    def _current_active_skills_context(self) -> str:
+        """Return compact active skill context for the current main-agent turn."""
+        if self._current_turn_key is None:
+            return ""
+        session_key, turn_id = self._current_turn_key
+        active_skills = self._active_skills_by_turn.get((session_key, turn_id), [])
+        if not active_skills:
+            return ""
+        lines = []
+        for skill in active_skills:
+            skill_id = str(skill.get("skill_id") or "")
+            if not skill_id:
+                continue
+            name = str(skill.get("name") or skill_id)
+            reason = str(skill.get("reason") or "")
+            lines.append(f"- {skill_id}: {name}")
+            if reason:
+                lines.append(f"  reason: {reason}")
+        return "\n".join(lines)
 
     def _format_active_skill_context(self, session_key: str, turn_id: str) -> str:
         """Format compact parent active skill context for delegated subagents."""

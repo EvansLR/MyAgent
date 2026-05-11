@@ -153,6 +153,30 @@ def test_context_builder_includes_available_skills() -> None:
     assert "skills/code-review/SKILL.md" in messages[0]["content"]
 
 
+def test_context_builder_omits_active_skills_when_none_active() -> None:
+    builder = ContextBuilder(identity="Test identity.", active_skills_provider=lambda: "")
+
+    messages = builder.build_messages(make_message("hello"))
+
+    assert "# Active Skills" not in messages[0]["content"]
+
+
+def test_context_builder_includes_compact_active_skills_section() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        active_skills_provider=lambda: "- frontend-design: Frontend Design\n  reason: loaded_by_skill_get",
+    )
+
+    messages, report = builder.build_messages_with_report(make_message("hello"))
+
+    assert "# Active Skills" in messages[0]["content"]
+    assert "frontend-design: Frontend Design" in messages[0]["content"]
+    assert "reason: loaded_by_skill_get" in messages[0]["content"]
+    sections = {section.name: section for section in report.sections}
+    assert sections["Active Skills"].tier == "medium"
+    assert sections["Active Skills"].source == "skills:active"
+
+
 def test_context_builder_includes_delegation_policy_as_protected_section() -> None:
     builder = ContextBuilder(identity="Test identity.")
 

@@ -128,6 +128,7 @@ class ContextBuilder:
         runtime_environment: str | None = None,
         delegation_policy: str | None = DEFAULT_DELEGATION_POLICY,
         core_memory_provider: Callable[[], str] | None = None,
+        active_skills_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
         budget: ContextBudget | None = None,
     ) -> None:
@@ -139,6 +140,7 @@ class ContextBuilder:
         self.runtime_environment = runtime_environment
         self.delegation_policy = delegation_policy
         self.core_memory_provider = core_memory_provider
+        self.active_skills_provider = active_skills_provider
         self.skill_registry = skill_registry
         self.budget = budget or ContextBudget()
         self.last_report: ContextAssemblyReport | None = None
@@ -183,6 +185,17 @@ class ContextBuilder:
                     priority=10,
                     tier=ContextTier.HIGH,
                     source="memory:core",
+                )
+            )
+        active_skills = self.read_active_skills()
+        if active_skills:
+            sections.append(
+                ContextSection(
+                    name="Active Skills",
+                    content=active_skills,
+                    priority=20,
+                    tier=ContextTier.MEDIUM,
+                    source="skills:active",
                 )
             )
         skills_content = self.format_skills()
@@ -260,6 +273,12 @@ class ContextBuilder:
         if self.core_memory_provider is None:
             return ""
         return self.core_memory_provider().strip()
+
+    def read_active_skills(self) -> str:
+        """Read compact current-turn active skill context for the system prompt."""
+        if self.active_skills_provider is None:
+            return ""
+        return self.active_skills_provider().strip()
 
     def format_skills(self) -> str:
         """Format available skills for the system prompt."""

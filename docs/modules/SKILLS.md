@@ -1139,3 +1139,75 @@ deferred until task/run state and conflict handling are clearer.
 
 The implementation is intentionally turn-local. Active skills are not saved into
 memory and are not carried into future turns.
+
+Current lifecycle rule:
+
+```text
+skill_get succeeds
+  -> the skill becomes active for the rest of the current turn
+
+final answer is published
+  -> turn ends
+  -> active skill state is cleared
+```
+
+This means Active Skill is not "used until explicitly finished". It is simply
+"active for this turn, then cleared when the turn completes."
+
+## Implementation Note: Turn-Scoped Active Skills
+
+This step is now implemented.
+
+What changed:
+
+- `ContextBuilder` now accepts an optional `active_skills_provider`.
+- When the current turn has active skills, ContextBuilder adds a compact:
+
+```text
+# Active Skills
+```
+
+section to the system prompt.
+- `AgentLoop` now exposes compact current-turn active skill context to ContextBuilder.
+- `AgentLoop` refreshes the system prompt before each provider call inside the
+  tool loop, so turn-local runtime state can appear after tools run.
+
+Current lifecycle rule:
+
+```text
+skill_get succeeds
+  -> active_skill_set is recorded for the current turn
+  -> later provider calls in the same turn include # Active Skills
+  -> final answer ends the turn
+  -> active skills for that turn are cleared
+```
+
+So Active Skill is not cleared because the runtime decides the skill is
+"finished" mid-turn. It stays active for the rest of the current turn and is
+cleared when the turn completes.
+
+This means:
+
+- same user turn: active
+- next user turn: inactive unless a skill is loaded again
+
+What it does:
+
+- reinforces the selected workflow inside long tool-heavy turns
+- gives the parent Agent an explicit compact reminder of the current skill
+- keeps skill influence turn-local instead of persistent
+
+What it still does not do:
+
+- no cross-turn persistence
+- no explicit deactivation in the middle of a turn
+- no automatic replacement/conflict policy
+- no automatic skill selection
+- no permission changes based on skills
+
+Focused verification:
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_agent_skills.py
+16 passed
+```

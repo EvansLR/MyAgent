@@ -78,6 +78,54 @@ class SkillGetProvider:
         return ProviderResponse(content="loaded")
 
 
+class SkillGetThenAnswerProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.seen_messages = []
+
+    async def generate(self, messages):
+        return "fallback"
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        self.seen_messages.append(messages)
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="skill-call-1",
+                        name="skill_get",
+                        arguments={"skill_id": "code-review"},
+                    )
+                ]
+            )
+        return ProviderResponse(content="loaded")
+
+
+class SkillGetThenContinueProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.seen_messages = []
+
+    async def generate(self, messages):
+        return "fallback"
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        self.seen_messages.append(messages)
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="skill-call-1",
+                        name="skill_get",
+                        arguments={"skill_id": "code-review"},
+                    )
+                ]
+            )
+        return ProviderResponse(content="continued with active skill")
+
+
 async def test_agent_loop_injects_available_skills_into_context() -> None:
     root = make_workspace("default")
     write_skill(root, "interview-prep", "Help with interview preparation.")
@@ -139,3 +187,23 @@ async def test_agent_loop_traces_skill_get_usage() -> None:
     assert "code-review" in load_events[0]
     assert "code-review" in active_events[0]
     assert "loaded_by_skill_get" in active_events[0]
+
+
+async def test_agent_loop_includes_active_skill_section_after_skill_get() -> None:
+    root = make_workspace("active-skill-section")
+    write_skill(root, "code-review", "Review code changes.")
+    provider = SkillGetThenContinueProvider()
+    bus = MessageBus()
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        skill_registry=SkillRegistry.from_directory(root),
+    )
+
+    await bus.publish_inbound(make_message("Use code-review and continue."))
+    await agent.process_next()
+
+    second_call_system_prompt = provider.seen_messages[1][0]["content"]
+    assert "# Active Skills" in second_call_system_prompt
+    assert "code-review: code-review" in second_call_system_prompt
+    assert "reason: loaded_by_skill_get" in second_call_system_prompt
