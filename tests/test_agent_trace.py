@@ -50,6 +50,7 @@ async def test_agent_loop_records_basic_trace_events() -> None:
 
     assert event_names == [
         "user_message",
+        "workspace_loaded",
         "context_built",
         "llm_request",
         "llm_response",
@@ -57,7 +58,8 @@ async def test_agent_loop_records_basic_trace_events() -> None:
         "turn_completed",
     ]
     assert events[0]["data"]["content"] == "hello"
-    context = events[1]["data"]["context"]
+    assert events[1]["event"] == "workspace_loaded"
+    context = events[2]["data"]["context"]
     assert context["message_count"] == 2
     assert context["history"]["included_messages"] == 0
     assert context["sections"][0]["name"] == "Identity"

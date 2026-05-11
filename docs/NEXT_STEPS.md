@@ -22,18 +22,18 @@ MyAgent 的当前定位已经校准为：
 
 ## 当前主线
 
-项目已经完成 Phase 1，当前处于 Phase 2：
+项目已经完成 Phase 1，Phase 2 模块复盘也已完成：
 
 ```text
-模块复盘 -> 文档校准 -> 小步增强 -> 验证 -> 用户确认
+模块复盘 ✅ -> 文档校准 ✅ -> 小步增强 -> 验证 -> 用户确认
 ```
 
 当前最重要的工作不是继续横向堆功能，而是：
 
-1. 保持文档和真实实现一致。
-2. 提升运行时可观测性，尤其是 Trace / Context / Skills / SubAgent 行为的可检查性。
-3. 继续把 MyAgent 往个人助理 runtime 的方向校准，而不是往“工具越来越多的 coding agent”漂移。
-
+1. 把 MyAgent 往个人助理 runtime 的方向校准（Agent Workspace 第一版）。
+2. 让 Memory recall 更值得讲（轻量增强，不加向量库）。
+3. 让 Skills 更容易被模型正确使用（激活引导优化）。
+4. 保持文档和真实实现一致。
 ## 当前实现状态
 
 已经具备并在代码中可见的主链路能力：
@@ -176,24 +176,22 @@ python -m pytest
 
 ## 当前最推荐的下一步
 
-文档清理完成后，最推荐的下一步仍然是：
+Phase 2 复盘已完成，当前进入小步增强阶段。推荐按以下顺序推进：
 
 ```text
-继续做 Trace / runtime observability 的小步增强与验证
+1. Agent Workspace 第一版骨架
+2. Memory recall 轻量增强
+3. Skills 自动激活引导优化
 ```
+
+Trace runtime overview（方向 2）暂缓，等上述三个方向完成后再评估是否需要。
 
 原因：
 
-- 这是当前最能帮助所有模块调试的公共支点。
-- 它对 Memory、Skills、SubAgent、MCP、ContextBuilder 都直接有价值。
-- 它比继续扩展自动 SkillSelector、复杂 SubAgent 编排、持久 active skills 更稳。
-
-更具体地说，下一步适合做的是：
-
-1. 手动验证当前 trace 命令链是否顺手、输出是否一致。
-2. 看是否还需要一个更统一的“runtime overview”入口，把 turn trace、startup trace、skills trace 串起来。
-3. 如果验证无明显问题，再决定是否进入下一轮 trace polish，还是切回 SubAgent + Skills 的进一步整理。
-
+- Agent Workspace 是个人助理 runtime 定位的核心校准，代码层面还没有任何体现。
+- Memory recall 是当前面试表达中最容易被挑战的短板。
+- Skills 激活引导是当前实际使用中的真实瓶颈（模型不知道何时该加载 skill）。
+- 这三个方向改动范围都可控，不需要重型系统。
 ## 建议的手动检查路径
 
 如果下一轮要继续工作，建议先这样验证当前状态：
@@ -250,12 +248,11 @@ python -m myagent trace viewer
 
 后续继续工作前，值得反复校准的几个问题：
 
-1. `NEXT_STEPS` 之外，是否需要额外的更短项目状态页，例如 `docs/PROJECT_STATUS.md`？
-2. Trace 是否需要一个更统一的 runtime overview 命令？
-3. 未来 Active Skill 传递给 SubAgent 时，紧凑上下文是否已经足够，还是还缺一个 task-level abstraction？
-4. Agent workspace 第一版何时真正落到 `~/.myagent/workspace`？
+1. Agent Workspace 的目录结构和文件格式是否需要先写设计文档再实现？
+2. Memory recall 增强的边界在哪里（不加向量库的前提下，还能做什么）？
+3. Skills 激活引导优化只改描述格式，还是也需要改加载机制？
+4. Trace runtime overview 是否值得做，还是当前诊断命令已足够？
 5. QQ Channel 什么时候才值得从“方向记录”推进到“模块设计”？
-
 ## 用户偏好与工作约束
 
 开发时继续遵守：

@@ -25,6 +25,7 @@ from myagent.tools import (
     create_default_registry,
 )
 from myagent.tracing import JsonlTraceStore, TraceStore
+from myagent.workspace import WorkspaceLoader
 
 MAX_TOOL_ITERATIONS = 50
 MAX_REPEATED_TOOL_CALLS = 2
@@ -81,6 +82,7 @@ class AgentLoop:
         memory_extractor: MemoryExtractor | None = None,
         skill_registry: SkillRegistry | None = None,
         workspace_root: Path | str | None = None,
+        workspace_loader: WorkspaceLoader | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
     ) -> None:
         self.bus = bus
@@ -92,11 +94,13 @@ class AgentLoop:
             self.markdown_memory_store,
         )
         self.skill_registry = skill_registry or SkillRegistry.from_directory()
+        self.workspace_loader = workspace_loader or WorkspaceLoader()
         self.context_builder = context_builder or ContextBuilder(
             runtime_environment=format_runtime_environment(workspace_root),
             core_memory_provider=self.markdown_memory_store.read_core_memory,
             active_skills_provider=self._current_active_skills_context,
             skill_registry=self.skill_registry,
+            workspace_provider=self.workspace_loader,
         )
         self.tool_registry = tool_registry or create_default_registry()
         self._register_memory_tools()
@@ -143,6 +147,12 @@ class AgentLoop:
                 "chat_id": inbound.chat_id,
                 "content": inbound.content,
             },
+        )
+        self._trace(
+            inbound.session_key,
+            turn_id,
+            "workspace_loaded",
+            self.workspace_loader.to_trace_data(),
         )
         history = self._history_for(inbound.session_key)
         messages, context_report = self.context_builder.build_messages_with_report(

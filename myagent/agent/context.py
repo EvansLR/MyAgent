@@ -131,6 +131,7 @@ class ContextBuilder:
         active_skills_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
         budget: ContextBudget | None = None,
+        workspace_provider: Any | None = None,
     ) -> None:
         self.identity = identity or (
             "You are MyAgent, a lightweight ReAct agent runtime for learning "
@@ -143,6 +144,7 @@ class ContextBuilder:
         self.active_skills_provider = active_skills_provider
         self.skill_registry = skill_registry
         self.budget = budget or ContextBudget()
+        self.workspace_provider = workspace_provider
         self.last_report: ContextAssemblyReport | None = None
 
     def build_sections(self) -> list[ContextSection]:
@@ -156,12 +158,14 @@ class ContextBuilder:
                 source="identity",
             ),
         ]
+        workspace_sections = self._build_workspace_sections()
+        sections.extend(workspace_sections)
         if self.runtime_environment:
             sections.append(
                 ContextSection(
                     name="Runtime Environment",
                     content=self.runtime_environment,
-                    priority=5,
+                    priority=20,
                     tier=ContextTier.PROTECTED,
                     source="runtime:environment",
                 )
@@ -172,7 +176,7 @@ class ContextBuilder:
                 ContextSection(
                     name="Delegation Policy",
                     content=self.delegation_policy,
-                    priority=8,
+                    priority=25,
                     tier=ContextTier.PROTECTED,
                     source="agent:delegation_policy",
                 )
@@ -182,7 +186,7 @@ class ContextBuilder:
                 ContextSection(
                     name="Core Memory",
                     content=core_memory,
-                    priority=10,
+                    priority=30,
                     tier=ContextTier.HIGH,
                     source="memory:core",
                 )
@@ -267,6 +271,46 @@ class ContextBuilder:
             ),
             warnings,
         )
+
+    def _build_workspace_sections(self) -> list[ContextSection]:
+        """Build workspace-derived sections if a workspace provider is configured."""
+        if self.workspace_provider is None:
+            return []
+        sections: list[ContextSection] = []
+        agent_principles = self.workspace_provider.load_file("AGENT.md").strip()
+        if agent_principles:
+            sections.append(
+                ContextSection(
+                    name="Agent Principles",
+                    content=agent_principles,
+                    priority=5,
+                    tier=ContextTier.PROTECTED,
+                    source="workspace:agent",
+                )
+            )
+        user_profile = self.workspace_provider.load_file("USER.md").strip()
+        if user_profile:
+            sections.append(
+                ContextSection(
+                    name="User Profile",
+                    content=user_profile,
+                    priority=7,
+                    tier=ContextTier.PROTECTED,
+                    source="workspace:user",
+                )
+            )
+        tool_guidelines = self.workspace_provider.load_file("TOOLS.md").strip()
+        if tool_guidelines:
+            sections.append(
+                ContextSection(
+                    name="Tool Guidelines",
+                    content=tool_guidelines,
+                    priority=35,
+                    tier=ContextTier.MEDIUM,
+                    source="workspace:tools",
+                )
+            )
+        return sections
 
     def read_core_memory(self) -> str:
         """Read always-visible long-term memory for the system prompt."""
