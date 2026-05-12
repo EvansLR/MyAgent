@@ -52,6 +52,9 @@ CLI Channel
 - Skills 扫描和上下文注入。
 - MCP stdio 和 HTTP/SSE 风格工具接入。
 - SubAgent 同步委托工具 `delegate_task`。
+- **Feishu (Lark) Channel** — WebSocket 长连接，支持收发消息和文件。
+- **CronService** — 定时任务调度（`every` / `at`），Gateway 模式自动运行。
+- **MessageTool** — Agent 显式发送消息和文件到任意 channel。
 
 最近一次记录的全量测试结果是：
 

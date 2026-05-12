@@ -50,6 +50,9 @@ MyAgent 的当前定位已经校准为：
 - MCP stdio / HTTP / SSE 工具接入
 - SubAgent 同步委托
 - JSONL trace 与本地 inspect/report/viewer
+- **Feishu (Lark) Channel** — WebSocket 长连接接收 + 发送消息/文件
+- **CronService** — 定时任务调度引擎（`every` / `at`）
+- **MessageTool** — Agent 显式发送消息和文件到任意 channel
 
 当前 CLI 入口：
 
@@ -155,6 +158,39 @@ python -m myagent trace viewer
 - SubAgent 是否继承了 active skill context
 - MCP server 启动是否成功
 - ContextBuilder 到底把哪些 section 送进了模型
+
+### 8. 飞书 Gateway + CronService + MessageTool 已落地
+
+**Feishu Channel**（`myagent/channels/`）：
+- `BaseChannel` 抽象 + `ChannelManager` 并行管理
+- `FeishuChannel`：lark-oapi WebSocket 接收消息，httpx + lark client 发送
+- 解决了 `lark-oapi WSClient` 与 asyncio 事件循环冲突（独立线程 + 替换模块级 loop）
+- 消息回调正确解析 `P2ImMessageReceiveV1` 包装对象（`.event` 下取数据）
+- `send()` 支持 `receive_id_type` 自动判断（`oc_` → chat_id，`ou_` → open_id）
+- `send()` 支持图片/音频/视频/文件上传发送
+
+**CronService**（`myagent/cron/`）：
+- 精确 sleep 调度（`every` 周期 / `at` 定点）
+- CLI 可创建管理任务但不启动 timer，Gateway 模式才运行定时器
+- 集成 AgentLoop：`start_cron` 参数控制，`_on_cron_job` 发布 `InboundMessage`
+- cron job payload 保存创建时的 channel/chat_id，触发时路由回正确对话
+- `once` 参数支持一次性延迟提醒
+
+**MessageTool**（`myagent/tools/message.py`）：
+- Agent 显式调用 `message(content, media=[paths])` 发送文件
+- 若本轮调用了 `message`，AgentLoop 抑制自动最终回复，避免重复
+- 参考 NanoBot 设计，比从 content 中扫描文件路径更鲁棒
+
+新增测试：
+- `tests/test_channels_base.py`
+- `tests/test_channels_feishu.py`
+- `tests/test_channels_manager.py`
+- `tests/test_cli_channel.py`
+
+当前 Gateway 入口：
+```text
+python -m myagent gateway
+```
 
 ## 最近记录的验证状态
 
