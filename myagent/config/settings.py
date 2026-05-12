@@ -25,6 +25,7 @@ class Settings:
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     provider_retries: int = 2
     mcp_servers: list[McpServerConfig] = field(default_factory=list)
+    channels: dict[str, dict] = field(default_factory=dict)
 
     @classmethod
     def from_sources(cls, config_path: str | Path | None = None) -> "Settings":
@@ -57,6 +58,7 @@ class Settings:
                 minimum=1,
             ),
             mcp_servers=file_values.get("mcp_servers", []),
+            channels=file_values.get("channels", {}),
         )
 
     @classmethod
@@ -110,6 +112,7 @@ def _load_config_values(path: Path) -> dict[str, Any]:
         "system_prompt": _string_value(_pick(provider, "systemPrompt", "system_prompt")),
         "provider_retries": provider.get("retries"),
         "mcp_servers": parse_mcp_servers(data),
+        "channels": data.get("channels", {}),
     }
 
 

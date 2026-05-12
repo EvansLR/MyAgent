@@ -32,3 +32,4 @@ class OutboundMessage:
     content: str
     reply_to: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    media: list[str] = field(default_factory=list)

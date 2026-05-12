@@ -112,6 +112,9 @@ class AgentLoop:
         if not self.tool_registry.has("cron"):
             from myagent.tools.cron import CronTool
             self.tool_registry.register(CronTool(self.cron_service))
+        if not self.tool_registry.has("message"):
+            from myagent.tools.message import MessageTool
+            self.tool_registry.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.trace_store = trace_store or JsonlTraceStore()
         self.max_tool_iterations = max_tool_iterations
         self._history: dict[str, list[Message]] = {}
@@ -144,6 +147,10 @@ class AgentLoop:
             turn_id=turn_id,
             max_iterations=self.max_tool_iterations,
         )
+        # Set message tool context so it knows where to send
+        if (mt := self.tool_registry.get("message")) and hasattr(mt, "set_context"):
+            mt.set_context(inbound.channel, inbound.chat_id)
+            mt.start_turn()
         self._trace(
             inbound.session_key,
             turn_id,
@@ -191,29 +198,48 @@ class AgentLoop:
                     "message": str(exc),
                 },
             )
-        if not turn_state.stop_reason:
-            turn_state.stop_reason = "final_output"
-        outbound = OutboundMessage(
-            channel=inbound.channel,
-            chat_id=inbound.chat_id,
-            content=content,
-        )
-        self._trace(
-            inbound.session_key,
-            turn_id,
-            "final_answer",
-            {
-                "content_preview": _preview(content),
-                "content_length": len(content),
-            },
-        )
-        self._trace(
-            inbound.session_key,
-            turn_id,
-            "turn_completed",
-            turn_state.to_completion_data(),
-        )
-        await self.bus.publish_outbound(outbound)
+        # Check if message tool already sent a reply this turn
+        message_sent = False
+        if (mt := self.tool_registry.get("message")) and hasattr(mt, "_sent_in_turn"):
+            message_sent = mt._sent_in_turn
+
+        if not message_sent:
+            if not turn_state.stop_reason:
+                turn_state.stop_reason = "final_output"
+            outbound = OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.chat_id,
+                content=content,
+            )
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "final_answer",
+                {
+                    "content_preview": _preview(content),
+                    "content_length": len(content),
+                },
+            )
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "turn_completed",
+                turn_state.to_completion_data(),
+            )
+            await self.bus.publish_outbound(outbound)
+        else:
+            # Suppress final reply to avoid duplication; still record a trace
+            outbound = OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.chat_id,
+                content="",
+            )
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "turn_completed",
+                {**turn_state.to_completion_data(), "suppressed_final_reply": True},
+            )
         await self._extract_memory_after_turn(inbound, content, turn_id)
         history.extend(
             [
@@ -280,6 +306,8 @@ class AgentLoop:
                     inbound.session_key,
                     turn_state.turn_id,
                     inbound.content,
+                    inbound.channel,
+                    inbound.chat_id,
                 )
                 turn_state.record_tool_result(tool_call, result)
                 working_messages.append(_tool_result_message(tool_call, result))
@@ -307,6 +335,8 @@ class AgentLoop:
         session_key: str,
         turn_id: str,
         user_content: str = "",
+        channel: str = "",
+        chat_id: str = "",
     ) -> str:
         """Run one requested tool call through the registry."""
         self._trace(
@@ -343,6 +373,8 @@ class AgentLoop:
                 session_key,
                 turn_id,
                 subagent_task_id,
+                channel,
+                chat_id,
             )
         except Exception as exc:
             result = f"Error executing tool {tool_call.name}: {exc}"
@@ -378,10 +410,16 @@ class AgentLoop:
         session_key: str,
         turn_id: str,
         subagent_task_id: str,
+        channel: str = "",
+        chat_id: str = "",
     ) -> str:
         """Run delegate_task with child trace events when possible."""
         if tool_call.name != "delegate_task":
-            return await self.tool_registry.execute(tool_call.name, tool_call.arguments)
+            arguments = dict(tool_call.arguments)
+            if tool_call.name == "cron" and channel:
+                arguments["_channel"] = channel
+                arguments["_chat_id"] = chat_id
+            return await self.tool_registry.execute(tool_call.name, arguments)
 
         tool = self.tool_registry.get(tool_call.name)
         if not isinstance(tool, DelegateTaskTool):
@@ -455,11 +493,23 @@ class AgentLoop:
         )
 
     async def _on_cron_job(self, job: CronJob) -> None:
+        # Route replies back to the channel/chat that created the job.
+        channel = job.payload.channel or "scheduler"
+        chat_id = job.payload.chat_id or job.id
+        # Wrap the payload so the LLM knows this is a scheduled trigger,
+        # not a new user question.
+        content = (
+            f"【定时任务触发】任务名称：{job.name}\n"
+            f"这是您之前设定的定时提醒，现在已到期。\n"
+            f"提醒内容：{job.payload.message}\n\n"
+            f"请直接执行上述提醒，生成一条消息发送给用户。"
+            f"不要询问用户设置问题，也不要再次创建定时任务。"
+        )
         msg = InboundMessage(
-            channel="scheduler",
+            channel=channel,
             sender_id="cron",
-            chat_id=job.id,
-            content=job.payload.message,
+            chat_id=chat_id,
+            content=content,
             metadata={"job_name": job.name, "source": "cron"},
             session_key_override=f"cron:{job.id}",
         )

@@ -19,6 +19,7 @@ from myagent.tools.memory import (
     MemorySearchTool,
 )
 from myagent.tools.cron import CronTool
+from myagent.tools.message import MessageTool
 from myagent.tools.registry import ToolRegistry
 from myagent.tools.skills import SkillGetTool
 from myagent.tools.web import WebFetchTool, WebSearchTool
@@ -50,6 +51,7 @@ __all__ = [
     "CronTool",
     "EditFileTool",
     "ListDirTool",
+    "MessageTool",
     "MoveFileTool",
     "MemoryAppendDailyTool",
     "MemoryForgetTool",

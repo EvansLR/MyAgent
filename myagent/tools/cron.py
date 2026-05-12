@@ -21,8 +21,10 @@ class CronTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Schedule reminders and one-time or recurring tasks. "
-            "Actions: add (create a job), list (show all jobs), remove (delete a job by id)."
+            "Schedule reminders and tasks. Actions: add, list, remove. "
+            "Use every_seconds for recurring intervals (e.g. 'every 5 minutes'). "
+            "Use every_seconds + once=true for one-shot delayed reminders (e.g. 'in 30 seconds'). "
+            "Use at for exact future timestamps (e.g. 'tomorrow at 9am')."
         )
 
     @property
@@ -57,6 +59,14 @@ class CronTool(Tool):
                         "Required for add if not using every_seconds."
                     ),
                 },
+                "once": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, run only once and then delete. "
+                        "Use for one-shot reminders like 'in 5 minutes' or 'after 30 seconds'. "
+                        "Ignored when using 'at'."
+                    ),
+                },
                 "job_id": {
                     "type": "string",
                     "description": "Job ID to remove. Required for remove.",
@@ -71,11 +81,14 @@ class CronTool(Tool):
         message: str = "",
         every_seconds: int | None = None,
         at: str | None = None,
+        once: bool = False,
         job_id: str | None = None,
+        _channel: str = "",
+        _chat_id: str = "",
         **kwargs: Any,
     ) -> str:
         if action == "add":
-            return self._add_job(message, every_seconds, at)
+            return self._add_job(message, every_seconds, at, once, _channel, _chat_id)
         if action == "list":
             return self._list_jobs()
         if action == "remove":
@@ -87,7 +100,13 @@ class CronTool(Tool):
     # ------------------------------------------------------------------
 
     def _add_job(
-        self, message: str, every_seconds: int | None, at: str | None
+        self,
+        message: str,
+        every_seconds: int | None,
+        at: str | None,
+        once: bool = False,
+        channel: str = "",
+        chat_id: str = "",
     ) -> str:
         if not message or not message.strip():
             return (
@@ -102,14 +121,27 @@ class CronTool(Tool):
                 dt = datetime.fromisoformat(at)
             except ValueError:
                 return f"Error: invalid ISO datetime format '{at}'. Expected: YYYY-MM-DDTHH:MM:SS"
-            schedule = CronSchedule(kind="at", at=dt.timestamp())
+            ts = dt.timestamp()
+            from time import time as _now
+            if ts <= _now():
+                return (
+                    f"Error: the specified time '{at}' is in the past or present. "
+                    f"Please provide a future time or use every_seconds for relative reminders."
+                )
+            schedule = CronSchedule(kind="at", at=ts)
         else:
             return "Error: either every_seconds or at is required for add"
 
         job = self._cron.add_job(
-            name=message[:30], schedule=schedule, message=message
+            name=message[:30],
+            schedule=schedule,
+            message=message,
+            channel=channel,
+            chat_id=chat_id,
+            delete_after_run=once,
         )
-        return f"Created job '{job.name}' (id: {job.id})"
+        timing = "once" if once else ("at" if at else "recurring")
+        return f"Created {timing} job '{job.name}' (id: {job.id})"
 
     def _list_jobs(self) -> str:
         jobs = self._cron.list_jobs()

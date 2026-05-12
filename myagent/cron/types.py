@@ -18,6 +18,8 @@ class CronPayload:
     """What to do when the job runs."""
 
     message: str = ""
+    channel: str = ""  # channel that created this job (e.g. "feishu")
+    chat_id: str = ""  # chat_id to reply to when job triggers
 
 
 @dataclass
@@ -60,7 +62,12 @@ class CronJob:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CronJob":
         schedule = CronSchedule(**data.get("schedule", {"kind": "every"}))
-        payload = CronPayload(**data.get("payload", {}))
+        payload_data = data.get("payload", {})
+        payload = CronPayload(
+            message=payload_data.get("message", ""),
+            channel=payload_data.get("channel", ""),
+            chat_id=payload_data.get("chat_id", ""),
+        )
         state_data = dict(data.get("state", {}))
         state_data["run_history"] = [
             CronRunRecord(**r) if isinstance(r, dict) else r
@@ -91,6 +98,8 @@ class CronJob:
             },
             "payload": {
                 "message": self.payload.message,
+                "channel": self.payload.channel,
+                "chat_id": self.payload.chat_id,
             },
             "state": {
                 "next_run_at": self.state.next_run_at,

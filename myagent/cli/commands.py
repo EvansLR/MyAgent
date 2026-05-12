@@ -14,6 +14,7 @@ import typer
 
 from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
+from myagent.channels import ChannelManager, FeishuChannel
 from myagent.config import Settings
 from myagent.mcp import HttpMcpClient, StdioMcpClient
 from myagent.mcp.registry import register_mcp_tools_with_summary
@@ -264,6 +265,62 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
             await client.close()
 
 
+async def run_gateway(
+    settings: Settings | None = None,
+    config_path: str | None = None,
+) -> None:
+    """Run gateway: AgentLoop + Channels + CronService."""
+    settings = settings or Settings.from_sources(config_path)
+    bus = MessageBus()
+    workspace_root = Path.cwd()
+    registry = create_default_registry(
+        workspace_root, approval_callback=_make_cli_approval_callback(bus)
+    )
+    trace_store = JsonlTraceStore()
+    mcp_clients = await _connect_mcp_servers(
+        settings, registry, trace_store=trace_store
+    )
+    agent = AgentLoop(
+        bus,
+        provider=create_provider(settings),
+        tool_registry=registry,
+        trace_store=trace_store,
+        workspace_root=workspace_root,
+        start_cron=True,
+    )
+
+    # ChannelManager
+    channel_manager = ChannelManager(bus)
+    for name, cfg in settings.channels.items():
+        if not cfg.get("enabled", True):
+            continue
+        if name == "feishu":
+            channel_manager.register(FeishuChannel(cfg, bus))
+
+    agent_task = asyncio.create_task(agent.run_until_stopped())
+    channel_task = asyncio.create_task(channel_manager.start_all())
+
+    typer.echo("MyAgent gateway started.")
+    try:
+        await agent_task
+    except asyncio.CancelledError:
+        pass
+    finally:
+        channel_task.cancel()
+        try:
+            await channel_task
+        except asyncio.CancelledError:
+            pass
+        await channel_manager.stop_all()
+        agent.stop()
+        try:
+            await agent_task
+        except asyncio.CancelledError:
+            pass
+        for client in mcp_clients:
+            await client.close()
+
+
 def _make_cli_approval_callback(bus: MessageBus):
     async def approve(prompt: str) -> bool:
         loop = asyncio.get_running_loop()
@@ -365,6 +422,19 @@ def main(
     if ctx.invoked_subcommand is not None:
         return
     asyncio.run(run_local_chat(config_path=config))
+
+
+@app.command("gateway")
+def gateway(
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to a myagent JSON config file.",
+    ),
+) -> None:
+    """Run the gateway (AgentLoop + Channels + Cron)."""
+    asyncio.run(run_gateway(config_path=config))
 
 
 @trace_app.command("latest")

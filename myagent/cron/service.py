@@ -160,13 +160,12 @@ class CronService:
         )
         job.state.run_history = job.state.run_history[-_MAX_RUN_HISTORY:]
 
-        # Handle one-shot jobs
-        if job.schedule.kind == "at":
-            if job.delete_after_run:
-                self._jobs = [j for j in self._jobs if j.id != job.id]
-            else:
-                job.enabled = False
-                job.state.next_run_at = None
+        # Handle one-shot vs recurring
+        if job.delete_after_run:
+            self._jobs = [j for j in self._jobs if j.id != job.id]
+        elif job.schedule.kind == "at":
+            job.enabled = False
+            job.state.next_run_at = None
         else:
             job.state.next_run_at = _compute_next_run(job.schedule, _now())
 
@@ -188,19 +187,24 @@ class CronService:
         name: str,
         schedule: CronSchedule,
         message: str,
+        channel: str = "",
+        chat_id: str = "",
+        delete_after_run: bool | None = None,
     ) -> CronJob:
         """Add a new job."""
         now = _now()
+        if delete_after_run is None:
+            delete_after_run = schedule.kind == "at"
         job = CronJob(
             id=str(uuid.uuid4())[:8],
             name=name,
             enabled=True,
             schedule=schedule,
-            payload=CronPayload(message=message),
+            payload=CronPayload(message=message, channel=channel, chat_id=chat_id),
             state=CronJobState(next_run_at=_compute_next_run(schedule, now)),
             created_at=now,
             updated_at=now,
-            delete_after_run=(schedule.kind == "at"),
+            delete_after_run=delete_after_run,
         )
         self._jobs.append(job)
         self._save()
