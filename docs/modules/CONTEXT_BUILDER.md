@@ -667,3 +667,37 @@ ContextSection(name="Runtime Environment", tier=protected/high, source="runtime:
 python -m pytest tests/test_context_builder.py tests/test_filesystem_tools.py tests/test_agent_loop.py tests/test_agent_trace.py
 25 passed
 ```
+
+---
+
+### 已知问题：缺少 Budget-aware Compaction
+
+当前 ContextBuilder 已经具备 tier 和 budget 结构，但**没有实现超预算时的降级逻辑**。
+
+具体问题：
+
+1. **System prompt 无限增长**
+   - `MEMORY.md` 会随着 Consolidation 越来越长
+   - Available Skills 的 description 变长
+   - Workspace 文件内容累积
+   - 没有任何长度限制
+
+2. **History 只按消息数裁剪**
+   - `select_history()` 只保留最近 20 条消息
+   - 但不做 token 级别裁剪，20 条长对话可能远超预算
+
+3. **`max_prompt_tokens` 默认无限制**
+   - `ContextBudget.max_prompt_tokens` 默认是 `None`
+   - 没有任何 token 级别的预算控制
+
+**后续方向**：
+
+- 设定总 prompt token 上限（如 6000）
+- 超预算时按 tier 优先级逐步降级/丢弃：
+  - 先丢 LOW（Available Skills 详细描述）
+  - 再丢 MEDIUM（Tool Guidelines）
+  - 保留 HIGH（Memory）和 PROTECTED（Identity、User Profile）
+- history 从按消息数裁剪升级为按 token 数裁剪
+- 生成 `context_dropped` trace 事件
+
+这是当前最应优先补齐的短板。

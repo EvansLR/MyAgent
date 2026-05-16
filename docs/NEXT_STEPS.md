@@ -212,22 +212,32 @@ python -m pytest
 
 ## 当前最推荐的下一步
 
-Phase 2 复盘已完成，当前进入小步增强阶段。推荐按以下顺序推进：
+Phase 2 复盘已完成，当前进入小步增强阶段。已完成：
 
 ```text
-1. Agent Workspace 第一版骨架
-2. Memory recall 轻量增强
-3. Skills 自动激活引导优化
+✅ 1. Agent Workspace 第一版骨架
+✅ 2. Memory recall 轻量增强（Consolidation 自动整理）
+✅ 3. Skills 自动激活引导优化（description + format 改进）
 ```
 
-Trace runtime overview（方向 2）暂缓，等上述三个方向完成后再评估是否需要。
+**下一步：Budget-aware Context Composer**
+
+ContextBuilder 已有 `ContextTier` 和 `ContextBudget`，但还没有实现超预算时的降级逻辑。当前 system prompt 无限增长（MEMORY.md + skills + workspace），history 只按消息数裁剪，没有 token 预算控制。
+
+要做的是：
+- 设定总 prompt token 上限
+- 超预算时按 tier 优先级逐步降级/丢弃
+- history 从按消息数裁剪升级为按 token 数裁剪
+- 生成 `context_dropped` trace 事件
+
+Trace runtime overview 暂缓。
 
 原因：
 
-- Agent Workspace 是个人助理 runtime 定位的核心校准，代码层面还没有任何体现。
-- Memory recall 是当前面试表达中最容易被挑战的短板。
-- Skills 激活引导是当前实际使用中的真实瓶颈（模型不知道何时该加载 skill）。
-- 这三个方向改动范围都可控，不需要重型系统。
+- Context 压缩是当前框架最真实的短板（system prompt 无限增长）。
+- 改动范围可控，只改 `ContextBuilder`。
+- 面试时能讲清楚"为什么先做 tier-based compaction 而不是向量库"。
+- 现有基础设施（tier、budget、report）已全部就绪，只差最后一步降级逻辑。
 ## 建议的手动检查路径
 
 如果下一轮要继续工作，建议先这样验证当前状态：

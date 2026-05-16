@@ -190,6 +190,7 @@ class CronService:
         channel: str = "",
         chat_id: str = "",
         delete_after_run: bool | None = None,
+        job_type: str = "user",
     ) -> CronJob:
         """Add a new job."""
         now = _now()
@@ -200,7 +201,7 @@ class CronService:
             name=name,
             enabled=True,
             schedule=schedule,
-            payload=CronPayload(message=message, channel=channel, chat_id=chat_id),
+            payload=CronPayload(message=message, channel=channel, chat_id=chat_id, job_type=job_type),
             state=CronJobState(next_run_at=_compute_next_run(schedule, now)),
             created_at=now,
             updated_at=now,

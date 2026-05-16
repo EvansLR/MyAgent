@@ -20,6 +20,7 @@ class CronPayload:
     message: str = ""
     channel: str = ""  # channel that created this job (e.g. "feishu")
     chat_id: str = ""  # chat_id to reply to when job triggers
+    job_type: str = "user"  # "user" or "system"
 
 
 @dataclass
@@ -67,6 +68,7 @@ class CronJob:
             message=payload_data.get("message", ""),
             channel=payload_data.get("channel", ""),
             chat_id=payload_data.get("chat_id", ""),
+            job_type=payload_data.get("job_type", "user"),
         )
         state_data = dict(data.get("state", {}))
         state_data["run_history"] = [
@@ -100,6 +102,7 @@ class CronJob:
                 "message": self.payload.message,
                 "channel": self.payload.channel,
                 "chat_id": self.payload.chat_id,
+                "job_type": self.payload.job_type,
             },
             "state": {
                 "next_run_at": self.state.next_run_at,

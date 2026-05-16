@@ -42,7 +42,7 @@ async def test_memory_tool_saves_explicit_long_term_memory() -> None:
 
     result = await MemoryProposeLongTermTool(store).execute(
         content="用户偏好文档优先。",
-        section="User Profile",
+        section="Profile",
         tags=["preference"],
         importance=4,
     )
@@ -50,7 +50,7 @@ async def test_memory_tool_saves_explicit_long_term_memory() -> None:
     memory = (store.root / "MEMORY.md").read_text(encoding="utf-8")
     assert "Saved long-term memory" in result
     assert "用户偏好文档优先。" in memory
-    assert "## User Profile" in store.read_core_memory()
+    assert "## Profile" in store.read_core_memory()
 
 
 async def test_memory_tool_can_create_unapplied_long_term_proposal() -> None:
@@ -58,7 +58,7 @@ async def test_memory_tool_can_create_unapplied_long_term_proposal() -> None:
 
     result = await MemoryProposeLongTermTool(store).execute(
         content="用户可能在准备 Java 后端面试。",
-        section="Core Memory",
+        section="Facts",
         tags=["candidate"],
         importance=2,
         apply=False,

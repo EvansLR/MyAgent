@@ -42,7 +42,7 @@ class MemoryExtractor:
             importance = _as_int(item.get("importance"), default=1)
             target = str(item.get("target", "daily")).strip().lower()
             if target == "long_term":
-                section = str(item.get("section", "Core Memory")).strip() or "Core Memory"
+                section = str(item.get("section", "Facts")).strip() or "Facts"
                 record = self.store.propose_long_term(
                     content=content,
                     section=section,
@@ -65,9 +65,16 @@ class MemoryExtractor:
 _EXTRACTOR_SYSTEM_PROMPT = """You are MyAgent's memory extractor.
 Extract durable user preferences, long-term goals, project decisions, open loops, or useful working context.
 Return strict JSON only:
-{"items":[{"content":"short standalone memory","target":"daily|long_term","section":"Core Memory","importance":1,"tags":["tag"]}]}
+{"items":[{"content":"short standalone memory","target":"daily|long_term","section":"Facts","importance":1,"tags":["tag"]}]}
 If there is nothing worth remembering, return {"items":[]}.
-Do not copy raw conversation unless it is itself a useful memory."""
+Do not copy raw conversation unless it is itself a useful memory.
+
+For long_term memories, use one of these sections:
+- Profile: user identity, name, role, background
+- Active Goals: current long-term goals
+- Preferences: stable preferences (tech stack, style, aliases)
+- Facts: important facts (locations, projects, decisions)
+- Notes: reference notes, lower-confidence observations"""
 
 
 def _parse_items(response: str) -> list[dict[str, Any]]:

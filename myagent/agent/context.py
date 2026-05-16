@@ -184,7 +184,7 @@ class ContextBuilder:
         if core_memory:
             sections.append(
                 ContextSection(
-                    name="Core Memory",
+                    name="Long-term Memory",
                     content=core_memory,
                     priority=30,
                     tier=ContextTier.HIGH,

@@ -1305,3 +1305,43 @@ python -m pytest tests/test_memory_store.py tests/test_memory_tools.py tests/tes
 python -m pytest
 90 passed, 1 skipped
 ```
+
+---
+
+### Memory Consolidation 实现笔记
+
+**问题**：DREAMS.md 只进不出，proposal 堆积；MEMORY.md 结构空洞。
+
+**方案**：自动化 Consolidation 机制。
+
+1. **统一 MEMORY.md 结构**
+   - 新结构：`Profile` / `Active Goals` / `Preferences` / `Facts` / `Notes`
+   - 旧结构（Core Memory / User Profile / Active Goals / Decisions / Reference Notes）保留兼容读取
+
+2. **MemoryExtractor 更新**
+   - prompt 中使用新 section 列表
+   - 默认 section 从 `Core Memory` 改为 `Facts`
+
+3. **MemoryConsolidator（新增 `myagent/memory/consolidator.py`）**
+   - LLM 驱动：读取 MEMORY.md + DREAMS.md → 发给 LLM 合并 → 输出新 MEMORY.md
+   - 自动归档旧 DREAMS 到 `memory/archive/DREAMS-时间戳.md`
+   - 清空 DREAMS.md
+   - LLM 输出格式不对时保留原 DREAMS，不丢失数据
+
+4. **CronService 集成**
+   - `CronPayload` 新增 `job_type` 字段（`user` / `system`）
+   - AgentLoop 启动时自动注册系统级 `memory_consolidation` 任务，每 24 小时执行
+   - `_on_cron_job` 区分系统任务和用户任务
+
+5. **本地文件处理**
+   - MEMORY.md 重写为新结构
+   - DREAMS.md 归档并清空
+
+新增测试：`tests/test_memory_consolidator.py`（6 个测试）
+
+验证：
+
+```text
+python -m pytest tests/test_memory_consolidator.py
+6 passed
+```

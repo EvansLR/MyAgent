@@ -10,7 +10,7 @@ from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
 from myagent.agent.subagent import DelegateTaskTool
 from myagent.cron.types import CronJob
-from myagent.memory import MarkdownMemoryStore
+from myagent.memory import MarkdownMemoryStore, MemoryConsolidator
 from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
@@ -91,6 +91,10 @@ class AgentLoop:
         self.provider = provider or create_provider()
         self.markdown_memory_store = markdown_memory_store or MarkdownMemoryStore()
         self.memory_extractor = memory_extractor or MemoryExtractor(
+            self.provider,
+            self.markdown_memory_store,
+        )
+        self.memory_consolidator = MemoryConsolidator(
             self.provider,
             self.markdown_memory_store,
         )
@@ -466,6 +470,7 @@ class AgentLoop:
         self._running = True
         if self._start_cron:
             await self.cron_service.start()
+            self._register_memory_consolidation_job()
         try:
             while self._running:
                 await self.process_next()
@@ -492,7 +497,30 @@ class AgentLoop:
             on_job=self._on_cron_job,
         )
 
+    def _register_memory_consolidation_job(self) -> None:
+        """Register the daily memory consolidation system job."""
+        from myagent.cron.types import CronSchedule
+        for job in self.cron_service.list_jobs(include_disabled=True):
+            if job.name == "memory_consolidation" and job.payload.job_type == "system":
+                return
+        self.cron_service.add_job(
+            name="memory_consolidation",
+            schedule=CronSchedule(kind="every", every=24 * 3600),
+            message="consolidate memory",
+            channel="",
+            chat_id="",
+            delete_after_run=False,
+            job_type="system",
+        )
+
     async def _on_cron_job(self, job: CronJob) -> None:
+        if job.payload.job_type == "system":
+            if job.name == "memory_consolidation":
+                try:
+                    await self.memory_consolidator.consolidate()
+                except Exception:
+                    pass
+            return
         # Route replies back to the channel/chat that created the job.
         channel = job.payload.channel or "scheduler"
         chat_id = job.payload.chat_id or job.id

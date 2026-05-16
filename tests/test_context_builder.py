@@ -76,19 +76,19 @@ def test_context_builder_includes_runtime_environment() -> None:
 def test_context_builder_includes_core_memory() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
-        core_memory_provider=lambda: "## User Profile\n\n- 用户偏好文档优先。",
+        core_memory_provider=lambda: "## Profile\n\n- 用户偏好文档优先。",
     )
 
     messages = builder.build_messages(make_message("hello"))
 
-    assert "# Core Memory" in messages[0]["content"]
+    assert "# Long-term Memory" in messages[0]["content"]
     assert "用户偏好文档优先。" in messages[0]["content"]
 
 
 def test_context_builder_reports_sections_and_core_memory_tier() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
-        core_memory_provider=lambda: "## User Profile\n\n- 用户名字是 lin。",
+        core_memory_provider=lambda: "## Profile\n\n- 用户名字是 lin。",
     )
 
     messages, report = builder.build_messages_with_report(make_message("hello"))
@@ -97,8 +97,8 @@ def test_context_builder_reports_sections_and_core_memory_tier() -> None:
     sections = {section.name: section for section in report.sections}
     assert sections["Identity"].tier == "protected"
     assert sections["Identity"].source == "identity"
-    assert sections["Core Memory"].tier == "high"
-    assert sections["Core Memory"].source == "memory:core"
+    assert sections["Long-term Memory"].tier == "high"
+    assert sections["Long-term Memory"].source == "memory:core"
     assert report.total_chars > 0
     assert report.estimated_tokens > 0
 

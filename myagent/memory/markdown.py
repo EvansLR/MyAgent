@@ -9,7 +9,8 @@ import re
 from uuid import uuid4
 
 
-CORE_MEMORY_SECTIONS = ("Core Memory", "User Profile", "Active Goals")
+CORE_MEMORY_SECTIONS = ("Profile", "Active Goals", "Preferences", "Facts", "Notes")
+OLD_MEMORY_SECTIONS = ("Core Memory", "User Profile", "Active Goals", "Decisions", "Reference Notes")
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,12 +40,12 @@ class MarkdownMemoryStore:
         if not self.memory_path.exists():
             self.memory_path.parent.mkdir(parents=True, exist_ok=True)
             self.memory_path.write_text(
-                "# MyAgent Memory\n\n"
-                "## Core Memory\n\n"
-                "## User Profile\n\n"
+                "# 长期记忆\n\n"
+                "## Profile\n\n"
                 "## Active Goals\n\n"
-                "## Decisions\n\n"
-                "## Reference Notes\n",
+                "## Preferences\n\n"
+                "## Facts\n\n"
+                "## Notes\n",
                 encoding="utf-8",
             )
         if not self.dreams_path.exists():
@@ -57,6 +58,11 @@ class MarkdownMemoryStore:
         sections = _parse_markdown_sections(self.memory_path.read_text(encoding="utf-8"))
         parts: list[str] = []
         for name in CORE_MEMORY_SECTIONS:
+            content = sections.get(name, "").strip()
+            if content:
+                parts.append(f"## {name}\n\n{content}")
+        # Fallback: read old sections for backward compatibility until consolidation runs
+        for name in OLD_MEMORY_SECTIONS:
             content = sections.get(name, "").strip()
             if content:
                 parts.append(f"## {name}\n\n{content}")
@@ -232,7 +238,7 @@ def _records_from_file(root: Path, path: Path) -> list[MarkdownMemoryRecord]:
             continue
         if _looks_like_memory_id(section):
             clean_content = _strip_metadata_block(clean_content)
-        if section in CORE_MEMORY_SECTIONS and path.name == "MEMORY.md":
+        if (section in CORE_MEMORY_SECTIONS or section in OLD_MEMORY_SECTIONS) and path.name == "MEMORY.md":
             continue
         record_id = section if _looks_like_memory_id(section) else f"{relative}#{section}"
         records.append(
