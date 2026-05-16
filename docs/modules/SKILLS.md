@@ -586,6 +586,39 @@ python -m pytest
 90 passed, 1 skipped
 ```
 
+---
+
+### Skills 自动激活引导优化
+
+**问题**：模型经常不知道什么场景该调用 `skill_get` 加载 skill。
+
+**原因分析**：
+- skill-creator skill 本身定义了标准：`description` 是 primary triggering mechanism，所有 trigger 信息都应放在 frontmatter description 里
+- 但现有 skill 的 description 质量参差不齐：有的没有 trigger（interview-prep、code-review），有的把 trigger 放到了正文 `## When To Use`
+- `format_skills()` 输出格式太冗长，模型不容易识别匹配关系
+
+**修复内容**：
+
+1. **统一 skill description 格式**
+   - 为 `code-review`、`commit-message`、`interview-prep`、`webapp-testing` 补充 trigger 到 description
+   - 格式：`{description}. Use this skill when the user asks to...`
+
+2. **优化 `format_skills()` 输出**
+   - 顶部增加激活指令：`When a user request matches a skill below, call skill_get first to load its full instructions before answering.`
+   - `_format_skill` 从多行格式改为紧凑单行：`id: description`
+
+3. **不改的 skill**
+   - `frontend-design`、`mcp-builder`、`skill-creator`、`doc-coauthoring` 的 description 中已有 trigger
+
+更新测试：`tests/test_skills.py`、`tests/test_agent_skills.py`
+
+验证：
+
+```text
+python -m pytest tests/test_skills.py tests/test_skill_tools.py tests/test_agent_skills.py tests/test_subagent.py
+16 passed
+```
+
 ### Imported Skills For Local Testing
 
 为了测试 `skill_get` 和 progressive disclosure，本地新增了 5 个公开示例 skill。

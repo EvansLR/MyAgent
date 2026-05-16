@@ -1,6 +1,6 @@
 ---
 name: interview-prep
-description: Help with interview preparation, mock answers, project explanation, resume talking points, and technical interview review.
+description: Help with interview preparation, mock answers, project explanation, resume talking points, and technical interview review. Use this skill when the user asks about interview preparation, mock interview questions, resume or project explanation, technical talking points, or how to explain MyAgent in an interview.
 ---
 
 # Interview Prep

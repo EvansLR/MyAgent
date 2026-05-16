@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Review code changes for bugs, regressions, missing tests, and maintainability risks.
+description: Review code changes for bugs, regressions, missing tests, and maintainability risks. Use this skill when the user asks to review code, check a diff, find bugs, evaluate tests, or inspect implementation quality.
 ---
 
 # Code Review

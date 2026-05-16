@@ -146,8 +146,7 @@ async def test_agent_loop_injects_available_skills_into_context() -> None:
     assert "# Available Skills" in system_prompt
     assert "interview-prep" in system_prompt
     assert "Help with interview preparation." in system_prompt
-    assert "Path:" in system_prompt
-    assert "Full Instructions: call skill_get" in system_prompt
+    assert "When a user request matches a skill below" in system_prompt
 
     tool_names = [
         definition["function"]["name"]

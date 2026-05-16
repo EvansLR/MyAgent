@@ -39,20 +39,16 @@ class SkillRegistry:
         """Format skills as a compact system prompt section."""
         if not self._skills:
             return ""
-        lines: list[str] = []
+        lines: list[str] = [
+            "When a user request matches a skill below, call skill_get first to load its full instructions before answering.",
+        ]
         for skill in self._skills:
             lines.extend(_format_skill(skill))
         return "\n".join(lines)
 
 
 def _format_skill(skill: SkillEntry) -> list[str]:
-    lines = [
-        f"- {skill.id}",
-        f"  Name: {skill.name}",
-        f"  Description: {skill.description}",
-        f"  Path: {skill.path.as_posix()}",
-    ]
+    lines = [f"- {skill.id}: {skill.description}"]
     if skill.allowed_tools:
         lines.append(f"  Allowed Tools: {', '.join(skill.allowed_tools)}")
-    lines.append("  Full Instructions: call skill_get with this skill id when needed.")
     return lines

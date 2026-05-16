@@ -1,6 +1,6 @@
 ---
 name: commit-message
-description: Generate concise Git commit messages from a change summary or diff.
+description: Generate concise Git commit messages from a change summary or diff. Use this skill when the user wants to write a commit message, summarize staged changes, choose a conventional commit prefix, or prepare a small Git commit.
 ---
 
 # Commit Message

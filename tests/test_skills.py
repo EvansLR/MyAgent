@@ -95,8 +95,5 @@ def test_skill_registry_formats_skills_for_context() -> None:
 
     content = SkillRegistry.from_directory(root).format_for_context()
 
-    assert "- commit-message" in content
-    assert "Name: commit-message" in content
-    assert "Description: Generate concise Git commit messages." in content
-    assert "Path:" in content
-    assert "Full Instructions: call skill_get" in content
+    assert "- commit-message: Generate concise Git commit messages." in content
+    assert "When a user request matches a skill below" in content
