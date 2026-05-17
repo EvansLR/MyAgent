@@ -168,7 +168,7 @@
 - 典型层次：
   - `MEMORY.md`：长期、精炼、耐久记忆。
   - `memory/YYYY-MM-DD.md`：每日记录、运行上下文和观察。
-  - `DREAMS.md`：后台整理和 promotion 结果，供人工 review。
+  - `MEMORY_PROPOSALS.md`：后台整理和 promotion 候选，供人工 review。
 - `memory_search` 和 `memory_get` 是工具；搜索只返回片段，不返回整文件。
 - 支持 hybrid search：关键词 + 向量。
 - 使用 SQLite index、chunking、embedding cache、MMR reranking、recency boost。
@@ -524,7 +524,7 @@ Searchable Memory
 
 - Core Memory 来自 `MEMORY.md` 中被标记为 in-context 的 section。
 - user/profile 类高优先级，少量 always-visible。
-- decisions、reference notes、daily notes、DREAMS 等走 memory_search。
+- decisions、reference notes、daily notes、memory proposals 等走 memory_search。
 - 每条 memory 尽量短。
 - source/score 进入 trace，不进入 prompt。
 

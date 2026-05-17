@@ -84,7 +84,7 @@ OpenClaw 常见 memory 层：
 
 - `memory/YYYY-MM-DD.md`：每日 running context 和观察。
 - `MEMORY.md`：人工或 agent 整理后的长期 durable memory。
-- `DREAMS.md`：后台整理、promotion、历史回填供人 review。
+- `MEMORY_PROPOSALS.md`：后台整理、promotion、历史回填供人 review。
 
 可采纳经验：
 
@@ -402,4 +402,3 @@ task-only
 - OpenClaw Channel Routing: https://docs.openclaw.ai/provider-routing
 - OpenClaw Heartbeat: https://openclawlab.com/en/docs/gateway/heartbeat/
 - SOUL.md Guide: https://clawdocs.org/guides/soul-md/
-

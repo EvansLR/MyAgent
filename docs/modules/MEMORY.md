@@ -21,7 +21,7 @@ Memory 把用户明确告诉 MyAgent 的长期信息保存到文件里，并在�
 `facts.jsonl` + 简单关键词召回，而是 Markdown-backed memory workspace：
 
 - `MEMORY.md`
-- `DREAMS.md`
+- `MEMORY_PROPOSALS.md`
 - `daily/YYYY-MM-DD.md`
 
 当前主线能力：
@@ -919,7 +919,7 @@ existing MEMORY.md
 ```text
 data/memory/
   MEMORY.md
-  DREAMS.md
+  MEMORY_PROPOSALS.md
   daily/
     2026-05-07.md
 ```
@@ -928,7 +928,7 @@ data/memory/
 
 - `MEMORY.md`：精炼、稳定、长期有效的记忆。
 - `daily/YYYY-MM-DD.md`：每轮自动观察、候选记忆、近期计划。
-- `DREAMS.md`：review / consolidation 的过程和 promotion 记录。
+- `MEMORY_PROPOSALS.md`：待 review / consolidation 的长期记忆候选。
 
 `profile / project / working` 不再作为三个文件，而是作为记忆 section / scope：
 
@@ -971,7 +971,7 @@ Core Memory 不是单独文件，而是 `MEMORY.md` 里的默认注入 section�
 
 - `MEMORY.md` 里没有默认注入的 section，例如 Decisions、Reference Notes、Archived Details。
 - `daily/YYYY-MM-DD.md`。
-- `DREAMS.md` 中的 proposal / review 记录。
+- `MEMORY_PROPOSALS.md` 中的 proposal / review 记录。
 
 这样可以保证个人助理每轮都知道核心偏好和长期目标，同时避免把所有历史细节都塞进 prompt。
 
@@ -1176,7 +1176,7 @@ python -m pytest
 当前设计中：
 
 - `MEMORY.md` 的 Core Memory / User Profile / Active Goals 默认进入 ContextBuilder。
-- `daily/` 和 `DREAMS.md` 不默认进入上下文。
+- `daily/` 和 `MEMORY_PROPOSALS.md` 不默认进入上下文。
 - 额外记忆只能通过 `memory_search` / `memory_get` 工具按需查询。
 - 遗忘通过 `memory_forget` 执行。
 - `myagent/memory/recall.py` 和 `tests/test_memory_recall.py` 已删除。
@@ -1209,7 +1209,7 @@ tests/test_agent_memory.py
 ```text
 data/memory/
   MEMORY.md
-  DREAMS.md
+  MEMORY_PROPOSALS.md
   daily/
     YYYY-MM-DD.md
 ```
@@ -1235,10 +1235,10 @@ memory_append_daily
   写入 daily/YYYY-MM-DD.md，适合工作观察、候选记忆、临时上下文。
 
 memory_propose_long_term
-  写入 DREAMS.md proposal，不直接修改 MEMORY.md。
+  默认写入 MEMORY_PROPOSALS.md proposal；只有 apply=true 时才直接修改 MEMORY.md。
 
 memory_search
-  搜索 MEMORY.md 非 core section、DREAMS.md、daily notes。
+  搜索 MEMORY.md 非 core section、MEMORY_PROPOSALS.md、daily notes。
 
 memory_get
   根据 memory_id 读取完整 memory chunk。
@@ -1262,9 +1262,10 @@ memory_get
 
 修复内容：
 
-- `memory_propose_long_term` 新增 `apply` 行为，默认 `apply=true`，用于用户明确要求记住的长期资料。
-- 自动 `MemoryExtractor` 仍然使用 `apply=false`，只写 `DREAMS.md` proposal，避免自动抽取直接污染长期记忆。
-- 新增 `memory_forget(query)` 工具，可按 memory id 或文本主题从 `MEMORY.md`、`DREAMS.md`、daily notes 删除匹配记忆。
+- `memory_propose_long_term` 支持 `apply` 行为，默认 `apply=false`，先生成长期记忆 proposal。
+- 用户明确要求“记住”的稳定资料可以使用 `apply=true`，直接写入 `MEMORY.md`。
+- 自动 `MemoryExtractor` 仍然使用 `apply=false`，只写 `MEMORY_PROPOSALS.md` proposal，避免自动抽取直接污染长期记忆。
+- 新增 `memory_forget(query)` 工具，可按 memory id 或文本主题从 `MEMORY.md`、`MEMORY_PROPOSALS.md`、daily notes 删除匹配记忆。
 - `AgentLoop` 注册 `memory_forget`。
 - `AgentLoop` 默认停止注入旧 `JsonlMemoryStore` recall；旧 JSONL 代码仅保留为兼容模块。
 
@@ -1283,7 +1284,7 @@ memory_get
 
 这次也清理了本地 ignored memory 数据：
 
-- 从 `data/memory/DREAMS.md` 删除错误的 Java 面试 proposal。
+- 从 `data/memory/MEMORY_PROPOSALS.md` 删除错误的 Java 面试 proposal。
 - 清空旧 `data/memory/facts.jsonl` 中的 Java 面试测试记忆。
 - 把 `用户的名字是 lin` 写入 `data/memory/MEMORY.md` 的 `User Profile`。
 
@@ -1310,7 +1311,7 @@ python -m pytest
 
 ### Memory Consolidation 实现笔记
 
-**问题**：DREAMS.md 只进不出，proposal 堆积；MEMORY.md 结构空洞。
+**问题**：MEMORY_PROPOSALS.md 只进不出，proposal 堆积；MEMORY.md 结构空洞。
 
 **方案**：自动化 Consolidation 机制。
 
@@ -1323,10 +1324,10 @@ python -m pytest
    - 默认 section 从 `Core Memory` 改为 `Facts`
 
 3. **MemoryConsolidator（新增 `myagent/memory/consolidator.py`）**
-   - LLM 驱动：读取 MEMORY.md + DREAMS.md → 发给 LLM 合并 → 输出新 MEMORY.md
-   - 自动归档旧 DREAMS 到 `memory/archive/DREAMS-时间戳.md`
-   - 清空 DREAMS.md
-   - LLM 输出格式不对时保留原 DREAMS，不丢失数据
+   - LLM 驱动：读取 MEMORY.md + MEMORY_PROPOSALS.md → 发给 LLM 合并 → 输出新 MEMORY.md
+   - 自动归档旧 proposals 到 `memory/archive/MEMORY_PROPOSALS-时间戳.md`
+   - 清空 MEMORY_PROPOSALS.md
+   - LLM 输出格式不对时保留原 proposals，不丢失数据
 
 4. **CronService 集成**
    - `CronPayload` 新增 `job_type` 字段（`user` / `system`）
@@ -1335,7 +1336,7 @@ python -m pytest
 
 5. **本地文件处理**
    - MEMORY.md 重写为新结构
-   - DREAMS.md 归档并清空
+   - MEMORY_PROPOSALS.md 归档并清空
 
 新增测试：`tests/test_memory_consolidator.py`（6 个测试）
 
@@ -1344,4 +1345,42 @@ python -m pytest
 ```text
 python -m pytest tests/test_memory_consolidator.py
 6 passed
+```
+
+### Memory Proposal 命名与默认写入策略更新
+
+本轮把原先容易误解的 `DREAMS.md` 改为 `MEMORY_PROPOSALS.md`。
+
+新的三层语义：
+
+```text
+daily/YYYY-MM-DD.md
+  当前工作观察、候选事实、临时上下文。
+
+MEMORY_PROPOSALS.md
+  候选长期记忆，等待 consolidation 或人工 review。
+
+MEMORY.md
+  已确认、稳定、默认可进入上下文的长期记忆。
+```
+
+`memory_propose_long_term` 的默认行为改为 `apply=false`：
+
+- 默认只创建 proposal，降低误写长期记忆的风险。
+- 用户明确要求“记住”的稳定资料才使用 `apply=true` 直接写入 `MEMORY.md`。
+- `MemoryExtractor` 继续只写 proposal，不直接污染 `MEMORY.md`。
+
+兼容性处理：
+
+- 新工作区创建 `MEMORY_PROPOSALS.md`。
+- 旧工作区如果只有 `DREAMS.md`，初始化时会把内容迁移到 `MEMORY_PROPOSALS.md`，并把标题替换为 `# Memory Proposals`。
+
+验证：
+
+```text
+python -m pytest tests/test_memory_tools.py tests/test_memory_consolidator.py tests/test_agent_memory.py
+14 passed
+
+python -m pytest
+218 passed
 ```

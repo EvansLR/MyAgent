@@ -451,7 +451,7 @@ summary persistence
 - Tools pipeline：tool result 和 tool schema 需要进入 context report，才能判断裁剪顺序。
 - SubAgent pipeline：子 Agent 内部上下文、返回 summary、trace tree 会影响主上下文设计。
 - Session history：history 规模变大后，才需要摘要式 compaction 和持久化 summary。
-- Memory pipeline：pre-compaction flush 需要和 daily / DREAMS / MemoryExtractor 的写入策略对齐。
+- Memory pipeline：pre-compaction flush 需要和 daily / memory proposals / MemoryExtractor 的写入策略对齐。
 
 触发条件建议：
 
@@ -483,7 +483,7 @@ Memory v2 已经规定：
 MEMORY.md 的 Core Memory / User Profile / Active Goals
   -> 默认注入 context
 
-daily / DREAMS / searchable memory
+daily / memory proposals / searchable memory
   -> 不默认注入
   -> 通过 memory tools 按需查询
 ```
@@ -1351,7 +1351,7 @@ MyAgent 可复用现有结构：
 old history over compaction threshold
   -> MemoryExtractor
   -> daily/YYYY-MM-DD.md candidates
-  -> DREAMS.md proposals
+  -> MEMORY_PROPOSALS.md proposals
   -> MemoryConsolidator
   -> MEMORY.md durable memory
 ```
@@ -1412,7 +1412,7 @@ assistant tool_call
 1. 先保持当前 deterministic token window + ratio reserve 稳定。
 2. 设计 WorkingTurnContextBudget，先解决 tool result 膨胀。
 3. 再设计 ConversationSummary，把旧 history 压成 summary + recent messages。
-4. 最后接 MemoryExtractor / daily / DREAMS，实现旧 history flush。
+4. 最后接 MemoryExtractor / daily / memory proposals，实现旧 history flush。
 5. 等上面稳定后，再拆 SessionStore。
 ```
 
@@ -1827,7 +1827,7 @@ Phase 2D 只做这几件事：
 - 持久化 SessionStore。
 - 删除或重写 `_history` 原始消息。
 - 把 conversation summary 写入 `MEMORY.md`。
-- 把旧 history 送入 `MemoryExtractor` / daily / DREAMS。
+- 把旧 history 送入 `MemoryExtractor` / daily / memory proposals。
 - 对 tool call / tool result 做跨 turn 持久化。
 - embedding、向量检索、knowledge graph。
 
@@ -2135,7 +2135,7 @@ max_summary_chars = 4000
 - `_history` 原始消息仍然完整保留在内存里。
 - summary 只是一种 model-visible view。
 - summary 不写入 `MEMORY.md`。
-- summary 不进入 daily / DREAMS / MemoryExtractor。
+- summary 不进入 daily / memory proposals / MemoryExtractor。
 - summary 不包含 tool messages，因为 MyAgent 当前跨 turn history 不保存 tool messages。
 - summary 失败不会影响用户回复。
 

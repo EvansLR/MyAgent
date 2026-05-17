@@ -64,9 +64,9 @@ class MemoryProposeLongTermTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Save a durable long-term memory. Use apply=true when the user "
-            "explicitly asks you to remember stable profile, preference, goal, "
-            "or project information; use apply=false for uncertain automatic proposals."
+            "Create a durable long-term memory proposal. Use apply=true only when "
+            "the user explicitly asks you to remember stable profile, preference, "
+            "goal, or project information."
         )
 
     @property
@@ -88,7 +88,7 @@ class MemoryProposeLongTermTool(Tool):
                 },
                 "apply": {
                     "type": "boolean",
-                    "description": "Whether to write directly to MEMORY.md.",
+                    "description": "Whether to write directly to MEMORY.md. Default false.",
                 },
             },
             "required": ["content", "section"],
@@ -100,7 +100,7 @@ class MemoryProposeLongTermTool(Tool):
         section: str,
         tags: list[str] | None = None,
         importance: int = 3,
-        apply: bool = True,
+        apply: bool = False,
         **_: Any,
     ) -> str:
         record = self.store.propose_long_term(
@@ -170,7 +170,7 @@ class MemorySearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search out-of-context memory such as daily notes, DREAMS, and "
+            "Search out-of-context memory such as daily notes, memory proposals, and "
             "non-core MEMORY.md sections."
         )
 

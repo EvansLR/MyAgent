@@ -11,6 +11,7 @@ from uuid import uuid4
 
 CORE_MEMORY_SECTIONS = ("Profile", "Active Goals", "Preferences", "Facts", "Notes")
 OLD_MEMORY_SECTIONS = ("Core Memory", "User Profile", "Active Goals", "Decisions", "Reference Notes")
+PROPOSALS_HEADER = "# Memory Proposals"
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +32,9 @@ class MarkdownMemoryStore:
         root = root or (Path.home() / ".myagent" / "workspace")
         self.root = Path(root)
         self.memory_path = self.root / "MEMORY.md"
-        self.dreams_path = self.root / "DREAMS.md"
+        self.proposals_path = self.root / "MEMORY_PROPOSALS.md"
+        self.legacy_dreams_path = self.root / "DREAMS.md"
+        self.dreams_path = self.proposals_path
         self.daily_dir = self.root / "daily"
 
     def ensure_layout(self) -> None:
@@ -48,8 +51,12 @@ class MarkdownMemoryStore:
                 "## Notes\n",
                 encoding="utf-8",
             )
-        if not self.dreams_path.exists():
-            self.dreams_path.write_text("# Memory Dreams\n\n", encoding="utf-8")
+        if not self.proposals_path.exists():
+            proposals_text = f"{PROPOSALS_HEADER}\n\n"
+            if self.legacy_dreams_path.exists():
+                legacy_text = self.legacy_dreams_path.read_text(encoding="utf-8")
+                proposals_text = legacy_text.replace("# Memory Dreams", PROPOSALS_HEADER, 1)
+            self.proposals_path.write_text(proposals_text, encoding="utf-8")
 
     def read_core_memory(self) -> str:
         """Return the high-signal sections that should enter the system prompt."""
@@ -131,11 +138,11 @@ class MarkdownMemoryStore:
             f"- created_at: {timestamp}\n\n"
             f"{clean_content}\n"
         )
-        with self.dreams_path.open("a", encoding="utf-8") as file:
+        with self.proposals_path.open("a", encoding="utf-8") as file:
             file.write(block)
         return MarkdownMemoryRecord(
             id=proposal_id,
-            source=self.dreams_path.name,
+            source=self.proposals_path.name,
             section=proposal_id,
             content=clean_content,
         )
@@ -220,8 +227,8 @@ class MarkdownMemoryStore:
         paths: list[Path] = []
         if self.memory_path.exists():
             paths.append(self.memory_path)
-        if self.dreams_path.exists():
-            paths.append(self.dreams_path)
+        if self.proposals_path.exists():
+            paths.append(self.proposals_path)
         if self.daily_dir.exists():
             paths.extend(sorted(self.daily_dir.glob("*.md")))
         return paths

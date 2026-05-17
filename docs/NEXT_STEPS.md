@@ -85,7 +85,7 @@ python -m myagent trace viewer
 ### 2. Memory v2 第一轮已落地
 
 - Memory 已从旧的 JSONL recall 主路径转向 Markdown-backed memory。
-- 当前使用的关键文件包括：`MEMORY.md`、`DREAMS.md`、`daily/YYYY-MM-DD.md`。
+- 当前使用的关键文件包括：`MEMORY.md`、`MEMORY_PROPOSALS.md`、`daily/YYYY-MM-DD.md`。
 - `ContextBuilder` 默认会把高信号 memory 组装进 prompt。
 - 已有 memory tools：
   - `memory_append_daily`
@@ -205,7 +205,7 @@ python -m pytest tests/test_context_builder.py tests/test_filesystem_tools.py te
 
 ```text
 python -m pytest
-211 passed
+218 passed
 ```
 
 ## 当前最推荐的下一步
@@ -278,7 +278,7 @@ recent buffer
 -> token window
 -> history_token_ratio
 -> running summary + recent messages
--> old history flush into MemoryExtractor / daily / DREAMS
+-> old history flush into MemoryExtractor / daily / memory proposals
 -> full SessionStore 与 model-visible view 分离
 -> tool call / tool result 成组裁剪
 ```
@@ -296,7 +296,7 @@ history_token_ratio = 0.35
 ```text
 1. 如果未来保存 tool messages，再做 history-save-time truncation。
 2. 再设计 ConversationSummary：summary + recent raw messages。
-3. 再把旧 history 接入 MemoryExtractor / daily / DREAMS。
+3. 再把旧 history 接入 MemoryExtractor / daily / memory proposals。
 4. 最后拆出持久化 SessionStore。
 ```
 
@@ -420,7 +420,7 @@ Conversation Summary
 - `_history` 原始 user / assistant messages 暂时不删除、不重写。
 - summary 作为 `Conversation Summary` system section 注入。
 - recent raw messages 继续保留原文。
-- summary 不写入 `MEMORY.md`，不进入 DREAMS / daily / MemoryExtractor。
+- summary 不写入 `MEMORY.md`，不进入 memory proposals / daily / MemoryExtractor。
 - 不做完整 SessionStore，不保存 tool messages。
 - summary 更新失败不会影响用户回复。
 
@@ -434,11 +434,39 @@ python -m pytest
 216 passed
 ```
 
+## Memory Proposal 命名与默认写入策略
+
+Memory 的候选区已经从 `DREAMS.md` 改名为 `MEMORY_PROPOSALS.md`，语义更明确：
+
+```text
+daily/YYYY-MM-DD.md
+  工作观察、临时上下文、低门槛流水记录。
+
+MEMORY_PROPOSALS.md
+  等待 review / consolidation 的长期记忆候选。
+
+MEMORY.md
+  已确认、稳定、默认可进入上下文的长期记忆。
+```
+
+`memory_propose_long_term` 现在默认 `apply=false`，也就是先写入 proposal；只有用户明确要求“记住”的稳定资料才使用 `apply=true` 直接写入 `MEMORY.md`。
+
+兼容性：
+
+- 新工作区创建 `MEMORY_PROPOSALS.md`。
+- 旧工作区如果已有 `DREAMS.md` 且还没有 `MEMORY_PROPOSALS.md`，初始化时会迁移内容并替换标题。
+
+最新验证：
+
+```text
+python -m pytest
+218 passed
+```
+
 推荐下一步：
 
 ```text
-1. Review ConversationSummary first-version behavior.
-2. Run full pytest before commit.
-3. If accepted, commit Phase 2D as its own boundary.
-4. Next design topic: whether summary should later persist through SessionStore.
+1. Review Memory Proposal 命名和 apply=false 默认语义。
+2. 如果接受，按 Memory 边界提交本轮改动。
+3. 下一步再讨论 Memory consolidation 是否需要更强的人工 review / trace 可观察性。
 ```

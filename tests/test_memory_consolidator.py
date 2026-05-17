@@ -4,6 +4,7 @@ import shutil
 import pytest
 
 from myagent.memory import MemoryConsolidator, MarkdownMemoryStore
+from myagent.memory.markdown import PROPOSALS_HEADER
 from myagent.providers.base import ProviderResponse
 
 
@@ -32,8 +33,8 @@ def make_workspace(name: str) -> Path:
     return root
 
 
-async def test_consolidator_noop_when_dreams_empty() -> None:
-    root = make_workspace("empty-dreams")
+async def test_consolidator_noop_when_proposals_empty() -> None:
+    root = make_workspace("empty-proposals")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
     provider = FakeProvider("")
@@ -44,11 +45,11 @@ async def test_consolidator_noop_when_dreams_empty() -> None:
     assert result is False
 
 
-async def test_consolidator_noop_when_dreams_has_only_header() -> None:
+async def test_consolidator_noop_when_proposals_has_only_header() -> None:
     root = make_workspace("header-only")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
-    store.dreams_path.write_text("# Memory Dreams\n\n", encoding="utf-8")
+    store.proposals_path.write_text(f"{PROPOSALS_HEADER}\n\n", encoding="utf-8")
     provider = FakeProvider("")
     consolidator = MemoryConsolidator(provider, store)
 
@@ -89,7 +90,7 @@ async def test_consolidator_merges_proposals_into_memory() -> None:
     assert "用户的名字是 Lin。" in memory_text
 
 
-async def test_consolidator_archives_dreams() -> None:
+async def test_consolidator_archives_proposals() -> None:
     root = make_workspace("archive")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
@@ -116,12 +117,12 @@ async def test_consolidator_archives_dreams() -> None:
 
     archive_dir = root / "memory" / "archive"
     assert archive_dir.exists()
-    archives = list(archive_dir.glob("DREAMS-*.md"))
+    archives = list(archive_dir.glob("MEMORY_PROPOSALS-*.md"))
     assert len(archives) == 1
     assert "用户偏好 Python。" in archives[0].read_text(encoding="utf-8")
 
 
-async def test_consolidator_clears_dreams_after_merge() -> None:
+async def test_consolidator_clears_proposals_after_merge() -> None:
     root = make_workspace("clear")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
@@ -146,8 +147,8 @@ async def test_consolidator_clears_dreams_after_merge() -> None:
 
     await consolidator.consolidate()
 
-    dreams_text = store.dreams_path.read_text(encoding="utf-8").strip()
-    assert dreams_text == "# Memory Dreams"
+    proposals_text = store.proposals_path.read_text(encoding="utf-8").strip()
+    assert proposals_text == PROPOSALS_HEADER
 
 
 async def test_consolidator_returns_false_on_bad_llm_output() -> None:
@@ -167,6 +168,6 @@ async def test_consolidator_returns_false_on_bad_llm_output() -> None:
     result = await consolidator.consolidate()
 
     assert result is False
-    # Dreams should remain intact on failure
-    dreams_text = store.dreams_path.read_text(encoding="utf-8")
-    assert "用户偏好 Python。" in dreams_text
+    # Proposals should remain intact on failure
+    proposals_text = store.proposals_path.read_text(encoding="utf-8")
+    assert "用户偏好 Python。" in proposals_text

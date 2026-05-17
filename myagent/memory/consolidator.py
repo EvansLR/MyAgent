@@ -1,11 +1,11 @@
-"""Automatic memory consolidation: merge DREAMS proposals into MEMORY."""
+"""Automatic memory consolidation: merge memory proposals into MEMORY."""
 
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
 
-from myagent.memory.markdown import MarkdownMemoryStore
+from myagent.memory.markdown import PROPOSALS_HEADER, MarkdownMemoryStore
 from myagent.providers.base import BaseProvider
 
 
@@ -46,26 +46,26 @@ Do not add any commentary outside the markdown.
 
 
 class MemoryConsolidator:
-    """Periodically merge DREAMS.md proposals into MEMORY.md using an LLM."""
+    """Periodically merge MEMORY_PROPOSALS.md proposals into MEMORY.md using an LLM."""
 
     def __init__(self, provider: BaseProvider, store: MarkdownMemoryStore) -> None:
         self.provider = provider
         self.store = store
 
     async def consolidate(self) -> bool:
-        """Merge DREAMS proposals into MEMORY. Return True if work was done."""
-        if not self.store.dreams_path.exists():
+        """Merge memory proposals into MEMORY. Return True if work was done."""
+        if not self.store.proposals_path.exists():
             return False
 
-        dreams_text = self.store.dreams_path.read_text(encoding="utf-8").strip()
-        if not dreams_text or dreams_text == "# Memory Dreams":
+        proposals_text = self.store.proposals_path.read_text(encoding="utf-8").strip()
+        if not proposals_text or proposals_text == PROPOSALS_HEADER:
             return False
 
         memory_text = ""
         if self.store.memory_path.exists():
             memory_text = self.store.memory_path.read_text(encoding="utf-8").strip()
 
-        prompt = self._build_prompt(memory_text, dreams_text)
+        prompt = self._build_prompt(memory_text, proposals_text)
 
         try:
             response = await self.provider.generate([
@@ -82,25 +82,25 @@ class MemoryConsolidator:
         # Write back
         self.store.memory_path.write_text(new_memory + "\n", encoding="utf-8")
 
-        # Archive dreams instead of deleting
+        # Archive proposals instead of deleting
         archive_dir = self.store.root / "memory" / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        archive_path = archive_dir / f"DREAMS-{timestamp}.md"
-        archive_path.write_text(dreams_text + "\n", encoding="utf-8")
+        archive_path = archive_dir / f"MEMORY_PROPOSALS-{timestamp}.md"
+        archive_path.write_text(proposals_text + "\n", encoding="utf-8")
 
-        # Clear dreams
-        self.store.dreams_path.write_text("# Memory Dreams\n\n", encoding="utf-8")
+        # Clear proposals
+        self.store.proposals_path.write_text(f"{PROPOSALS_HEADER}\n\n", encoding="utf-8")
 
         return True
 
-    def _build_prompt(self, memory_text: str, dreams_text: str) -> str:
+    def _build_prompt(self, memory_text: str, proposals_text: str) -> str:
         parts = [
             "## Current Long-term Memory",
             memory_text if memory_text else "(empty)",
             "",
             "## Pending Proposals",
-            dreams_text,
+            proposals_text,
             "",
             "Please output the complete new MEMORY.md content.",
         ]

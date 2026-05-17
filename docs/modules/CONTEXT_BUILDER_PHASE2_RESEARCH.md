@@ -300,7 +300,7 @@ ContextBudget(
 MEMORY.md 的 Core Memory / User Profile / Active Goals
   -> 默认进入 context
 
-daily / DREAMS / searchable memory
+daily / memory proposals / searchable memory
   -> 不默认进入 context
   -> 通过 memory_search / memory_get 按需进入
 ```
