@@ -139,6 +139,8 @@ Feishu Gateway、CronService、MessageTool 已落地：
 - Gateway 模式运行 ChannelManager + AgentLoop + CronService。
 - Feishu 审批请求会回到当前 chat，并以 interactive card 展示允许/拒绝按钮。
 - Feishu 普通回复会将 Markdown-ish 内容转成 `post` 富文本，短纯文本仍用 `text`。
+- Gateway 已接入同一条 approval callback；需要审批的工具操作会路由回当前 Feishu chat。
+- Shell tool 已支持常见 PowerShell 只读管道，例如 `Get-Process | Measure-Object | Select-Object ...` 不再误触发审批。
 - CronService 支持 `every` / `at` / `once`。
 - 用户 cron 会路由回创建时的 channel/chat_id。
 - 系统 cron 会注册 `memory_consolidation`。
@@ -150,7 +152,14 @@ Feishu Gateway、CronService、MessageTool 已落地：
 
 ```text
 python -m pytest
-218 passed
+256 passed
+```
+
+最近真实渠道 smoke test：
+
+```text
+Feishu Gateway smoke test passed.
+验证项：/new、只读 shell 查询、富文本回复、项目状态总结、审批卡片。
 ```
 
 最近 Memory focused verification：
@@ -162,11 +171,14 @@ python -m pytest tests/test_memory_tools.py tests/test_memory_consolidator.py te
 
 ## 当前建议
 
-短期不要继续横向堆功能。下一步建议从运行状态和文档一致性入手：
+短期不要继续横向堆功能。下一步建议从项目材料、体验边界和真实使用反馈入手：
 
-1. 保持 Memory 结构稳定，观察 `MemoryExtractor` 是否仍然写入过多 daily/proposal。
-2. 跑一次真实 CLI 对话，重点观察 Context Summary、Memory、Trace 是否符合预期。
-3. 如需继续增强，优先补可观察性和小测试，不新增重型模块。
+1. 保持当前主链路稳定，优先修真实使用中暴露的卡点。
+2. 后续如继续优化工具体验，优先单独设计 `allow / confirm / deny` 风险分层，减少低风险操作的审批打断。
+3. Memory 写入质量暂不做专项观察；它价值高，但当前不容易可靠评估，避免为了观察而观察。
+4. 如需继续增强，优先补小文档、小测试和真实验收清单，不新增重型模块。
+
+工具权限策略已经暴露出“审批偏多”的体验问题，但当前不阻塞主功能。后续可以单独设计 `allow / confirm / deny` 风险分层，不建议夹在 Gateway 收口里做。
 
 不建议当前立刻做：
 
@@ -193,6 +205,33 @@ python -m myagent
 - 普通问答是否正常。
 - 是否有意外 memory 写入。
 - conversation summary 是否在长对话后更新。
+
+### Feishu Gateway smoke test
+
+```text
+python -m myagent gateway
+```
+
+当前状态：已由用户真实验证通过。
+
+建议在 Feishu 会话里依次测试：
+
+```text
+/new
+帮我查看当前进程数量
+用标题和列表总结一下这个项目现在能做什么
+帮我总结一下 docs/NEXT_STEPS.md 的当前状态
+帮我关闭手机连接应用
+```
+
+预期观察：
+
+- `/new` 会开始一个新的 Feishu 会话上下文。
+- 进程数量查询应走只读 shell 管道，不触发审批。
+- 带标题和列表的回复应渲染为 Feishu `post` 富文本，而不是带行号的纯 Markdown。
+- 总结项目状态时应能调用文件/上下文工具并给出最终回复。
+- 关闭手机连接应用这类杀进程操作应触发 Feishu interactive card 审批；用户点允许后再执行，点拒绝则返回拒绝结果。
+- 如果 Windows 权限不足，审批通过后仍可能返回 `Access is denied`，这是系统权限限制，不是卡片渲染失败。
 
 ### Trace
 
@@ -253,8 +292,12 @@ python -m myagent trace viewer
 ## 最近提交
 
 ```text
+94b7849 feat: improve feishu tool interactions
+ec90d32 feat: add feishu approval cards
+3fa3664 fix: shell tool hangs in gateway mode + encoding issues
+70f79e8 feat: add execute_command tool for shell command execution
+dbe2f47 feat: add /new command for all channels to start fresh session
+22ab495 docs: consolidate project status docs
 b884876 docs: clarify temporary memory proposals
 b992e5f feat: clarify memory proposal workflow
-8440191 feat: add conversation summary context
-90c21d0 feat: add budget-aware context controls
 ```

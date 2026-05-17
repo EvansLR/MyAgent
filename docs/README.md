@@ -53,3 +53,10 @@
 - `MEMORY_PHASE2_RESEARCH.md`
 
 这些文档记录历史依据，不一定代表当前下一步。当前状态以 `NEXT_STEPS.md` 为准。
+
+## 阶段报告
+
+阶段性总结和展示材料放在 `docs/reports/`：
+
+- `reports/PROJECT_STAGE_REPORT_2026-05-17.md`
+  - 当前阶段项目报告，覆盖项目定位、已完成能力、最近 Feishu/Gateway 工作、验证状态、当前限制和下一步建议。
