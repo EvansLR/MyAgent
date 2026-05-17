@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import threading
+from uuid import uuid4
 
 import httpx
 
@@ -41,6 +42,36 @@ def _event_to_text(event) -> str:
         return ""
 
 
+def _event_to_card_action(event) -> tuple[str, bool] | None:
+    """Extract an approval action from a Feishu card action event."""
+    candidates = []
+    for path in (
+        ("event", "action", "value"),
+        ("event", "event", "action", "value"),
+        ("action", "value"),
+    ):
+        current = event
+        try:
+            for part in path:
+                current = getattr(current, part)
+            candidates.append(current)
+        except Exception:
+            continue
+    for value in candidates:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(value, dict):
+            continue
+        approval_id = str(value.get("approval_id") or "")
+        action = str(value.get("action") or "").lower()
+        if approval_id and action in {"approve", "deny"}:
+            return approval_id, action == "approve"
+    return None
+
+
 class FeishuChannel(BaseChannel):
     """Receive and send Feishu messages via WebSocket long connection."""
 
@@ -56,6 +87,7 @@ class FeishuChannel(BaseChannel):
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_thread: threading.Thread | None = None
         self._lark_client: Any = None
+        self._approval_futures: dict[str, asyncio.Future[bool]] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -104,6 +136,9 @@ class FeishuChannel(BaseChannel):
     # ------------------------------------------------------------------
 
     async def send(self, msg: OutboundMessage) -> None:
+        if msg.metadata.get("kind") == "approval_request":
+            await self._send_approval_request(msg)
+            return
         if not self._token:
             return
         receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
@@ -150,6 +185,22 @@ class FeishuChannel(BaseChannel):
                 "text",
                 json.dumps({"text": msg.content.strip()}),
             )
+
+    async def _send_approval_request(self, msg: OutboundMessage) -> None:
+        future = msg.metadata.get("future")
+        if not isinstance(future, asyncio.Future):
+            return
+        approval_id = uuid4().hex
+        self._approval_futures[approval_id] = future
+        if not self._token:
+            return
+        receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
+        await self._send_message(
+            receive_id_type,
+            msg.chat_id,
+            "interactive",
+            json.dumps(_approval_card(approval_id, msg.content), ensure_ascii=False),
+        )
 
     async def _send_message(
         self, receive_id_type: str, receive_id: str, msg_type: str, content: str
@@ -249,11 +300,12 @@ class FeishuChannel(BaseChannel):
         ws_client.loop = new_loop
         asyncio.set_event_loop(new_loop)
 
-        handler = (
-            EventDispatcherHandler.builder("", "")
-            .register_p2_im_message_receive_v1(self._on_message)
-            .build()
+        builder = EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(
+            self._on_message
         )
+        if hasattr(builder, "register_p2_card_action_trigger"):
+            builder = builder.register_p2_card_action_trigger(self._on_card_action)
+        handler = builder.build()
 
         client = WSClient(
             self.app_id,
@@ -294,3 +346,63 @@ class FeishuChannel(BaseChannel):
                     pass
         except Exception:
             pass
+
+    def _on_card_action(self, event) -> None:
+        """Resolve a pending approval from a Feishu card button click."""
+        action = _event_to_card_action(event)
+        if action is None:
+            return
+        approval_id, approved = action
+        future = self._approval_futures.pop(approval_id, None)
+        if future is None or future.done():
+            return
+        target_loop = self._main_loop
+        if target_loop and target_loop.is_running():
+            target_loop.call_soon_threadsafe(future.set_result, approved)
+        else:
+            future.set_result(approved)
+
+
+def _approval_card(approval_id: str, prompt: str) -> dict:
+    """Build a minimal Feishu interactive card for one approval request."""
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "template": "orange",
+            "title": {"tag": "plain_text", "content": "MyAgent 权限审批"},
+        },
+        "elements": [
+            {
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": f"需要你确认后才能继续执行：\n\n```text\n{_card_escape(prompt)}\n```",
+                },
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "允许"},
+                        "type": "primary",
+                        "value": {"approval_id": approval_id, "action": "approve"},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "拒绝"},
+                        "type": "danger",
+                        "value": {"approval_id": approval_id, "action": "deny"},
+                    },
+                ],
+            },
+        ],
+    }
+
+
+def _card_escape(text: str) -> str:
+    """Keep prompt text compact inside a card code block."""
+    compact = text.strip()
+    if len(compact) > 1800:
+        compact = compact[:1800] + "\n... (truncated)"
+    return compact.replace("```", "'''")

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 import shutil
 
@@ -14,6 +15,12 @@ from myagent.cli.commands import (
     run_chat,
     format_approval_prompt,
     _trace_startup,
+    _make_cli_approval_callback,
+)
+from myagent.approval import (
+    ApprovalRoute,
+    reset_current_approval_route,
+    set_current_approval_route,
 )
 from myagent.bus import MessageBus, OutboundMessage
 from myagent.tracing import JsonlTraceStore
@@ -193,8 +200,6 @@ async def test_run_chat_sends_message_and_prints_outbound() -> None:
             )
         )
 
-    import asyncio
-
     reply_task = asyncio.create_task(publish_reply())
     await run_chat(
         bus,
@@ -229,8 +234,6 @@ async def test_run_chat_prints_status_before_final_reply() -> None:
             )
         )
 
-    import asyncio
-
     reply_task = asyncio.create_task(publish_reply())
     await run_chat(
         bus,
@@ -254,8 +257,6 @@ async def test_run_chat_handles_approval_request_before_final_reply(monkeypatch)
 
     async def publish_reply() -> None:
         inbound = await bus.consume_inbound()
-        import asyncio
-
         future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         await bus.publish_outbound(
             OutboundMessage(
@@ -274,8 +275,6 @@ async def test_run_chat_handles_approval_request_before_final_reply(monkeypatch)
             )
         )
 
-    import asyncio
-
     reply_task = asyncio.create_task(publish_reply())
     await run_chat(
         bus,
@@ -288,3 +287,19 @@ async def test_run_chat_handles_approval_request_before_final_reply(monkeypatch)
     assert any("Permission request" in output for output in outputs)
     assert any("allow this one action" in output for output in outputs)
     assert "MyAgent: Moved." in outputs
+
+
+@pytest.mark.asyncio
+async def test_approval_callback_uses_current_channel_route() -> None:
+    bus = MessageBus()
+    approve = _make_cli_approval_callback(bus)
+    token = set_current_approval_route(ApprovalRoute("feishu", "oc_123"))
+    try:
+        task = asyncio.create_task(approve("Allow command?"))
+        outbound = await bus.consume_outbound()
+        assert outbound.channel == "feishu"
+        assert outbound.chat_id == "oc_123"
+        outbound.metadata["future"].set_result(True)
+        assert await task is True
+    finally:
+        reset_current_approval_route(token)

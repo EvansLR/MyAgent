@@ -95,7 +95,33 @@ class TestShellCommandTool:
     @pytest.mark.asyncio
     async def test_cd_is_safe(self, tool):
         result = await tool.execute("cd .")
-        assert "exit code" in result.lower()
+        assert "Current directory:" in result
+
+    @pytest.mark.asyncio
+    async def test_cd_persists_working_directory(self, tmp_path: Path):
+        workspace = tmp_path / "workspace"
+        subdir = workspace / "subdir"
+        subdir.mkdir(parents=True)
+        (subdir / "note.txt").write_text("hello", encoding="utf-8")
+        tool = ShellCommandTool(workspace=workspace)
+
+        cd_result = await tool.execute("cd subdir")
+        list_result = await tool.execute("dir" if platform.system() == "Windows" else "ls")
+
+        assert str(subdir.resolve()) in cd_result
+        assert "note.txt" in list_result
+
+    @pytest.mark.asyncio
+    async def test_cd_missing_directory_returns_error(self, tool):
+        result = await tool.execute("cd does-not-exist")
+        assert "Directory does not exist" in result
+
+    @pytest.mark.asyncio
+    async def test_windows_powershell_info_command_is_safe(self, tool):
+        if platform.system() != "Windows":
+            pytest.skip("Windows-only shell command")
+        result = await tool.execute("Get-CimInstance Win32_Battery")
+        assert "requires user approval" not in result
 
     @pytest.mark.asyncio
     async def test_parameters_schema(self, tool):

@@ -27,6 +27,7 @@ MyAgent 当前定位是：
 - OpenAI-compatible provider 和 EchoProvider
 - ToolRegistry 与默认工具
 - Filesystem tools：`list_dir`、`read_file`、`write_file`、`edit_file`、`copy_file`、`move_file`
+- Shell tool：`execute_command`
 - Memory tools 和 Markdown-backed memory
 - Skills 扫描、按需加载和 turn-scoped active skill trace
 - MCP stdio / HTTP / SSE 工具接入
@@ -136,6 +137,7 @@ SubAgent 已进入可用阶段：
 Feishu Gateway、CronService、MessageTool 已落地：
 
 - Gateway 模式运行 ChannelManager + AgentLoop + CronService。
+- Feishu 审批请求会回到当前 chat，并以 interactive card 展示允许/拒绝按钮。
 - CronService 支持 `every` / `at` / `once`。
 - 用户 cron 会路由回创建时的 channel/chat_id。
 - 系统 cron 会注册 `memory_consolidation`。

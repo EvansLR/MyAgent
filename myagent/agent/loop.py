@@ -6,6 +6,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
+from myagent.approval import (
+    ApprovalRoute,
+    reset_current_approval_route,
+    set_current_approval_route,
+)
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
 from myagent.agent.summary import (
@@ -426,14 +431,18 @@ class AgentLoop:
                 },
             )
         try:
-            result = await self._execute_delegate_task_with_trace(
-                tool_call,
-                session_key,
-                turn_id,
-                subagent_task_id,
-                channel,
-                chat_id,
-            )
+            route_token = set_current_approval_route(ApprovalRoute(channel, chat_id))
+            try:
+                result = await self._execute_delegate_task_with_trace(
+                    tool_call,
+                    session_key,
+                    turn_id,
+                    subagent_task_id,
+                    channel,
+                    chat_id,
+                )
+            finally:
+                reset_current_approval_route(route_token)
         except Exception as exc:
             result = f"Error executing tool {tool_call.name}: {exc}"
         if tool_call.name == "delegate_task":

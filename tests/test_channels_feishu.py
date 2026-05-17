@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from myagent.bus import MessageBus, OutboundMessage
-from myagent.channels.feishu import FeishuChannel, _event_to_text
+from myagent.channels.feishu import (
+    FeishuChannel,
+    _approval_card,
+    _event_to_card_action,
+    _event_to_text,
+)
 
 
 class TestEventToText:
@@ -19,6 +24,25 @@ class TestEventToText:
         event = MagicMock()
         event.event.message.content = "not json"
         assert _event_to_text(event) == ""
+
+
+class TestCardAction:
+    def test_extract_card_approval_action(self):
+        event = MagicMock()
+        event.event.action.value = {"approval_id": "a1", "action": "approve"}
+        assert _event_to_card_action(event) == ("a1", True)
+
+    def test_extract_card_deny_action_from_json(self):
+        event = MagicMock()
+        event.event.action.value = '{"approval_id":"a1","action":"deny"}'
+        assert _event_to_card_action(event) == ("a1", False)
+
+    def test_approval_card_contains_buttons(self):
+        card = _approval_card("a1", "Execute shell command:\necho hi")
+        assert card["header"]["title"]["content"] == "MyAgent 权限审批"
+        actions = card["elements"][1]["actions"]
+        assert actions[0]["value"] == {"approval_id": "a1", "action": "approve"}
+        assert actions[1]["value"] == {"approval_id": "a1", "action": "deny"}
 
 
 class TestFeishuChannel:
@@ -51,6 +75,57 @@ class TestFeishuChannel:
         await channel.send(OutboundMessage(
             channel="feishu", chat_id="u1", content="hi"
         ))
+
+    @pytest.mark.asyncio
+    async def test_send_approval_request_stores_future_without_token(self, channel):
+        future = asyncio.get_running_loop().create_future()
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="c1",
+                content="Approve me",
+                metadata={"kind": "approval_request", "future": future},
+            )
+        )
+        assert len(channel._approval_futures) == 1
+
+    @pytest.mark.asyncio
+    async def test_send_approval_request_uses_interactive_card(self, channel):
+        future = asyncio.get_running_loop().create_future()
+        channel._token = "token"
+        sent = []
+
+        async def fake_send_message(receive_id_type, receive_id, msg_type, content):
+            sent.append((receive_id_type, receive_id, msg_type, json.loads(content)))
+
+        channel._send_message = fake_send_message
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_123",
+                content="Approve command",
+                metadata={"kind": "approval_request", "future": future},
+            )
+        )
+
+        assert sent[0][0] == "chat_id"
+        assert sent[0][2] == "interactive"
+        assert sent[0][3]["header"]["title"]["content"] == "MyAgent 权限审批"
+
+    def test_card_action_resolves_pending_future(self, channel):
+        loop = asyncio.new_event_loop()
+        try:
+            future = loop.create_future()
+            channel._approval_futures["a1"] = future
+            event = MagicMock()
+            event.event.action.value = {"approval_id": "a1", "action": "approve"}
+
+            channel._on_card_action(event)
+
+            assert future.result() is True
+            assert "a1" not in channel._approval_futures
+        finally:
+            loop.close()
 
     @pytest.mark.asyncio
     async def test_on_message_publishes_inbound(self, channel, bus):

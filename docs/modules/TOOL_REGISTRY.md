@@ -22,6 +22,7 @@ ToolRegistry 注册工具、暴露工具 schema、校验参数，并按名称执
 - LLM tool calling 接入
 - 文件操作审批边界
 - Web 搜索与网页读取
+- Shell 命令执行
 - 后续 MCP 动态工具接入基础
 
 当前主 Agent 默认启用的内置工具：
@@ -38,15 +39,19 @@ ToolRegistry 注册工具、暴露工具 schema、校验参数，并按名称执
 Web 工具：
 - web_search
 - web_fetch
+
+Shell 工具：
+- execute_command
 ```
 
 当前边界：
 
-- 主 Agent 可以调用上述文件工具和 web 工具。
+- 主 Agent 可以调用上述文件工具、web 工具和 shell 工具。
 - 工作区内变更型文件操作默认允许。
 - 工作区外变更型文件操作通过当前 Channel 走审批流程。
+- `execute_command` 支持常见只读命令、PowerShell 语义和持久 working directory；危险或复杂命令仍需要审批。
+- Gateway/Feishu 场景下，审批请求会路由回当前 chat，并用 Feishu interactive card 展示允许/拒绝按钮。
 - SubAgent 不继承写文件工具，只拿到受限只读工具集。
-- `exec` 仍未实现。
 
 ## 为什么需要它
 
@@ -321,6 +326,7 @@ copy_file
 move_file
 web_search
 web_fetch
+execute_command
 ```
 
 说明：
@@ -329,7 +335,7 @@ web_fetch
 - `edit_file` 用于小范围精确字符串替换。
 - `copy_file` / `move_file` 用于常见个人助理文件搬运任务。
 - `web_search` / `web_fetch` 构成通用网页搜索与网页正文读取闭环。
-- `exec` 依然不在当前默认工具集合中。
+- `execute_command` 用于本地终端命令；Windows 下使用 PowerShell 语义，`cd` 会持久改变该工具后续命令的工作目录。
 
 当前子 Agent 默认不会继承这整套工具，而是按 `SubAgentProfile.allowed_tools` 获取受限只读工具集合。
 
@@ -776,7 +782,7 @@ python -m pytest
 - 能写文件和做小范围文本编辑
 - 能复制或移动文件
 - 能做通用网页搜索与正文抓取
-- 不能执行 `exec`
+- 能执行受控 shell 命令
 - 工作区外的变更型文件操作需要审批
 - 子 Agent 仍不继承写文件工具
 
