@@ -401,3 +401,44 @@ python -m myagent trace viewer
    - `docs/modules/CONTEXT_BUILDER.md`
    - `docs/modules/MEMORY.md`
 4. 再看代码和测试。
+
+## Phase 2D 实现状态
+
+ConversationSummary 设计和第一版实现已记录到 `docs/modules/CONTEXT_BUILDER.md`。
+
+已落地：
+
+```text
+Conversation Summary
++ recent raw messages
++ current user input
+```
+
+第一版只做 model-visible context view：
+
+- 每个 session 维护一个 in-memory running summary。
+- `_history` 原始 user / assistant messages 暂时不删除、不重写。
+- summary 作为 `Conversation Summary` system section 注入。
+- recent raw messages 继续保留原文。
+- summary 不写入 `MEMORY.md`，不进入 DREAMS / daily / MemoryExtractor。
+- 不做完整 SessionStore，不保存 tool messages。
+- summary 更新失败不会影响用户回复。
+
+验证：
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_agent_loop.py tests/test_agent_trace.py
+33 passed
+
+python -m pytest
+216 passed
+```
+
+推荐下一步：
+
+```text
+1. Review ConversationSummary first-version behavior.
+2. Run full pytest before commit.
+3. If accepted, commit Phase 2D as its own boundary.
+4. Next design topic: whether summary should later persist through SessionStore.
+```

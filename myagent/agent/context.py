@@ -42,6 +42,7 @@ class ContextItemKind(StrEnum):
     MEMORY_CORE = "memory_core"
     SKILL_SUMMARY = "skill_summary"
     ACTIVE_SKILL = "active_skill"
+    SESSION_SUMMARY = "session_summary"
     SESSION_HISTORY = "session_history"
     CURRENT_INPUT = "current_input"
     WORKSPACE = "workspace"
@@ -188,6 +189,7 @@ class ContextBuilder:
         runtime_environment: str | None = None,
         delegation_policy: str | None = DEFAULT_DELEGATION_POLICY,
         core_memory_provider: Callable[[], str] | None = None,
+        conversation_summary_provider: Callable[[], str] | None = None,
         active_skills_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
         budget: ContextBudget | None = None,
@@ -201,6 +203,7 @@ class ContextBuilder:
         self.runtime_environment = runtime_environment
         self.delegation_policy = delegation_policy
         self.core_memory_provider = core_memory_provider
+        self.conversation_summary_provider = conversation_summary_provider
         self.active_skills_provider = active_skills_provider
         self.skill_registry = skill_registry
         self.budget = budget or ContextBudget()
@@ -256,6 +259,19 @@ class ContextBuilder:
                     tier=ContextTier.HIGH,
                     source="memory:core",
                     kind=ContextItemKind.MEMORY_CORE,
+                    policy=ContextRetentionPolicy.KEEP_IF_FITS,
+                )
+            )
+        conversation_summary = self.read_conversation_summary()
+        if conversation_summary:
+            sections.append(
+                ContextSection(
+                    name="Conversation Summary",
+                    content=conversation_summary,
+                    priority=32,
+                    tier=ContextTier.MEDIUM,
+                    source="session:summary",
+                    kind=ContextItemKind.SESSION_SUMMARY,
                     policy=ContextRetentionPolicy.KEEP_IF_FITS,
                 )
             )
@@ -626,6 +642,12 @@ class ContextBuilder:
         if self.core_memory_provider is None:
             return ""
         return self.core_memory_provider().strip()
+
+    def read_conversation_summary(self) -> str:
+        """Read compact session summary for the system prompt."""
+        if self.conversation_summary_provider is None:
+            return ""
+        return self.conversation_summary_provider().strip()
 
     def read_active_skills(self) -> str:
         """Read compact current-turn active skill context for the system prompt."""

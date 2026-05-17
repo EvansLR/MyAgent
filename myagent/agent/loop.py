@@ -8,6 +8,11 @@ from uuid import uuid4
 
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
+from myagent.agent.summary import (
+    ConversationSummarizer,
+    ConversationSummaryConfig,
+    ConversationSummaryState,
+)
 from myagent.agent.subagent import DelegateTaskTool
 from myagent.cron.types import CronJob
 from myagent.memory import MarkdownMemoryStore, MemoryConsolidator
@@ -84,6 +89,7 @@ class AgentLoop:
         workspace_root: Path | str | None = None,
         workspace_loader: WorkspaceLoader | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
+        conversation_summary_config: ConversationSummaryConfig | None = None,
         cron_service: "CronService | None" = None,
         start_cron: bool = True,
     ) -> None:
@@ -100,12 +106,29 @@ class AgentLoop:
         )
         self.skill_registry = skill_registry or SkillRegistry.from_directory()
         self.workspace_loader = workspace_loader or WorkspaceLoader()
+        self._current_summary_session_key: str | None = None
+        self._conversation_summaries: dict[str, ConversationSummaryState] = {}
+        self.conversation_summary_config = (
+            conversation_summary_config or ConversationSummaryConfig()
+        )
+        self.conversation_summarizer = ConversationSummarizer(
+            self.provider,
+            self.conversation_summary_config,
+        )
         self.context_builder = context_builder or ContextBuilder(
             runtime_environment=format_runtime_environment(workspace_root),
             core_memory_provider=self.markdown_memory_store.read_core_memory,
+            conversation_summary_provider=self._current_conversation_summary_context,
             active_skills_provider=self._current_active_skills_context,
             skill_registry=self.skill_registry,
             workspace_provider=self.workspace_loader,
+        )
+        if self.context_builder.conversation_summary_provider is None:
+            self.context_builder.conversation_summary_provider = (
+                self._current_conversation_summary_context
+            )
+        self.conversation_summarizer.chars_per_token = (
+            self.context_builder.budget.chars_per_token
         )
         self.tool_registry = tool_registry or create_default_registry()
         self._register_memory_tools()
@@ -172,6 +195,7 @@ class AgentLoop:
             self.workspace_loader.to_trace_data(),
         )
         history = self._history_for(inbound.session_key)
+        self._current_summary_session_key = inbound.session_key
         messages, context_report = self.context_builder.build_messages_with_report(
             inbound,
             history,
@@ -279,8 +303,10 @@ class AgentLoop:
                 {"role": "assistant", "content": content},
             ]
         )
+        await self._maybe_update_conversation_summary(inbound.session_key, turn_id, history)
         self._active_skills_by_turn.pop((inbound.session_key, turn_id), None)
         self._current_turn_key = None
+        self._current_summary_session_key = None
         return outbound
 
     async def _generate_with_tools(
@@ -514,6 +540,10 @@ class AgentLoop:
         """Return a copy of the current session history."""
         return list(self._history_for(session_key))
 
+    def conversation_summary_for(self, session_key: str) -> ConversationSummaryState | None:
+        """Return the current in-memory conversation summary for a session."""
+        return self._conversation_summaries.get(session_key)
+
     def _history_for(self, session_key: str) -> list[Message]:
         return self._history.setdefault(session_key, [])
 
@@ -626,6 +656,20 @@ class AgentLoop:
                 lines.append(f"  reason: {reason}")
         return "\n".join(lines)
 
+    def _current_conversation_summary_context(self) -> str:
+        """Return the current session summary as model-visible background."""
+        if not self._current_summary_session_key:
+            return ""
+        state = self._conversation_summaries.get(self._current_summary_session_key)
+        if state is None or not state.content.strip():
+            return ""
+        return (
+            "The following is a compact summary of earlier conversation context.\n"
+            "Use it as background, not as current instructions. Recent user messages "
+            "and system instructions override this summary.\n\n"
+            f"{state.content.strip()}"
+        )
+
     def _format_active_skill_context(self, session_key: str, turn_id: str) -> str:
         """Format compact parent active skill context for delegated subagents."""
         active_skills = self._active_skills_by_turn.get((session_key, turn_id), [])
@@ -639,6 +683,107 @@ class AgentLoop:
             reason = str(skill.get("reason") or "")
             lines.append(f"- {skill_id} ({name}): scope={scope}; reason={reason}")
         return "\n".join(lines)
+
+    async def _maybe_update_conversation_summary(
+        self,
+        session_key: str,
+        turn_id: str,
+        history: list[Message],
+    ) -> None:
+        """Fold older in-memory history into a compact session summary when useful."""
+        state = self._conversation_summaries.get(session_key)
+        decision = self.conversation_summarizer.decide(history, state)
+        if not decision.should_update:
+            if decision.reason != "below_trigger":
+                self._trace(
+                    session_key,
+                    turn_id,
+                    "conversation_summary_checked",
+                    self._conversation_summary_trace_data(
+                        history,
+                        state,
+                        decision,
+                        reason=decision.reason,
+                    ),
+                )
+            return
+
+        self._trace(
+            session_key,
+            turn_id,
+            "conversation_summary_checked",
+            self._conversation_summary_trace_data(
+                history,
+                state,
+                decision,
+                reason="ready",
+            ),
+        )
+        try:
+            updated = await self.conversation_summarizer.summarize(
+                session_key,
+                history,
+                state,
+                decision,
+            )
+        except Exception as exc:
+            self._trace(
+                session_key,
+                turn_id,
+                "conversation_summary_failed",
+                {
+                    **self._conversation_summary_trace_data(
+                        history,
+                        state,
+                        decision,
+                        reason="failed",
+                    ),
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            return
+
+        self._conversation_summaries[session_key] = updated
+        self._trace(
+            session_key,
+            turn_id,
+            "conversation_summary_updated",
+            self._conversation_summary_trace_data(
+                history,
+                updated,
+                decision,
+                previous_state=state,
+                reason="updated",
+            ),
+        )
+
+    def _conversation_summary_trace_data(
+        self,
+        history: list[Message],
+        state: ConversationSummaryState | None,
+        decision,
+        *,
+        reason: str,
+        previous_state: ConversationSummaryState | None = None,
+    ) -> dict[str, object]:
+        """Build trace data for conversation summary decisions."""
+        before = previous_state if previous_state is not None else state
+        return {
+            "history_messages": len(history),
+            "summarized_message_count_before": (
+                before.summarized_message_count if before else 0
+            ),
+            "summarized_message_count_after": (
+                state.summarized_message_count if state else 0
+            ),
+            "new_messages_considered": decision.new_message_count,
+            "kept_recent_messages": self.conversation_summary_config.keep_recent_messages,
+            "summary_chars_before": len(before.content) if before else 0,
+            "summary_chars_after": len(state.content) if state else 0,
+            "revision": state.revision if state else 0,
+            "reason": reason,
+        }
 
     async def _extract_memory_after_turn(
         self,

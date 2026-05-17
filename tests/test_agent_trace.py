@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import shutil
 
-from myagent.agent import AgentLoop, ContextBudget, ContextBuilder
+from myagent.agent import AgentLoop, ContextBudget, ContextBuilder, ConversationSummaryConfig
 from myagent.bus import InboundMessage, MessageBus
 
 from myagent.providers import EchoProvider
@@ -280,3 +280,77 @@ async def test_agent_loop_does_not_compact_tool_result_before_next_call() -> Non
 
     events = read_events(root / "traces" / "cli_default.jsonl")
     assert not any(event["event"] == "working_context_compacted" for event in events)
+
+
+class TraceSummaryProvider:
+    def __init__(self, fail_summary: bool = False) -> None:
+        self.calls = 0
+        self.fail_summary = fail_summary
+
+    async def generate(self, messages):
+        if self.fail_summary:
+            raise RuntimeError("summary down")
+        return "- Folded earlier context into summary."
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        return ProviderResponse(content=f"answer {self.calls}")
+
+
+async def test_agent_loop_records_conversation_summary_trace_events() -> None:
+    root = make_workspace("conversation-summary-trace")
+    bus = MessageBus()
+    agent = AgentLoop(
+        bus,
+        provider=TraceSummaryProvider(),
+        trace_store=JsonlTraceStore(root),
+        conversation_summary_config=ConversationSummaryConfig(
+            trigger_messages=4,
+            keep_recent_messages=2,
+            min_new_messages=2,
+        ),
+        start_cron=False,
+    )
+    agent.memory_extractor = None
+
+    await bus.publish_inbound(make_message("first"))
+    await agent.process_next()
+    await bus.publish_inbound(make_message("second"))
+    await agent.process_next()
+
+    events = read_events(root / "cli_default.jsonl")
+    checked = next(event for event in events if event["event"] == "conversation_summary_checked")
+    updated = next(event for event in events if event["event"] == "conversation_summary_updated")
+    assert checked["data"]["reason"] == "ready"
+    assert checked["data"]["new_messages_considered"] == 2
+    assert updated["data"]["summarized_message_count_after"] == 2
+    assert updated["data"]["summary_chars_after"] > 0
+
+
+async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
+    root = make_workspace("conversation-summary-failed")
+    bus = MessageBus()
+    agent = AgentLoop(
+        bus,
+        provider=TraceSummaryProvider(fail_summary=True),
+        trace_store=JsonlTraceStore(root),
+        conversation_summary_config=ConversationSummaryConfig(
+            trigger_messages=4,
+            keep_recent_messages=2,
+            min_new_messages=2,
+        ),
+        start_cron=False,
+    )
+    agent.memory_extractor = None
+
+    await bus.publish_inbound(make_message("first"))
+    await agent.process_next()
+    await bus.publish_inbound(make_message("second"))
+    outbound = await agent.process_next()
+
+    assert outbound.content == "answer 2"
+    assert agent.conversation_summary_for("cli:default") is None
+    events = read_events(root / "cli_default.jsonl")
+    failed = next(event for event in events if event["event"] == "conversation_summary_failed")
+    assert failed["data"]["type"] == "RuntimeError"
+    assert failed["data"]["message"] == "summary down"

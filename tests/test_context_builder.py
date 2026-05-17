@@ -103,6 +103,33 @@ def test_context_builder_reports_sections_and_core_memory_tier() -> None:
     assert report.estimated_tokens > 0
 
 
+def test_context_builder_includes_conversation_summary_section() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        conversation_summary_provider=lambda: "- Earlier decision: keep summary lightweight.",
+    )
+
+    messages, report = builder.build_messages_with_report(make_message("hello"))
+
+    assert "# Conversation Summary" in messages[0]["content"]
+    assert "Earlier decision" in messages[0]["content"]
+    sections = {section.name: section for section in report.sections}
+    assert sections["Conversation Summary"].kind == "session_summary"
+    assert sections["Conversation Summary"].source == "session:summary"
+    assert sections["Conversation Summary"].tier == "medium"
+
+
+def test_context_builder_omits_empty_conversation_summary() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        conversation_summary_provider=lambda: "   ",
+    )
+
+    messages = builder.build_messages(make_message("hello"))
+
+    assert "# Conversation Summary" not in messages[0]["content"]
+
+
 def test_context_builder_trims_history_by_budget() -> None:
     builder = ContextBuilder(
         identity="Test identity.",

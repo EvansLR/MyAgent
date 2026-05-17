@@ -1,7 +1,7 @@
 from pathlib import Path
 import shutil
 
-from myagent.agent import AgentLoop, ContextBudget, ContextBuilder
+from myagent.agent import AgentLoop, ContextBudget, ContextBuilder, ConversationSummaryConfig
 from myagent.bus import InboundMessage, MessageBus
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.providers import EchoProvider
@@ -215,6 +215,58 @@ async def test_agent_loop_returns_error_message_when_provider_fails() -> None:
     outbound = await agent.process_next()
 
     assert outbound.content == "Error: provider down"
+
+
+class ConversationSummaryProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.seen_messages = []
+        self.summary_prompts = []
+
+    async def generate(self, messages):
+        self.summary_prompts.append(messages)
+        return "- Earlier context: user prefers lightweight summaries."
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        self.seen_messages.append(messages)
+        return ProviderResponse(content=f"answer {self.calls}")
+
+
+async def test_agent_loop_updates_summary_and_injects_it_next_turn() -> None:
+    bus = MessageBus()
+    provider = ConversationSummaryProvider()
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        conversation_summary_config=ConversationSummaryConfig(
+            trigger_messages=4,
+            keep_recent_messages=2,
+            min_new_messages=2,
+        ),
+        start_cron=False,
+    )
+    agent.memory_extractor = None
+
+    await bus.publish_inbound(make_message("first"))
+    await agent.process_next()
+    await bus.publish_inbound(make_message("second"))
+    await agent.process_next()
+
+    state = agent.conversation_summary_for("cli:default")
+    assert state is not None
+    assert state.summarized_message_count == 2
+    assert provider.summary_prompts
+
+    await bus.publish_inbound(make_message("third"))
+    await agent.process_next()
+
+    third_call_system = provider.seen_messages[2][0]["content"]
+    assert "# Conversation Summary" in third_call_system
+    assert "lightweight summaries" in third_call_system
+    third_call_history = provider.seen_messages[2][1:-1]
+    assert {"role": "user", "content": "second"} in third_call_history
+    assert {"role": "assistant", "content": "answer 2"} in third_call_history
 
 
 def test_agent_loop_exposes_lock_state() -> None:

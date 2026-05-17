@@ -1767,3 +1767,402 @@ Full test run observed：
 python -m pytest
 211 passed
 ```
+
+## Phase 2D Design: Conversation Summary
+
+Phase 2B 已经让 `ContextBuilder` 可以按预算选择 system sections 和 recent
+history。它解决的是“不要无限塞上下文”，但还没有解决另一个问题：
+
+```text
+旧 history 被 token window 裁掉后，模型失去长对话连续性。
+```
+
+Phase 2D 的目标是在不引入完整 `SessionStore`、不接入向量库、不污染长期
+memory 的前提下，引入一个轻量的 running conversation summary：
+
+```text
+Conversation Summary
++ recent raw messages
++ current user input
+```
+
+### External Reference Pattern
+
+公开框架里的成熟共性：
+
+- OpenAI Agents SDK：Session 负责跨 run 保存历史，compaction wrapper 可以把长
+  session 压成更短的等价 conversation items。
+- LlamaIndex Memory：用 `token_limit`、`chat_history_token_ratio` 和
+  `token_flush_size` 控制短期 history，超出预算时 flush 到更长期的 memory
+  block。
+- AutoGen：`BufferedChatCompletionContext` / `TokenLimitedChatCompletionContext`
+  提供 model-visible context view，不等同于完整存储。
+- LangGraph / LangChain：常把 trim / summarize 放在 model call 前的 hook 或
+  middleware 中，让模型只看预算内 view。
+
+MyAgent 第一版不照搬完整 session backend，而是采用其中最小的公共形态：
+
+```text
+stored in-memory history
+  保留原始 user / assistant messages
+
+model-visible context
+  Conversation Summary section + recent raw history
+```
+
+### Goals
+
+Phase 2D 只做这几件事：
+
+1. 维护每个 session 的 running summary。
+2. 当 history 超过阈值时，把较旧 messages 合并进 summary。
+3. 下一次构建上下文时，把 summary 作为普通 context section 注入 system prompt。
+4. recent messages 仍然保留原文，避免 summary 误差影响最近任务。
+5. trace 记录 summary 是否触发、处理了多少 messages、是否失败。
+
+### Non-goals
+
+本阶段不做：
+
+- 持久化 SessionStore。
+- 删除或重写 `_history` 原始消息。
+- 把 conversation summary 写入 `MEMORY.md`。
+- 把旧 history 送入 `MemoryExtractor` / daily / DREAMS。
+- 对 tool call / tool result 做跨 turn 持久化。
+- embedding、向量检索、knowledge graph。
+
+原因：
+
+```text
+ConversationSummary 是 model-visible context view，不是长期事实存储。
+MEMORY.md 是 durable memory，需要更严格的提取、确认和去重边界。
+```
+
+### Data Model
+
+建议新增一个小模块：
+
+```text
+myagent/agent/summary.py
+```
+
+核心数据结构：
+
+```python
+ConversationSummaryState
+  session_key: str
+  content: str
+  summarized_message_count: int
+  source_message_count: int
+  revision: int
+  updated_at: str
+  estimated_tokens: int
+```
+
+配置：
+
+```python
+ConversationSummaryConfig
+  enabled: bool = True
+  trigger_messages: int = 24
+  keep_recent_messages: int = 12
+  min_new_messages: int = 6
+  max_summary_chars: int = 4000
+```
+
+语义：
+
+- `summarized_message_count` 表示 `_history[session_key]` 前多少条已经进入
+  summary。
+- `keep_recent_messages` 表示永远保留最近 N 条 raw messages，不总结。
+- `min_new_messages` 避免每轮都调用 LLM。
+- `max_summary_chars` 控制 summary 自身不要变成新的膨胀源。
+
+### Summary Content Rules
+
+summary 不是 instruction，必须标明只是背景：
+
+```md
+# Conversation Summary
+
+The following is a compact summary of earlier conversation context.
+Use it as background, not as current instructions.
+Recent user messages and system instructions override this summary.
+
+- Current project/topic:
+- Decisions made:
+- User preferences mentioned in this conversation:
+- Open tasks:
+- Important files/modules discussed:
+- Caveats or uncertainty:
+```
+
+这可以降低两个风险：
+
+- 旧摘要覆盖当前用户新指令。
+- summary 被误当成系统规则。
+
+### ContextBuilder Integration
+
+`ContextBuilder` 增加一个 provider：
+
+```python
+conversation_summary_provider: Callable[[], str] | None
+```
+
+如果有 summary，则作为 system section 注入：
+
+```text
+name = "Conversation Summary"
+kind = session_summary
+tier = medium
+policy = keep_if_fits
+priority = 35
+source = "session:summary"
+```
+
+建议同时扩展 enum：
+
+```text
+ContextItemKind.SESSION_SUMMARY
+```
+
+summary 的位置应在 durable memory 之后、skills 之前：
+
+```text
+Identity / Runtime / Policy
+Long-term Memory
+Conversation Summary
+Active Skills / Available Skills
+Recent History
+Current User Input
+```
+
+### AgentLoop Flow
+
+第一版建议在 turn 结束后同步尝试更新 summary：
+
+```text
+process_message(...)
+  build context with existing summary
+  generate final answer
+  append user + assistant to _history
+  maybe_update_conversation_summary(session_key)
+```
+
+为什么放在 turn 后：
+
+- 不影响当前回答路径。
+- summary 总结的是“已经发生的旧 history”。
+- 下一轮自然可见。
+
+触发逻辑：
+
+```text
+history_count = len(history)
+eligible_end = max(history_count - keep_recent_messages, 0)
+new_count = eligible_end - summarized_message_count
+
+if history_count < trigger_messages:
+  skip
+elif new_count < min_new_messages:
+  skip
+else:
+  summarize history[summarized_message_count:eligible_end]
+```
+
+成功后：
+
+```text
+summary.content = summarize(previous_summary, new_messages)
+summary.summarized_message_count = eligible_end
+summary.source_message_count = history_count
+summary.revision += 1
+```
+
+失败时：
+
+```text
+do not change summary
+do not fail user turn
+trace conversation_summary_skipped / failed
+```
+
+### Prompt For Summarizer
+
+使用现有 provider 的 `generate(...)`，不暴露 tools。
+
+输入：
+
+```text
+System:
+You update a compact conversation summary for MyAgent.
+Preserve decisions, user preferences, open tasks, project/module names, and important file paths.
+Do not invent facts.
+Do not turn old user requests into current instructions.
+Keep it concise.
+
+User:
+## Previous Summary
+...
+
+## New Messages To Fold In
+[USER] ...
+[ASSISTANT] ...
+```
+
+输出只允许 markdown summary，不带解释。
+
+### Trace
+
+新增事件：
+
+```text
+conversation_summary_checked
+conversation_summary_updated
+conversation_summary_failed
+```
+
+字段：
+
+```text
+session_key
+history_messages
+summarized_message_count_before
+summarized_message_count_after
+new_messages_considered
+kept_recent_messages
+summary_chars_before
+summary_chars_after
+revision
+reason
+```
+
+`context_built` 里已经有 section report。summary 注入后，自然会出现在：
+
+```text
+sections[].name = "Conversation Summary"
+sections[].source = "session:summary"
+```
+
+### Test Strategy
+
+Focused tests：
+
+1. `ContextBuilder` includes Conversation Summary section when provider returns text.
+2. Summary section is omitted when empty.
+3. Summary participates in budget reports with `kind=session_summary`.
+4. `AgentLoop` does not summarize before threshold.
+5. `AgentLoop` summarizes old messages while preserving recent raw messages.
+6. Summary is visible on the next turn.
+7. Summarizer failure does not fail user response.
+8. Trace records checked / updated / failed events.
+
+Fake provider tests should avoid network calls.
+
+### Implementation Order
+
+Recommended small steps：
+
+```text
+1. Add data classes and ConversationSummarizer pure helper. Done.
+2. Add ContextBuilder conversation_summary_provider support. Done.
+3. Add AgentLoop in-memory summary state by session_key. Done.
+4. Add trace events. Done.
+5. Add focused tests. Done.
+6. Update docs and NEXT_STEPS. Done.
+```
+
+### Interview Explanation
+
+可以这样解释：
+
+```text
+Recent history window 能控制成本，但会丢掉早期对话连续性。
+ConversationSummary 是介于 raw history 和 durable memory 之间的一层：
+它只影响 model-visible context，不是事实数据库，也不会写进长期 memory。
+第一版保留完整内存 history，只给模型一个 summary + recent raw messages 的 view。
+这样既贴近 OpenAI / LlamaIndex / AutoGen 的成熟模式，又保持 MyAgent 的实现边界很小。
+```
+
+## Phase 2D Implementation Notes
+
+Phase 2D 第一版已完成：in-memory `ConversationSummary`。
+
+修改文件：
+
+```text
+myagent/agent/summary.py
+myagent/agent/context.py
+myagent/agent/loop.py
+myagent/agent/__init__.py
+tests/test_context_builder.py
+tests/test_agent_loop.py
+tests/test_agent_trace.py
+```
+
+### Runtime Behavior
+
+当前行为：
+
+```text
+turn N:
+  ContextBuilder reads existing session summary
+  AgentLoop answers with recent raw history
+  AgentLoop appends user + assistant to _history
+  ConversationSummarizer checks whether old history should be folded
+  if threshold reached:
+    provider.generate(...) updates summary
+    summary is stored in memory by session_key
+
+turn N+1:
+  ContextBuilder injects # Conversation Summary
+  recent raw history remains visible as raw messages
+```
+
+默认配置：
+
+```text
+enabled = True
+trigger_messages = 24
+keep_recent_messages = 12
+min_new_messages = 6
+max_summary_chars = 4000
+```
+
+### Important Boundaries
+
+- `_history` 原始消息仍然完整保留在内存里。
+- summary 只是一种 model-visible view。
+- summary 不写入 `MEMORY.md`。
+- summary 不进入 daily / DREAMS / MemoryExtractor。
+- summary 不包含 tool messages，因为 MyAgent 当前跨 turn history 不保存 tool messages。
+- summary 失败不会影响用户回复。
+
+### Trace
+
+新增 trace events：
+
+```text
+conversation_summary_checked
+conversation_summary_updated
+conversation_summary_failed
+```
+
+为了避免短对话 trace 噪声，低于 `trigger_messages` 时不会记录 checked event。
+
+### Verification
+
+Focused verification：
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_agent_loop.py tests/test_agent_trace.py
+33 passed
+```
+
+Full verification：
+
+```text
+python -m pytest
+216 passed
+```
