@@ -275,7 +275,7 @@ async def run_gateway(
     bus = MessageBus()
     workspace_root = Path.cwd()
     registry = create_default_registry(
-        workspace_root, approval_callback=None
+        workspace_root, approval_callback=_make_cli_approval_callback(bus)
     )
     trace_store = JsonlTraceStore()
     mcp_clients = await _connect_mcp_servers(

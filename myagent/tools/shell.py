@@ -25,12 +25,16 @@ def _decode_bytes(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 # Characters/operators that indicate command chaining or redirection.
-_DANGEROUS_OPERATORS = (";", "&&", "||", "|", ">", "<", "`", "$(", "${")
+_DANGEROUS_OPERATORS = (";", "&&", "||", ">", "<", "`", "$(", "${")
 
 # Command prefixes that are inherently dangerous
 _DANGEROUS_PREFIXES = frozenset({
     "rm", "del", "format", "mkfs", "dd", "chmod", "chown",
     "sudo", "su",
+    "remove-item", "erase", "rmdir", "rd",
+    "set-content", "add-content", "out-file", "new-item",
+    "move-item", "copy-item", "rename-item", "clear-content",
+    "invoke-expression", "iex", "start-process",
 })
 
 # Command prefixes considered safe/readonly
@@ -40,6 +44,8 @@ _SAFE_PREFIXES = frozenset({
     "find", "grep", "head", "tail", "wc", "type",
     # System info
     "wmic", "powercfg", "systeminfo", "ver", "winver",
+    "get-process", "gps", "measure-object", "select-object",
+    "sort-object", "where-object", "format-table", "format-list", "out-string",
     "get-ciminstance", "get-wmiobject", "get-computerinfo",
     "pmset", "system_profiler", "sw_vers", "sysctl",
     "acpi", "upower", "lshw", "lspci", "lsusb", "dmidecode",
@@ -130,15 +136,9 @@ class ShellCommandTool(Tool):
         for op in _DANGEROUS_OPERATORS:
             if op in lowered:
                 return True
-        tokens = lowered.split()
-        if not tokens:
-            return False
-        first = tokens[0]
-        if first in _DANGEROUS_PREFIXES:
-            return True
-        if first in _SAFE_PREFIXES:
-            return False
-        return True
+        if "|" in lowered:
+            return not _is_safe_pipeline(lowered)
+        return not _is_safe_command_segment(lowered)
 
     async def _run(self, command: str, timeout: int) -> str:
         is_windows = platform.system() == "Windows"
@@ -235,6 +235,34 @@ def _strip_quotes(text: str) -> str:
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
         return text[1:-1]
     return text
+
+
+def _is_safe_pipeline(command: str) -> bool:
+    segments = [segment.strip() for segment in command.split("|")]
+    return bool(segments) and all(_is_safe_command_segment(segment) for segment in segments)
+
+
+def _is_safe_command_segment(segment: str) -> bool:
+    first = _first_command_token(segment)
+    if not first:
+        return False
+    if first in _DANGEROUS_PREFIXES:
+        return False
+    return first in _SAFE_PREFIXES
+
+
+def _first_command_token(segment: str) -> str:
+    text = segment.strip()
+    if not text:
+        return ""
+    if text.startswith("("):
+        match = re.match(r"^\(\s*([a-zA-Z][\w.-]*)\b", text)
+        if match:
+            return match.group(1).lower()
+    match = re.match(r"^&?\s*([a-zA-Z][\w.-]*)\b", text)
+    if not match:
+        return ""
+    return match.group(1).lower()
 
 
 def _windows_shell_command(command: str) -> list[str]:

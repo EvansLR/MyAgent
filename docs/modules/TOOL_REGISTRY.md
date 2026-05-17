@@ -51,6 +51,7 @@ Shell 工具：
 - 工作区外变更型文件操作通过当前 Channel 走审批流程。
 - `execute_command` 支持常见只读命令、PowerShell 语义和持久 working directory；危险或复杂命令仍需要审批。
 - Gateway/Feishu 场景下，审批请求会路由回当前 chat，并用 Feishu interactive card 展示允许/拒绝按钮。
+- Feishu 普通回复会把 Markdown-ish 内容转成 `post` 富文本，改善标题、列表、粗体、链接和代码块显示。
 - SubAgent 不继承写文件工具，只拿到受限只读工具集。
 
 ## 为什么需要它

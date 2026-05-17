@@ -11,6 +11,8 @@ from myagent.channels.feishu import (
     _approval_card,
     _event_to_card_action,
     _event_to_text,
+    _markdown_to_post_content,
+    _render_text_message,
 )
 
 
@@ -41,8 +43,41 @@ class TestCardAction:
         card = _approval_card("a1", "Execute shell command:\necho hi")
         assert card["header"]["title"]["content"] == "MyAgent 权限审批"
         actions = card["elements"][1]["actions"]
+        assert actions[0]["text"]["content"] == "允许"
         assert actions[0]["value"] == {"approval_id": "a1", "action": "approve"}
+        assert actions[1]["text"]["content"] == "拒绝"
         assert actions[1]["value"] == {"approval_id": "a1", "action": "deny"}
+
+
+class TestFeishuRendering:
+    def test_short_plain_text_stays_text(self):
+        msg_type, content = _render_text_message("hello")
+        assert msg_type == "text"
+        assert content == {"text": "hello"}
+
+    def test_markdown_renders_as_post(self):
+        msg_type, content = _render_text_message("# Title\n\n- **bold** item\n")
+        assert msg_type == "post"
+        rows = content["zh_cn"]["content"]
+        assert rows[0][0]["text"] == "Title"
+        assert rows[0][0]["style"] == ["bold"]
+        assert rows[2][0]["text"] == "- "
+        assert rows[2][1]["text"] == "bold"
+        assert rows[2][1]["style"] == ["bold"]
+
+    def test_links_render_as_anchor_tags(self):
+        rows = _markdown_to_post_content("see [docs](https://example.com)")
+        assert rows[0][1] == {
+            "tag": "a",
+            "text": "docs",
+            "href": "https://example.com",
+        }
+
+    def test_code_block_renders_as_text_block(self):
+        rows = _markdown_to_post_content("```powershell\nGet-Process\n```")
+        assert rows[0][0]["tag"] == "text"
+        assert "Get-Process" in rows[0][0]["text"]
+        assert rows[0][0]["un_escape"] is True
 
 
 class TestFeishuChannel:
@@ -111,6 +146,26 @@ class TestFeishuChannel:
         assert sent[0][0] == "chat_id"
         assert sent[0][2] == "interactive"
         assert sent[0][3]["header"]["title"]["content"] == "MyAgent 权限审批"
+
+    @pytest.mark.asyncio
+    async def test_send_markdown_uses_post_message(self, channel):
+        channel._token = "token"
+        sent = []
+
+        async def fake_send_message(receive_id_type, receive_id, msg_type, content):
+            sent.append((receive_id_type, receive_id, msg_type, json.loads(content)))
+
+        channel._send_message = fake_send_message
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_123",
+                content="# Title\n\n- item",
+            )
+        )
+
+        assert sent[0][2] == "post"
+        assert sent[0][3]["zh_cn"]["content"][0][0]["text"] == "Title"
 
     def test_card_action_resolves_pending_future(self, channel):
         loop = asyncio.new_event_loop()

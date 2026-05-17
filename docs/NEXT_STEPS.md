@@ -138,6 +138,7 @@ Feishu Gateway、CronService、MessageTool 已落地：
 
 - Gateway 模式运行 ChannelManager + AgentLoop + CronService。
 - Feishu 审批请求会回到当前 chat，并以 interactive card 展示允许/拒绝按钮。
+- Feishu 普通回复会将 Markdown-ish 内容转成 `post` 富文本，短纯文本仍用 `text`。
 - CronService 支持 `every` / `at` / `once`。
 - 用户 cron 会路由回创建时的 channel/chat_id。
 - 系统 cron 会注册 `memory_consolidation`。

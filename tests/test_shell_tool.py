@@ -45,10 +45,23 @@ class TestShellCommandTool:
         tool.approval_callback.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_pipe_requires_approval(self, tool):
-        tool.approval_callback = AsyncMock(return_value=True)
-        result = await tool.execute("echo hello | grep hello")
+    async def test_unsafe_pipe_requires_approval(self, tool):
+        tool.approval_callback = AsyncMock(return_value=False)
+        result = await tool.execute("echo hello | Out-File result.txt")
         tool.approval_callback.assert_awaited_once()
+        assert "User denied" in result
+
+    @pytest.mark.asyncio
+    async def test_safe_pipe_executes_without_approval(self, tool):
+        if platform.system() == "Windows":
+            command = "Get-Process | Measure-Object | Select-Object -ExpandProperty Count"
+        else:
+            command = "echo hello | grep hello"
+
+        result = await tool.execute(command)
+
+        assert "requires user approval" not in result
+        assert "Exit code: 0" in result
 
     @pytest.mark.asyncio
     async def test_no_callback_returns_error(self, tool):
@@ -121,6 +134,13 @@ class TestShellCommandTool:
         if platform.system() != "Windows":
             pytest.skip("Windows-only shell command")
         result = await tool.execute("Get-CimInstance Win32_Battery")
+        assert "requires user approval" not in result
+
+    @pytest.mark.asyncio
+    async def test_windows_powershell_expression_query_is_safe(self, tool):
+        if platform.system() != "Windows":
+            pytest.skip("Windows-only shell command")
+        result = await tool.execute("(Get-Process).Count")
         assert "requires user approval" not in result
 
     @pytest.mark.asyncio
