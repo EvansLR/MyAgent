@@ -443,13 +443,21 @@ daily/YYYY-MM-DD.md
   工作观察、临时上下文、低门槛流水记录。
 
 MEMORY_PROPOSALS.md
-  等待 review / consolidation 的长期记忆候选。
+  临时长期记忆候选区；定时 consolidation 后归档并清空，避免长期堆积。
 
 MEMORY.md
   已确认、稳定、默认可进入上下文的长期记忆。
 ```
 
 `memory_propose_long_term` 现在默认 `apply=false`，也就是先写入 proposal；只有用户明确要求“记住”的稳定资料才使用 `apply=true` 直接写入 `MEMORY.md`。
+
+当前取舍：
+
+- 不新增 `MemoryCurator`。
+- 不做人工 review UI。
+- 不把 proposal 当成长期待办池。
+- `MemoryExtractor` 应尽量少写，只抽取未来仍会影响服务用户的信息。
+- 低置信度候选宁可在 consolidation 后归档出主链路，也不要无限留在当前 proposal 文件里。
 
 兼容性：
 
@@ -466,7 +474,7 @@ python -m pytest
 推荐下一步：
 
 ```text
-1. Review Memory Proposal 命名和 apply=false 默认语义。
-2. 如果接受，按 Memory 边界提交本轮改动。
-3. 下一步再讨论 Memory consolidation 是否需要更强的人工 review / trace 可观察性。
+1. 保持当前 Memory 结构稳定一段时间。
+2. 观察 MemoryExtractor 是否仍然写入过多 daily/proposal。
+3. 如果继续膨胀，再优先收紧 extractor prompt，而不是新增模块。
 ```

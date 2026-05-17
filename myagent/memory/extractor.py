@@ -63,11 +63,20 @@ class MemoryExtractor:
 
 
 _EXTRACTOR_SYSTEM_PROMPT = """You are MyAgent's memory extractor.
-Extract durable user preferences, long-term goals, project decisions, open loops, or useful working context.
+Extract only information that is likely to help MyAgent serve the user in future turns.
 Return strict JSON only:
 {"items":[{"content":"short standalone memory","target":"daily|long_term","section":"Facts","importance":1,"tags":["tag"]}]}
 If there is nothing worth remembering, return {"items":[]}.
-Do not copy raw conversation unless it is itself a useful memory.
+
+Be conservative. Do not record:
+- short acknowledgements, approvals, or conversational filler
+- one-off tool usage, command output, or file-reading steps
+- implementation details that matter only inside the completed turn
+- assistant plans unless they describe an unfinished user-relevant open loop
+- raw conversation text unless it is itself a durable memory
+
+Use target=daily for recent working context, open loops, temporary project state, or uncertain observations.
+Use target=long_term only for stable user preferences, long-term goals, identity/background, durable project facts, or decisions that should affect future behavior.
 
 For long_term memories, use one of these sections:
 - Profile: user identity, name, role, background

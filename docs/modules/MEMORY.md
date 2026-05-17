@@ -928,7 +928,7 @@ data/memory/
 
 - `MEMORY.md`：精炼、稳定、长期有效的记忆。
 - `daily/YYYY-MM-DD.md`：每轮自动观察、候选记忆、近期计划。
-- `MEMORY_PROPOSALS.md`：待 review / consolidation 的长期记忆候选。
+- `MEMORY_PROPOSALS.md`：临时候选区；定时 consolidation 会尝试合并、归档并清空，避免长期堆积。
 
 `profile / project / working` 不再作为三个文件，而是作为记忆 section / scope：
 
@@ -1358,7 +1358,7 @@ daily/YYYY-MM-DD.md
   当前工作观察、候选事实、临时上下文。
 
 MEMORY_PROPOSALS.md
-  候选长期记忆，等待 consolidation 或人工 review。
+  候选长期记忆的临时缓冲区；定时 consolidation 后会归档并清空。
 
 MEMORY.md
   已确认、稳定、默认可进入上下文的长期记忆。
@@ -1369,6 +1369,7 @@ MEMORY.md
 - 默认只创建 proposal，降低误写长期记忆的风险。
 - 用户明确要求“记住”的稳定资料才使用 `apply=true` 直接写入 `MEMORY.md`。
 - `MemoryExtractor` 继续只写 proposal，不直接污染 `MEMORY.md`。
+- proposal 不作为长期待办池保存；它会在 consolidation 成功后被归档并清空。宁可丢掉低置信度候选，也不让候选区无限膨胀。
 
 兼容性处理：
 
@@ -1383,4 +1384,19 @@ python -m pytest tests/test_memory_tools.py tests/test_memory_consolidator.py te
 
 python -m pytest
 218 passed
+```
+
+### MemoryExtractor 克制写入原则
+
+为避免 `daily/` 和 `MEMORY_PROPOSALS.md` 继续膨胀，post-turn extractor 的默认策略应该保守：
+
+- 只记录未来仍可能帮助 MyAgent 服务用户的信息。
+- 不记录短回复、普通确认、一次性工具调用、文件阅读过程、已完成 turn 内部细节。
+- `daily` 用于近期工作上下文、open loop、临时项目状态和不够稳定的观察。
+- `long_term` 只用于稳定偏好、长期目标、身份背景、长期项目事实或重要决策。
+
+这个策略的取舍是：
+
+```text
+少记、记准 > 什么都记下来再让系统清理。
 ```
