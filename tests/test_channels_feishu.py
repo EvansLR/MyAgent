@@ -69,5 +69,24 @@ class TestFeishuChannel:
         assert msg.sender_id == "u1"
         assert msg.chat_id == "c1"
 
+    @pytest.mark.asyncio
+    async def test_feishu_new_command(self, bus):
+        channel = FeishuChannel(
+            {"appId": "test", "appSecret": "test"}, bus
+        )
+        await channel._handle_message("u1", "c1", "/new")
+        assert channel._session_indices.get("u1") == 1
+        assert bus.inbound_size == 0
+
+    @pytest.mark.asyncio
+    async def test_feishu_session_override(self, bus):
+        channel = FeishuChannel(
+            {"appId": "test", "appSecret": "test"}, bus
+        )
+        await channel._handle_message("u1", "c1", "/new")
+        await channel._handle_message("u1", "c1", "hello")
+        msg = await bus.consume_inbound()
+        assert msg.session_key_override == "feishu:c1:session-1"
+
 
 import asyncio
