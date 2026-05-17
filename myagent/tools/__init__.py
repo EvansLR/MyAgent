@@ -22,6 +22,7 @@ from myagent.tools.cron import CronTool
 from myagent.tools.message import MessageTool
 from myagent.tools.registry import ToolRegistry
 from myagent.tools.skills import SkillGetTool
+from myagent.tools.shell import ShellCommandTool
 from myagent.tools.web import WebFetchTool, WebSearchTool
 
 
@@ -43,6 +44,7 @@ def create_default_registry(
     registry.register(MoveFileTool(root, approval_callback=approval_callback))
     registry.register(WebSearchTool())
     registry.register(WebFetchTool())
+    registry.register(ShellCommandTool(root, approval_callback=approval_callback))
     return registry
 
 
@@ -59,6 +61,7 @@ __all__ = [
     "MemoryProposeLongTermTool",
     "MemorySearchTool",
     "ReadFileTool",
+    "ShellCommandTool",
     "SkillGetTool",
     "ToolRegistry",
     "WebFetchTool",
