@@ -46,12 +46,19 @@ MyAgent 是一个参考 NanoBot、OpenClaw 等架构理念重新实现的 local-
 Phase 2 新方向：
 
 ```text
-profile  # 用户偏好、目标、协作方式
-project  # 当前长期任务、项目状态、阶段决策
-working  # 最近观察、候选信息、临时计划
+MEMORY.md             # 稳定长期记忆
+MEMORY_PROPOSALS.md   # 临时候选区，定时整理后归档清空
+daily/YYYY-MM-DD.md   # 近期工作观察和 open loop
 ```
 
 不再把 Memory 只理解为当前代码项目状态，也不直接上向量库或 SQLite。
+
+当前取舍：
+
+- `memory_propose_long_term` 默认只写 proposal。
+- 用户明确要求“记住”的稳定信息才直接写入 `MEMORY.md`。
+- 不新增 `MemoryCurator`，不做人工 memory review UI。
+- proposal 不作为长期待办池，避免候选记忆无限膨胀。
 
 ### 4. Skills
 

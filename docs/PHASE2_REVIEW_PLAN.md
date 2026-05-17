@@ -1,5 +1,17 @@
 # Phase 2 模块复盘与升级计划
 
+## 当前状态
+
+这份文档记录 Phase 2 的复盘方法和历史范围，不再作为当前下一步入口。
+
+当前续接入口请看：
+
+```text
+docs/NEXT_STEPS.md
+```
+
+Phase 2 第一轮复盘已经完成，后续工作应以“小步稳定、文档校准、真实运行观察”为主，不再按本文的初始优先级逐项推进。
+
 ## 目标
 
 Phase 1 已经完成了一个能跑通的轻量 ReAct Agent runtime。
@@ -47,14 +59,14 @@ CLI Channel
 - 主 Agent 默认文件工具：`list_dir`、`read_file`、`write_file`、`edit_file`、`copy_file`、`move_file`
 - 主 Agent 默认 web 工具：`web_search`、`web_fetch`
 
-最近一次全量测试：
+当时记录的全量测试：
 
 ```text
 python -m pytest
 80 passed, 1 skipped
 ```
 
-`tests/test_mcp_stdio.py` 在当前 Windows 沙箱下可能因 subprocess pipe 权限被 skip，这是已知环境限制。
+这只是 Phase 2 早期记录，不代表当前测试基线；当前测试状态以 `docs/NEXT_STEPS.md` 为准。
 
 ## Phase 1 与文档不完全一致的地方
 
@@ -383,9 +395,9 @@ Phase 2 建议按下面顺序推进。
 - 当前没有明确测试场景
 - 需要大规模重构才能完成
 
-## 初步建议
+## 历史优先级
 
-Phase 2 第一轮建议先做：
+Phase 2 第一轮当时建议先做：
 
 1. Project Docs / Roadmap 校准
 2. Config 复盘
@@ -394,10 +406,4 @@ Phase 2 第一轮建议先做：
 5. Skills 复盘
 6. SubAgent 复盘
 
-其中 Memory 和 Skills 是第二版最值得重点提升的两个模块。
-
-原因：
-
-- Memory 当前太简单，用户已经明确提出后续必须升级。
-- Skills 当前还停留在摘要提示层，和真正“能力调用”还有距离。
-- SubAgent 刚完成第一版，适合先观察测试效果，再决定是否配置化。
+这些方向已经完成主要校准。当前不要继续按这份列表机械推进；以 `docs/NEXT_STEPS.md` 的当前建议为准。

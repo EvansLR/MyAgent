@@ -168,7 +168,7 @@
 - 典型层次：
   - `MEMORY.md`：长期、精炼、耐久记忆。
   - `memory/YYYY-MM-DD.md`：每日记录、运行上下文和观察。
-  - `MEMORY_PROPOSALS.md`：后台整理和 promotion 候选，供人工 review。
+  - `MEMORY_PROPOSALS.md`：后台整理和 promotion 候选。当前 MyAgent 已收敛为临时候选区，consolidation 后归档清空，不做人工 review UI。
 - `memory_search` 和 `memory_get` 是工具；搜索只返回片段，不返回整文件。
 - 支持 hybrid search：关键词 + 向量。
 - 使用 SQLite index、chunking、embedding cache、MMR reranking、recency boost。

@@ -84,7 +84,7 @@ OpenClaw 常见 memory 层：
 
 - `memory/YYYY-MM-DD.md`：每日 running context 和观察。
 - `MEMORY.md`：人工或 agent 整理后的长期 durable memory。
-- `MEMORY_PROPOSALS.md`：后台整理、promotion、历史回填供人 review。
+- `MEMORY_PROPOSALS.md`：长期记忆候选的临时缓冲区，后台整理后归档清空，避免长期堆积。
 
 可采纳经验：
 
@@ -340,7 +340,7 @@ E:\ClaudeCode\openSource\MyAgent
 
 ### 建议的近期开发优先级
 
-为了避免又变成 coding agent，下一步不应该马上做更多代码工具，而应该先做个人助理的基础状态：
+为了避免又变成 coding agent，后续不应该马上堆更多代码工具，而应该优先稳定个人助理的基础状态：
 
 1. Memory v2：profile / project / working 三层。
 2. ContextBuilder v2：注入 persona、user profile、memory sections。
