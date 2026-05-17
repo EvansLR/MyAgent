@@ -12,6 +12,16 @@ from myagent.tools.base import Tool
 
 ApprovalCallback = Callable[[str], Awaitable[bool]]
 
+
+def _decode_bytes(data: bytes) -> str:
+    """Decode subprocess output trying common encodings."""
+    for encoding in ("utf-8", "gbk", "gb2312", "cp1252", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
 # Characters/operators that indicate command chaining or redirection.
 _DANGEROUS_OPERATORS = (";", "&&", "||", "|", ">", "<", "`", "$(", "${")
 
@@ -26,6 +36,17 @@ _SAFE_PREFIXES = frozenset({
     "echo", "cat", "ls", "dir", "pwd", "cd", "whoami", "hostname",
     "date", "uname", "df", "du", "ps", "top", "env", "which", "where",
     "find", "grep", "head", "tail", "wc", "type",
+    # System info
+    "wmic", "powercfg", "systeminfo", "ver", "winver",
+    "pmset", "system_profiler", "sw_vers", "sysctl",
+    "acpi", "upower", "lshw", "lspci", "lsusb", "dmidecode",
+    # Version / readonly tools
+    "python", "python3", "node", "go", "rustc", "cargo",
+    "java", "javac", "dotnet", "gcc", "g++", "clang",
+    # Git readonly
+    "git",
+    # Package managers readonly
+    "pip", "pip3",
 })
 
 
@@ -143,8 +164,8 @@ class ShellCommandTool(Tool):
         except asyncio.TimeoutError:
             pass
 
-        out_text = stdout.decode("utf-8", errors="replace")
-        err_text = stderr.decode("utf-8", errors="replace")
+        out_text = _decode_bytes(stdout)
+        err_text = _decode_bytes(stderr)
 
         parts: list[str] = []
         if out_text:

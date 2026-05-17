@@ -35,7 +35,7 @@ class TestShellCommandTool:
     @pytest.mark.asyncio
     async def test_unknown_command_requires_approval(self, tool):
         tool.approval_callback = AsyncMock(return_value=True)
-        result = await tool.execute("npm test")
+        result = await tool.execute("cmake --version")
         tool.approval_callback.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -52,13 +52,13 @@ class TestShellCommandTool:
 
     @pytest.mark.asyncio
     async def test_no_callback_returns_error(self, tool):
-        result = await tool.execute("npm test")
+        result = await tool.execute("cmake --version")
         assert "requires user approval" in result
 
     @pytest.mark.asyncio
     async def test_user_denied_returns_error(self, tool):
         tool.approval_callback = AsyncMock(return_value=False)
-        result = await tool.execute("npm test")
+        result = await tool.execute("cmake --version")
         assert "User denied" in result
 
     @pytest.mark.asyncio
