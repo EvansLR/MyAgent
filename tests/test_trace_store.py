@@ -153,29 +153,37 @@ def test_trace_inspect_formats_latest_context_summary() -> None:
                 "context": {
                     "total_chars": 1200,
                     "estimated_tokens": 300,
+                    "estimated_tokens_before_budget": 600,
+                    "max_prompt_tokens": 500,
                     "message_count": 3,
                     "sections": [
                         {
                             "name": "Identity",
+                            "kind": "instruction",
                             "tier": "protected",
                             "source": "identity",
                             "chars": 100,
                             "estimated_tokens": 25,
                             "included": True,
+                            "reason": "included",
                         },
                         {
                             "name": "Available Skills",
+                            "kind": "skill_summary",
                             "tier": "medium",
                             "source": "skills:summary",
                             "chars": 800,
                             "estimated_tokens": 200,
-                            "included": True,
+                            "included": False,
+                            "reason": "budget_exceeded",
                         },
                     ],
                     "history": {
                         "total_messages": 4,
                         "included_messages": 2,
                         "dropped_messages": 2,
+                        "reserved_tokens": 175,
+                        "estimated_tokens": 80,
                     },
                     "warnings": ["history_trimmed"],
                 },
@@ -189,10 +197,31 @@ def test_trace_inspect_formats_latest_context_summary() -> None:
 
     assert "turn_id: turn-1" in formatted
     assert "estimated_tokens: 300" in formatted
-    assert "history: 2/4 included, 2 dropped" in formatted
+    assert "estimated_tokens_before_budget: 600" in formatted
+    assert "max_prompt_tokens: 500" in formatted
+    assert "history: 2/4 included, 2 dropped, reserved=175, tokens=80" in formatted
     assert "warnings: history_trimmed" in formatted
-    assert "- Identity: tier=protected, source=identity, tokens=25, chars=100, included=yes" in formatted
-    assert "- Available Skills: tier=medium, source=skills:summary, tokens=200, chars=800, included=yes" in formatted
+    assert "- Identity: kind=instruction, tier=protected, source=identity, tokens=25, chars=100, included=yes" in formatted
+    assert "- Available Skills: kind=skill_summary, tier=medium, source=skills:summary, tokens=200, chars=800, included=no, reason=budget_exceeded" in formatted
+
+
+def test_trace_inspect_formats_context_dropped_event() -> None:
+    events = [
+        {
+            "turn_id": "turn-1",
+            "event": "context_dropped",
+            "data": {
+                "dropped_sections": [{"name": "Available Skills"}],
+                "dropped_history_by_token_budget": 2,
+                "estimated_tokens_before": 900,
+                "estimated_tokens_after": 500,
+            },
+        }
+    ]
+
+    formatted = format_trace_events(events, limit=1)
+
+    assert "turn-1 context_dropped - sections=1 history=2 tokens=900->500" in formatted
 
 
 def test_trace_html_report_includes_context_and_runtime_sections() -> None:

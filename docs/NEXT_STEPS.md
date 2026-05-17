@@ -194,20 +194,18 @@ python -m myagent gateway
 
 ## 最近记录的验证状态
 
-我这次只做了文档阅读和状态整理，没有重新跑测试。
-
-文档里最近一次记录到的全量测试结果是：
+最近一次 focused verification：
 
 ```text
-python -m pytest
-133 passed, 1 skipped
+python -m pytest tests/test_context_builder.py tests/test_filesystem_tools.py tests/test_agent_loop.py tests/test_agent_trace.py
+56 passed
 ```
 
-测试基线：
+最近一次全量测试观察：
 
 ```text
 python -m pytest
-144 passed
+211 passed
 ```
 
 ## 当前最推荐的下一步
@@ -220,15 +218,94 @@ Phase 2 复盘已完成，当前进入小步增强阶段。已完成：
 ✅ 3. Skills 自动激活引导优化（description + format 改进）
 ```
 
-**下一步：Budget-aware Context Composer**
+**当前进行中：Budget-aware Context Composer**
 
-ContextBuilder 已有 `ContextTier` 和 `ContextBudget`，但还没有实现超预算时的降级逻辑。当前 system prompt 无限增长（MEMORY.md + skills + workspace），history 只按消息数裁剪，没有 token 预算控制。
+ContextBuilder 已完成 Budget-aware Context Composer 的前两片实现。
+
+已落地：
+
+- `ContextItemKind` / `ContextRetentionPolicy` 内部分类。
+- `ContextBudget.max_prompt_tokens` 默认 6000。
+- `ContextBudget.history_token_ratio` 默认 0.35，用于给 session history 预留预算。
+- system section 会按 tier / policy 预算选择。
+- history 会先按消息数、再按剩余 token budget 裁剪。
+- report 会记录 dropped section、预算前后 token 估算和 history token 裁剪信息。
+- AgentLoop 在发生丢弃时记录 `context_dropped` trace。
+- `trace context` / `trace report` / `trace viewer` 已显示新增预算字段。
+- 参考上一层 NanoBot 后，已撤回 Working-turn tool result compaction 的实现方向。
+- 当前 turn 内的 tool result 会完整进入下一次 provider call；大文件主要靠 `read_file`
+  的 `offset` / `limit` 分页和续读提示控制。
+- `read_file` 已补齐字符上限 guardrail：超长行窗口会按完整行截到字符预算内，
+  并继续返回 `Use offset=... to continue`。
+- `read_file` 对单行超过响应预算的 minified / long-line 文件会返回截断 marker，
+  避免续读提示停留在同一行。
+- `list_dir max_entries` 截断行为已有直接测试覆盖。
+
+当前 focused verification：
+
+```text
+python -m pytest tests/test_filesystem_tools.py
+28 passed
+
+python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py tests/test_context_builder.py
+28 passed
+```
+
+CronTool 文案测试已同步到当前实现：
+
+```text
+python -m pytest tests/test_cron_tool.py
+11 passed
+```
+
+当前全量测试基线：
+
+```text
+python -m pytest
+211 passed
+```
+
+下一步应先让用户 review 本轮 ContextBuilder v2B 设计和实现，再决定：
+
+- 是否把 `history_token_ratio=0.35` 调整为配置项。
+- 是否继续补齐 NanoBot 风格的 history-save-time tool result truncation。
+- 是否进入 Phase 2D：ConversationSummary。
+
+History 的成熟路线已记录到 `docs/modules/CONTEXT_BUILDER.md`：
+
+```text
+recent buffer
+-> token window
+-> history_token_ratio
+-> running summary + recent messages
+-> old history flush into MemoryExtractor / daily / DREAMS
+-> full SessionStore 与 model-visible view 分离
+-> tool call / tool result 成组裁剪
+```
+
+当前 MyAgent 已完成前三层：
+
+```text
+max_history_messages
+token-aware trimming
+history_token_ratio = 0.35
+```
+
+后续不建议马上跳到完整 SessionStore。更合理的过渡顺序是：
+
+```text
+1. 如果未来保存 tool messages，再做 history-save-time truncation。
+2. 再设计 ConversationSummary：summary + recent raw messages。
+3. 再把旧 history 接入 MemoryExtractor / daily / DREAMS。
+4. 最后拆出持久化 SessionStore。
+```
+
+原始问题背景：
 
 要做的是：
-- 设定总 prompt token 上限
-- 超预算时按 tier 优先级逐步降级/丢弃
-- history 从按消息数裁剪升级为按 token 数裁剪
-- 生成 `context_dropped` trace 事件
+- system prompt 无限增长（MEMORY.md + skills + workspace）
+- history 只按消息数裁剪
+- `max_prompt_tokens` 默认无限制
 
 Trace runtime overview 暂缓。
 

@@ -121,11 +121,15 @@ def format_context_summary(event: dict[str, Any]) -> str:
         f"turn_id: {event.get('turn_id')}",
         f"message_count: {context.get('message_count') or data.get('message_count') or 0}",
         f"estimated_tokens: {context.get('estimated_tokens') or 0}",
+        f"estimated_tokens_before_budget: {context.get('estimated_tokens_before_budget') or 0}",
+        f"max_prompt_tokens: {context.get('max_prompt_tokens') or 'unlimited'}",
         f"total_chars: {context.get('total_chars') or 0}",
         (
             "history: "
             f"{history.get('included_messages') or 0}/{history.get('total_messages') or 0} included, "
-            f"{history.get('dropped_messages') or 0} dropped"
+            f"{history.get('dropped_messages') or 0} dropped, "
+            f"reserved={history.get('reserved_tokens') or 0}, "
+            f"tokens={history.get('estimated_tokens') or 0}"
         ),
     ]
     if warnings:
@@ -133,14 +137,18 @@ def format_context_summary(event: dict[str, Any]) -> str:
     lines.append("sections:")
     for section in sections:
         included = "yes" if section.get("included") else "no"
+        reason = str(section.get("reason") or "")
+        reason_text = f", reason={reason}" if reason and reason != "included" else ""
         lines.append(
             "- "
             f"{section.get('name')}: "
+            f"kind={section.get('kind')}, "
             f"tier={section.get('tier')}, "
             f"source={section.get('source')}, "
             f"tokens={section.get('estimated_tokens') or 0}, "
             f"chars={section.get('chars') or 0}, "
             f"included={included}"
+            f"{reason_text}"
         )
     return "\n".join(lines)
 
@@ -189,6 +197,13 @@ def _event_preview(event_name: str, data: dict[str, Any]) -> str:
         return _compact(f"{data.get('server_name') or ''} {data.get('error') or ''}")
     if event_name == "turn_completed":
         return str(data.get("stop_reason") or "")
+    if event_name == "context_dropped":
+        dropped_sections = data.get("dropped_sections") or []
+        return _compact(
+            f"sections={len(dropped_sections)} "
+            f"history={data.get('dropped_history_by_token_budget') or 0} "
+            f"tokens={data.get('estimated_tokens_before') or 0}->{data.get('estimated_tokens_after') or 0}"
+        )
     if event_name == "final_answer":
         return _compact(str(data.get("content_preview") or ""))
     return ""

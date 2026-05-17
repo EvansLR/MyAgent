@@ -20,7 +20,7 @@ class TestAdd:
         result = await cron_tool.execute(
             action="add", message="drink water", every_seconds=1200
         )
-        assert "Created job" in result
+        assert "Created recurring job" in result
         assert "drink water" in result
 
     @pytest.mark.asyncio
@@ -28,7 +28,7 @@ class TestAdd:
         result = await cron_tool.execute(
             action="add", message="meeting", at="2099-01-01T10:00:00"
         )
-        assert "Created job" in result
+        assert "Created at job" in result
         assert "meeting" in result
 
     @pytest.mark.asyncio

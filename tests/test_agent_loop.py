@@ -1,7 +1,7 @@
 from pathlib import Path
 import shutil
 
-from myagent.agent import AgentLoop
+from myagent.agent import AgentLoop, ContextBudget, ContextBuilder
 from myagent.bus import InboundMessage, MessageBus
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.providers import EchoProvider
@@ -151,6 +151,52 @@ async def test_agent_loop_preserves_provider_specific_tool_call_fields() -> None
     assistant_message = provider.seen_messages[1][-2]
     assert assistant_message["role"] == "assistant"
     assert assistant_message["reasoning_content"] == "thinking text"
+
+
+class LargeToolResultProvider(ToolCallingProvider):
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        self.seen_tools = tools
+        self.seen_messages.append(messages)
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-large",
+                        name="read_file",
+                        arguments={"path": "large.txt"},
+                    )
+                ]
+            )
+        return ProviderResponse(content="Done.")
+
+
+async def test_agent_loop_keeps_tool_result_visible_before_next_model_call() -> None:
+    workspace = make_workspace("large-tool-result")
+    (workspace / "large.txt").write_text("x" * 200, encoding="utf-8")
+    bus = MessageBus()
+    provider = LargeToolResultProvider()
+    context_builder = ContextBuilder(
+        identity="ID",
+        delegation_policy=None,
+        budget=ContextBudget(chars_per_token=1),
+    )
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        context_builder=context_builder,
+        tool_registry=create_default_registry(workspace),
+    )
+
+    await bus.publish_inbound(make_message("read large file"))
+    await agent.process_next()
+
+    second_call_messages = provider.seen_messages[1]
+    tool_message = second_call_messages[-1]
+    assert tool_message["role"] == "tool"
+    assert tool_message["tool_call_id"] == "call-large"
+    assert "x" * 200 in tool_message["content"]
+    assert "[Tool result compacted]" not in tool_message["content"]
 
 
 class FailingProvider:

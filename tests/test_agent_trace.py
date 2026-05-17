@@ -2,11 +2,13 @@ import json
 from pathlib import Path
 import shutil
 
-from myagent.agent import AgentLoop
+from myagent.agent import AgentLoop, ContextBudget, ContextBuilder
 from myagent.bus import InboundMessage, MessageBus
 
 from myagent.providers import EchoProvider
 from myagent.providers.base import ProviderResponse, ToolCall
+from myagent.skills import SkillRegistry
+from myagent.skills.entries import SkillEntry
 from myagent.tools import create_default_registry
 from myagent.tracing import JsonlTraceStore
 
@@ -192,3 +194,89 @@ async def test_agent_loop_records_max_iteration_stop_and_repeated_tool_warning()
     assert completed["data"]["tool_call_count"] == 3
     assert completed["data"]["tool_error_count"] == 0
     assert "repeated_tool_call:read_file" in completed["data"]["warnings"]
+
+
+async def test_agent_loop_records_context_dropped_trace_event() -> None:
+    root = make_workspace("context-dropped")
+    bus = MessageBus()
+    skill_registry = SkillRegistry(
+        [
+            SkillEntry(
+                id="large-skill",
+                name="large-skill",
+                description="Use this skill when " + ("the task is large. " * 80),
+                path=Path("skills/large-skill/SKILL.md"),
+            )
+        ]
+    )
+    context_builder = ContextBuilder(
+        identity="ID",
+        delegation_policy=None,
+        skill_registry=skill_registry,
+        budget=ContextBudget(max_prompt_tokens=20, chars_per_token=4),
+    )
+    agent = AgentLoop(
+        bus,
+        provider=EchoProvider(),
+        context_builder=context_builder,
+        skill_registry=skill_registry,
+        trace_store=JsonlTraceStore(root),
+    )
+
+    await bus.publish_inbound(make_message("hello"))
+    await agent.process_next()
+
+    events = read_events(root / "cli_default.jsonl")
+    dropped = next(event for event in events if event["event"] == "context_dropped")
+    assert dropped["data"]["max_prompt_tokens"] == 20
+    assert dropped["data"]["estimated_tokens_before"] > dropped["data"]["estimated_tokens_after"]
+    assert dropped["data"]["dropped_sections"][0]["name"] == "Available Skills"
+    assert dropped["data"]["dropped_sections"][0]["reason"] == "budget_exceeded"
+
+
+class LargeTraceToolProvider:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def generate(self, messages):
+        return "fallback"
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-large",
+                        name="read_file",
+                        arguments={"path": "large.txt"},
+                    )
+                ]
+            )
+        return ProviderResponse(content="Done.")
+
+
+async def test_agent_loop_does_not_compact_tool_result_before_next_call() -> None:
+    root = make_workspace("working-context-not-compacted")
+    workspace = root / "workspace"
+    workspace.mkdir()
+    (workspace / "large.txt").write_text("x" * 200, encoding="utf-8")
+    bus = MessageBus()
+    context_builder = ContextBuilder(
+        identity="ID",
+        delegation_policy=None,
+        budget=ContextBudget(chars_per_token=1),
+    )
+    agent = AgentLoop(
+        bus,
+        provider=LargeTraceToolProvider(),
+        context_builder=context_builder,
+        tool_registry=create_default_registry(workspace),
+        trace_store=JsonlTraceStore(root / "traces"),
+    )
+
+    await bus.publish_inbound(make_message("read large file"))
+    await agent.process_next()
+
+    events = read_events(root / "traces" / "cli_default.jsonl")
+    assert not any(event["event"] == "working_context_compacted" for event in events)

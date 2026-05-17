@@ -152,11 +152,16 @@ def _latest_turn_html(summary: object | None) -> str:
 def _context_overview_html(context: dict[str, Any], history: dict[str, Any]) -> str:
     warnings = context.get("warnings") or []
     warning_text = ", ".join(str(warning) for warning in warnings) if warnings else "none"
-    history_text = f"{history.get('included_messages') or 0}/{history.get('total_messages') or 0}"
+    history_text = (
+        f"{history.get('included_messages') or 0}/{history.get('total_messages') or 0} "
+        f"reserved={history.get('reserved_tokens') or 0}"
+    )
     return (
         '<div class="context-strip">'
         f"{_metric('Messages', context.get('message_count') or 0)}"
         f"{_metric('Estimated Tokens', context.get('estimated_tokens') or 0)}"
+        f"{_metric('Before Budget', context.get('estimated_tokens_before_budget') or 0)}"
+        f"{_metric('Max Prompt', context.get('max_prompt_tokens') or 'unlimited')}"
         f"{_metric('Total Chars', context.get('total_chars') or 0)}"
         f"{_metric('History', history_text)}"
         f"{_metric('Warnings', warning_text)}"
@@ -176,9 +181,13 @@ def _section_row(section: dict[str, Any], max_tokens: int) -> str:
     tokens = int(section.get("estimated_tokens") or 0)
     width = min(max((tokens / max(max_tokens, 1)) * 100, 2), 100)
     included = "included" if section.get("included") else "dropped"
+    reason = str(section.get("reason") or "")
+    detail = str(section.get("kind") or "")
+    if reason and reason != "included":
+        detail = f"{detail} / {reason}" if detail else reason
     return (
         '<div class="section-row">'
-        f"<span><b>{escape(str(section.get('name') or ''))}</b><em>{included}</em></span>"
+        f"<span><b>{escape(str(section.get('name') or ''))}</b><em>{included}</em><small>{escape(detail)}</small></span>"
         f"<span>{escape(str(section.get('tier') or ''))}</span>"
         f"<span>{escape(str(section.get('source') or ''))}</span>"
         f"<span>{tokens}</span>"
@@ -309,6 +318,7 @@ h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: 0; }
 .section-head { min-height: 38px; background: #ebe4d1; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
 .section-row b { display: block; font-weight: 800; }
 .section-row em { display: block; margin-top: 3px; color: var(--green); font-style: normal; font-size: 12px; }
+.section-row small { display: block; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
 .bar-cell i { display: block; height: 10px; background: linear-gradient(90deg, var(--green), var(--gold)); }
 .bar-cell small { display: block; color: var(--muted); margin-top: 5px; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
@@ -408,6 +418,7 @@ h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: 0; }
 .head { min-height: 36px; background: #e9e1ce; color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; }
 .row b { display: block; }
 .row em { display: block; font-style: normal; color: var(--green); font-size: 12px; margin-top: 3px; }
+.row small { display: block; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
 .bar i { display: block; height: 9px; background: linear-gradient(90deg, var(--green), var(--gold)); }
 .bar small { display: block; margin-top: 5px; color: var(--muted); }
 .events { list-style: none; padding: 0; margin: 0; border: 1px solid var(--line); background: var(--panel); max-height: 620px; overflow: auto; }
@@ -554,8 +565,10 @@ function renderContext(context, sections) {
   document.getElementById('contextSummary').innerHTML = [
     metric('Messages', context.message_count || 0),
     metric('Estimated Tokens', context.estimated_tokens || 0),
+    metric('Before Budget', context.estimated_tokens_before_budget || 0),
+    metric('Max Prompt', context.max_prompt_tokens || 'unlimited'),
     metric('Total Chars', context.total_chars || 0),
-    metric('History', `${history.included_messages || 0}/${history.total_messages || 0}`),
+    metric('History', `${history.included_messages || 0}/${history.total_messages || 0} reserved=${history.reserved_tokens || 0}`),
     metric('Dropped', history.dropped_messages || 0),
     metric('Warnings', warnings.length ? warnings.join(', ') : 'none')
   ].join('');
@@ -575,9 +588,13 @@ function renderContext(context, sections) {
 function sectionRow(section, maxTokens) {
   const tokens = Number(section.estimated_tokens || 0);
   const width = Math.min(Math.max(tokens / maxTokens * 100, 2), 100);
+  const detailParts = [];
+  if (section.kind) detailParts.push(section.kind);
+  if (section.reason && section.reason !== 'included') detailParts.push(section.reason);
+  const detail = detailParts.join(' / ');
   return `
     <div class="row">
-      <span><b>${escapeHtml(section.name || '')}</b><em>${section.included ? 'included' : 'dropped'}</em></span>
+      <span><b>${escapeHtml(section.name || '')}</b><em>${section.included ? 'included' : 'dropped'}</em><small>${escapeHtml(detail)}</small></span>
       <span>${escapeHtml(section.tier || '')}</span>
       <span>${escapeHtml(section.source || '')}</span>
       <span>${tokens}</span>
@@ -608,6 +625,7 @@ function preview(event) {
   if (['tool_call', 'tool_result'].includes(event.event)) return data.tool_name || '';
   if (event.event === 'skill_loaded') return `${data.skill_id || ''} len=${data.content_length || 0}`;
   if (event.event === 'active_skill_set') return `${data.skill_id || ''} scope=${data.scope || ''} reason=${data.reason || ''}`;
+  if (event.event === 'context_dropped') return `sections=${(data.dropped_sections || []).length} history=${data.dropped_history_by_token_budget || 0} tokens=${data.estimated_tokens_before || 0}->${data.estimated_tokens_after || 0}`;
   if (event.event === 'subagent_start') return `${data.agent_type || ''} skills=${JSON.stringify(data.inherited_active_skills || [])}`;
   if (event.event === 'mcp_server_registered') return `${data.server_name || ''} ${data.transport || ''} tools=${data.tool_count || 0}/${data.discovered_tool_count || 0}`;
   if (event.event === 'parse_error') return `line=${data.line}, ${data.error}`;

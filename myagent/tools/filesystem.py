@@ -224,6 +224,9 @@ class ListDirTool(FilesystemTool):
 class ReadFileTool(FilesystemTool):
     """Read a UTF-8 text file with line numbers."""
 
+    _MAX_CHARS = 128_000
+    _DEFAULT_LIMIT = 2000
+
     @property
     def name(self) -> str:
         return "read_file"
@@ -265,7 +268,7 @@ class ReadFileTool(FilesystemTool):
         self,
         path: str,
         offset: int = 1,
-        limit: int = 2000,
+        limit: int | None = None,
         **_: Any,
     ) -> str:
         file_path = self.resolve_any_path(path)
@@ -284,11 +287,36 @@ class ReadFileTool(FilesystemTool):
             return f"Error: offset {offset} is beyond end of file ({len(lines)} lines)"
 
         start = max(offset, 1) - 1
-        end = min(start + limit, len(lines))
+        end = min(start + (limit or self._DEFAULT_LIMIT), len(lines))
         numbered = [f"{line_no}| {line}" for line_no, line in enumerate(lines[start:end], start + 1)]
         result = "\n".join(numbered)
+        truncated_line: int | None = None
+        if len(result) > self._MAX_CHARS:
+            trimmed: list[str] = []
+            char_count = 0
+            for line in numbered:
+                next_count = char_count + len(line) + 1
+                if next_count > self._MAX_CHARS:
+                    break
+                trimmed.append(line)
+                char_count = next_count
+            if trimmed:
+                end = start + len(trimmed)
+                result = "\n".join(trimmed)
+            else:
+                marker = " ... [line truncated to fit read_file response budget]"
+                result = numbered[0][: max(self._MAX_CHARS - len(marker), 1)].rstrip() + marker
+                end = start + 1
+                truncated_line = start + 1
         if end < len(lines):
+            if truncated_line is not None:
+                result += f"\n\n(Line {truncated_line} was truncated to fit the response budget.)"
             result += f"\n\n(Showing lines {offset}-{end} of {len(lines)}. Use offset={end + 1} to continue.)"
+        elif truncated_line is not None:
+            result += (
+                f"\n\n(End of file - {len(lines)} lines total; "
+                f"line {truncated_line} was truncated to fit the response budget)"
+            )
         else:
             result += f"\n\n(End of file - {len(lines)} lines total)"
         return result

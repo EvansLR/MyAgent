@@ -45,6 +45,20 @@ async def test_list_dir_supports_recursive() -> None:
     assert "folder/a.txt" in result.replace("\\", "/")
 
 
+async def test_list_dir_truncates_when_max_entries_is_reached() -> None:
+    workspace = make_workspace("list_truncated")
+    for index in range(5):
+        (workspace / f"{index}.txt").write_text("hello", encoding="utf-8")
+    tool = ListDirTool(workspace)
+
+    result = await tool.execute(".", max_entries=2)
+
+    assert "0.txt" in result
+    assert "1.txt" in result
+    assert "2.txt" not in result
+    assert "(truncated, showing 2 of 5 entries)" in result
+
+
 async def test_read_file_returns_numbered_lines() -> None:
     workspace = make_workspace("read")
     (workspace / "a.txt").write_text("one\ntwo\nthree", encoding="utf-8")
@@ -67,6 +81,34 @@ async def test_read_file_supports_offset_and_limit() -> None:
     assert "2| two" in result
     assert "1| one" not in result
     assert "Use offset=3" in result
+
+
+async def test_read_file_trims_large_line_window_with_continuation_hint() -> None:
+    workspace = make_workspace("read_large_window")
+    (workspace / "big.txt").write_text(
+        "\n".join("x" * 110 for _ in range(2000)),
+        encoding="utf-8",
+    )
+    tool = ReadFileTool(workspace)
+
+    result = await tool.execute("big.txt")
+
+    assert len(result) <= ReadFileTool._MAX_CHARS + 120
+    assert "Use offset=" in result
+    assert "End of file" not in result
+
+
+async def test_read_file_truncates_single_oversized_line_with_marker() -> None:
+    workspace = make_workspace("read_oversized_line")
+    (workspace / "minified.txt").write_text("x" * (ReadFileTool._MAX_CHARS + 1000), encoding="utf-8")
+    tool = ReadFileTool(workspace)
+
+    result = await tool.execute("minified.txt")
+
+    assert len(result) <= ReadFileTool._MAX_CHARS + 140
+    assert "1| " in result
+    assert "line 1 was truncated" in result
+    assert "End of file" in result
 
 
 async def test_read_file_can_read_external_path_without_approval() -> None:

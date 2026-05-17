@@ -187,6 +187,34 @@ class AgentLoop:
                 "context": context_report.to_dict(),
             },
         )
+        if context_report.dropped_sections or context_report.history.dropped_by_token_budget:
+            self._trace(
+                inbound.session_key,
+                turn_id,
+                "context_dropped",
+                {
+                    "dropped_sections": [
+                        {
+                            "name": section.name,
+                            "kind": section.kind,
+                            "tier": section.tier,
+                            "source": section.source,
+                            "reason": section.reason,
+                            "estimated_tokens": section.estimated_tokens,
+                        }
+                        for section in context_report.dropped_sections
+                    ],
+                    "dropped_history_messages": context_report.history.dropped_messages,
+                    "dropped_history_by_token_budget": (
+                        context_report.history.dropped_by_token_budget
+                    ),
+                    "estimated_tokens_before": (
+                        context_report.estimated_tokens_before_budget
+                    ),
+                    "estimated_tokens_after": context_report.estimated_tokens,
+                    "max_prompt_tokens": context_report.max_prompt_tokens,
+                },
+            )
         self._current_turn_key = (inbound.session_key, turn_id)
         try:
             content = await self._generate_with_tools(messages, inbound, turn_state)
