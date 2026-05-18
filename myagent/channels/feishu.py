@@ -6,6 +6,8 @@ import json
 import os
 import re
 import threading
+import time
+from typing import Any
 from uuid import uuid4
 
 import httpx
@@ -28,6 +30,9 @@ _FILE_TYPE_MAP = {
     ".ppt": "ppt",
     ".pptx": "ppt",
 }
+_TOKEN_REFRESH_MARGIN_SECONDS = 300
+_WS_RECONNECT_DELAY_SECONDS = 5
+_FEISHU_TOKEN_ERROR_CODES = {99991663, 99991664, 99991665}
 
 
 def _event_to_text(event) -> str:
@@ -86,10 +91,14 @@ class FeishuChannel(BaseChannel):
             config.get("appSecret") or config.get("app_secret", "")
         )
         self._token: str | None = None
+        self._token_expires_at: float = 0
         self._main_loop: asyncio.AbstractEventLoop | None = None
         self._ws_thread: threading.Thread | None = None
         self._lark_client: Any = None
         self._approval_futures: dict[str, asyncio.Future[bool]] = {}
+        self._ws_connected = False
+        self._last_event_at: float = 0
+        self._last_ws_error: str = ""
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -141,7 +150,7 @@ class FeishuChannel(BaseChannel):
         if msg.metadata.get("kind") == "approval_request":
             await self._send_approval_request(msg)
             return
-        if not self._token:
+        if not await self._ensure_token():
             return
         receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
 
@@ -193,21 +202,49 @@ class FeishuChannel(BaseChannel):
         future = msg.metadata.get("future")
         if not isinstance(future, asyncio.Future):
             return
+        if not await self._ensure_token():
+            if not future.done():
+                future.set_result(False)
+            return
         approval_id = uuid4().hex
         self._approval_futures[approval_id] = future
-        if not self._token:
-            return
         receive_id_type = "chat_id" if msg.chat_id.startswith("oc_") else "open_id"
-        await self._send_message(
+        sent = await self._send_message(
             receive_id_type,
             msg.chat_id,
             "interactive",
             json.dumps(_approval_card(approval_id, msg.content), ensure_ascii=False),
         )
+        if sent is False:
+            self._approval_futures.pop(approval_id, None)
+            if not future.done():
+                future.set_result(False)
 
     async def _send_message(
         self, receive_id_type: str, receive_id: str, msg_type: str, content: str
-    ) -> None:
+    ) -> bool:
+        if not await self._ensure_token():
+            return False
+        return await self._send_message_with_retry(
+            receive_id_type, receive_id, msg_type, content
+        )
+
+    async def _send_message_with_retry(
+        self, receive_id_type: str, receive_id: str, msg_type: str, content: str
+    ) -> bool:
+        ok, should_refresh = await self._post_message(
+            receive_id_type, receive_id, msg_type, content
+        )
+        if ok or not should_refresh:
+            return ok
+        print("[FeishuChannel] tenant_access_token may be expired; refreshing and retrying send.")
+        await self._refresh_token()
+        ok, _ = await self._post_message(receive_id_type, receive_id, msg_type, content)
+        return ok
+
+    async def _post_message(
+        self, receive_id_type: str, receive_id: str, msg_type: str, content: str
+    ) -> tuple[bool, bool]:
         url = (
             "https://open.feishu.cn/open-apis/im/v1/messages"
             f"?receive_id_type={receive_id_type}"
@@ -221,9 +258,25 @@ class FeishuChannel(BaseChannel):
         async with httpx.AsyncClient(timeout=30) as client:
             try:
                 resp = await client.post(url, headers=headers, json=payload)
-                resp.raise_for_status()
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[FeishuChannel] Failed to send {msg_type} message: {exc}")
+                return False, False
+
+        should_refresh = resp.status_code in {401, 403}
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+        code = data.get("code") if isinstance(data, dict) else None
+        if code in _FEISHU_TOKEN_ERROR_CODES:
+            should_refresh = True
+        if resp.status_code >= 400 or (isinstance(code, int) and code != 0):
+            print(
+                "[FeishuChannel] Feishu send failed: "
+                f"status={resp.status_code}, code={code}, body={resp.text[:500]}"
+            )
+            return False, should_refresh
+        return True, False
 
     def _upload_image_sync(self, file_path: str) -> str | None:
         from lark_oapi.api.im.v1 import CreateImageRequest, CreateImageRequestBody
@@ -290,6 +343,22 @@ class FeishuChannel(BaseChannel):
             )
             data = resp.json()
             self._token = data.get("tenant_access_token")
+            expire = int(data.get("expire") or 7200)
+            self._token_expires_at = time.time() + expire
+
+    async def _ensure_token(self) -> bool:
+        if not self.app_id or not self.app_secret:
+            return False
+        if self._token and self._token_expires_at == 0:
+            return True
+        if self._token and time.time() < self._token_expires_at - _TOKEN_REFRESH_MARGIN_SECONDS:
+            return True
+        try:
+            await self._refresh_token()
+        except Exception as exc:
+            print(f"[FeishuChannel] Failed to refresh tenant_access_token: {exc}")
+            return bool(self._token)
+        return bool(self._token)
 
     def _run_ws_sync(self) -> None:
         """Run the lark-oapi WS client in a dedicated thread with its own loop."""
@@ -303,20 +372,41 @@ class FeishuChannel(BaseChannel):
         ws_client.loop = new_loop
         asyncio.set_event_loop(new_loop)
 
-        builder = EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(
-            self._on_message
-        )
-        if hasattr(builder, "register_p2_card_action_trigger"):
-            builder = builder.register_p2_card_action_trigger(self._on_card_action)
-        handler = builder.build()
+        try:
+            while self._running:
+                builder = EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(
+                    self._on_message
+                )
+                if hasattr(builder, "register_p2_card_action_trigger"):
+                    builder = builder.register_p2_card_action_trigger(self._on_card_action)
+                handler = builder.build()
 
-        client = WSClient(
-            self.app_id,
-            self.app_secret,
-            event_handler=handler,
-            auto_reconnect=True,
-        )
-        client.start()
+                client = WSClient(
+                    self.app_id,
+                    self.app_secret,
+                    event_handler=handler,
+                    auto_reconnect=True,
+                )
+                self._ws_connected = True
+                try:
+                    print("[FeishuChannel] WebSocket client starting.")
+                    client.start()
+                    if self._running:
+                        self._last_ws_error = "WebSocket client returned unexpectedly."
+                        print(f"[FeishuChannel] {self._last_ws_error}")
+                except Exception as exc:
+                    self._last_ws_error = str(exc)
+                    print(f"[FeishuChannel] WebSocket error: {exc}")
+                finally:
+                    self._ws_connected = False
+
+                if self._running:
+                    time.sleep(_WS_RECONNECT_DELAY_SECONDS)
+        finally:
+            try:
+                new_loop.close()
+            except Exception:
+                pass
 
     def _on_message(self, event) -> None:
         """Callback invoked by lark-oapi when a message arrives.
@@ -328,6 +418,7 @@ class FeishuChannel(BaseChannel):
             text = _event_to_text(event)
             if not text:
                 return
+            self._last_event_at = time.time()
             sender = ""
             chat_id = ""
             try:

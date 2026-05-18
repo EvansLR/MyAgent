@@ -1,5 +1,6 @@
 """Tests for FeishuChannel."""
 
+import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
@@ -112,8 +113,14 @@ class TestFeishuChannel:
         ))
 
     @pytest.mark.asyncio
-    async def test_send_approval_request_stores_future_without_token(self, channel):
+    async def test_send_approval_request_denies_when_token_unavailable(self, channel):
         future = asyncio.get_running_loop().create_future()
+
+        async def fake_ensure_token():
+            return False
+
+        channel._ensure_token = fake_ensure_token
+
         await channel.send(
             OutboundMessage(
                 channel="feishu",
@@ -122,7 +129,8 @@ class TestFeishuChannel:
                 metadata={"kind": "approval_request", "future": future},
             )
         )
-        assert len(channel._approval_futures) == 1
+        assert future.result() is False
+        assert channel._approval_futures == {}
 
     @pytest.mark.asyncio
     async def test_send_approval_request_uses_interactive_card(self, channel):
@@ -148,6 +156,27 @@ class TestFeishuChannel:
         assert sent[0][3]["header"]["title"]["content"] == "MyAgent 权限审批"
 
     @pytest.mark.asyncio
+    async def test_send_approval_request_denies_when_card_send_fails(self, channel):
+        future = asyncio.get_running_loop().create_future()
+        channel._token = "token"
+
+        async def fake_send_message(receive_id_type, receive_id, msg_type, content):
+            return False
+
+        channel._send_message = fake_send_message
+        await channel.send(
+            OutboundMessage(
+                channel="feishu",
+                chat_id="oc_123",
+                content="Approve command",
+                metadata={"kind": "approval_request", "future": future},
+            )
+        )
+
+        assert future.result() is False
+        assert channel._approval_futures == {}
+
+    @pytest.mark.asyncio
     async def test_send_markdown_uses_post_message(self, channel):
         channel._token = "token"
         sent = []
@@ -166,6 +195,46 @@ class TestFeishuChannel:
 
         assert sent[0][2] == "post"
         assert sent[0][3]["zh_cn"]["content"][0][0]["text"] == "Title"
+
+    @pytest.mark.asyncio
+    async def test_send_message_refreshes_token_and_retries(self, channel):
+        channel._token = "old-token"
+        calls = []
+        refreshed = []
+
+        async def fake_post_message(receive_id_type, receive_id, msg_type, content):
+            calls.append((receive_id_type, receive_id, msg_type, content, channel._token))
+            if len(calls) == 1:
+                return False, True
+            return True, False
+
+        async def fake_refresh_token():
+            refreshed.append(True)
+            channel._token = "new-token"
+
+        channel._post_message = fake_post_message
+        channel._refresh_token = fake_refresh_token
+
+        await channel._send_message("chat_id", "oc_123", "text", '{"text":"hi"}')
+
+        assert refreshed == [True]
+        assert len(calls) == 2
+        assert calls[0][-1] == "old-token"
+        assert calls[1][-1] == "new-token"
+
+    @pytest.mark.asyncio
+    async def test_ensure_token_uses_existing_token_without_expiry(self, channel):
+        channel._token = "manual-token"
+        called = False
+
+        async def fake_refresh_token():
+            nonlocal called
+            called = True
+
+        channel._refresh_token = fake_refresh_token
+
+        assert await channel._ensure_token() is True
+        assert called is False
 
     def test_card_action_resolves_pending_future(self, channel):
         loop = asyncio.new_event_loop()
@@ -206,7 +275,8 @@ class TestFeishuChannel:
         )
         await channel._handle_message("u1", "c1", "/new")
         assert channel._session_indices.get("u1") == 1
-        assert bus.inbound_size == 0
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_inbound(), timeout=0.01)
 
     @pytest.mark.asyncio
     async def test_feishu_session_override(self, bus):
