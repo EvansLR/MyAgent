@@ -9,9 +9,12 @@ import re
 from uuid import uuid4
 
 
-CORE_MEMORY_SECTIONS = ("Profile", "Active Goals", "Preferences", "Facts", "Notes")
-OLD_MEMORY_SECTIONS = ("Core Memory", "User Profile", "Active Goals", "Decisions", "Reference Notes")
+VISIBLE_MEMORY_SECTIONS = ("Always", "Now")
+SEARCHABLE_MEMORY_SECTIONS = ("Later",)
+MEMORY_HEADER = "# Memory"
 PROPOSALS_HEADER = "# Memory Proposals"
+ALWAYS_MEMORY_CHAR_BUDGET = 4000
+NOW_MEMORY_CHAR_BUDGET = 8000
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,11 +32,9 @@ class MarkdownMemoryStore:
     """Store human-reviewable personal memory in local Markdown files."""
 
     def __init__(self, root: Path | str | None = None) -> None:
-        root = root or (Path.home() / ".myagent" / "workspace")
-        self.root = Path(root)
+        self.root = Path(root) if root is not None else Path.home() / ".myagent" / "memory"
         self.memory_path = self.root / "MEMORY.md"
         self.proposals_path = self.root / "MEMORY_PROPOSALS.md"
-        self.legacy_dreams_path = self.root / "DREAMS.md"
         self.dreams_path = self.proposals_path
         self.daily_dir = self.root / "daily"
 
@@ -41,22 +42,9 @@ class MarkdownMemoryStore:
         """Create the default local memory files if they do not exist."""
         self.daily_dir.mkdir(parents=True, exist_ok=True)
         if not self.memory_path.exists():
-            self.memory_path.parent.mkdir(parents=True, exist_ok=True)
-            self.memory_path.write_text(
-                "# 长期记忆\n\n"
-                "## Profile\n\n"
-                "## Active Goals\n\n"
-                "## Preferences\n\n"
-                "## Facts\n\n"
-                "## Notes\n",
-                encoding="utf-8",
-            )
+            self.memory_path.write_text(_default_memory_text(), encoding="utf-8")
         if not self.proposals_path.exists():
-            proposals_text = f"{PROPOSALS_HEADER}\n\n"
-            if self.legacy_dreams_path.exists():
-                legacy_text = self.legacy_dreams_path.read_text(encoding="utf-8")
-                proposals_text = legacy_text.replace("# Memory Dreams", PROPOSALS_HEADER, 1)
-            self.proposals_path.write_text(proposals_text, encoding="utf-8")
+            self.proposals_path.write_text(f"{PROPOSALS_HEADER}\n\n", encoding="utf-8")
 
     def read_core_memory(self) -> str:
         """Return the high-signal sections that should enter the system prompt."""
@@ -64,12 +52,7 @@ class MarkdownMemoryStore:
             return ""
         sections = _parse_markdown_sections(self.memory_path.read_text(encoding="utf-8"))
         parts: list[str] = []
-        for name in CORE_MEMORY_SECTIONS:
-            content = sections.get(name, "").strip()
-            if content:
-                parts.append(f"## {name}\n\n{content}")
-        # Fallback: read old sections for backward compatibility until consolidation runs
-        for name in OLD_MEMORY_SECTIONS:
+        for name in VISIBLE_MEMORY_SECTIONS:
             content = sections.get(name, "").strip()
             if content:
                 parts.append(f"## {name}\n\n{content}")
@@ -156,7 +139,7 @@ class MarkdownMemoryStore:
         """Append one reviewed long-term memory bullet to MEMORY.md."""
         self.ensure_layout()
         clean_content = content.strip()
-        target_section = section.strip() or "Core Memory"
+        target_section = section.strip() or "Later"
         memory_id = f"memory-{uuid4().hex[:8]}"
         marker = f"<!-- id: {memory_id} tags: {', '.join(tags or [])} -->"
         text = self.memory_path.read_text(encoding="utf-8")
@@ -245,7 +228,7 @@ def _records_from_file(root: Path, path: Path) -> list[MarkdownMemoryRecord]:
             continue
         if _looks_like_memory_id(section):
             clean_content = _strip_metadata_block(clean_content)
-        if (section in CORE_MEMORY_SECTIONS or section in OLD_MEMORY_SECTIONS) and path.name == "MEMORY.md":
+        if section in VISIBLE_MEMORY_SECTIONS and path.name == "MEMORY.md":
             continue
         record_id = section if _looks_like_memory_id(section) else f"{relative}#{section}"
         records.append(
@@ -257,6 +240,15 @@ def _records_from_file(root: Path, path: Path) -> list[MarkdownMemoryRecord]:
             )
         )
     return records
+
+
+def _default_memory_text() -> str:
+    return (
+        f"{MEMORY_HEADER}\n\n"
+        "## Always\n\n"
+        "## Now\n\n"
+        "## Later\n"
+    )
 
 
 def _append_to_markdown_section(text: str, section: str, line: str) -> str:

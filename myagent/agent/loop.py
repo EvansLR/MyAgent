@@ -37,7 +37,7 @@ from myagent.tools import (
     create_default_registry,
 )
 from myagent.tracing import JsonlTraceStore, TraceStore
-from myagent.workspace import WorkspaceLoader
+from myagent.profile import ProfileLoader
 
 if TYPE_CHECKING:
     from myagent.cron.service import CronService
@@ -96,7 +96,7 @@ class AgentLoop:
         memory_extractor: MemoryExtractor | None = None,
         skill_registry: SkillRegistry | None = None,
         workspace_root: Path | str | None = None,
-        workspace_loader: WorkspaceLoader | None = None,
+        profile_loader: ProfileLoader | None = None,
         max_tool_iterations: int = MAX_TOOL_ITERATIONS,
         conversation_summary_config: ConversationSummaryConfig | None = None,
         cron_service: "CronService | None" = None,
@@ -114,7 +114,7 @@ class AgentLoop:
             self.markdown_memory_store,
         )
         self.skill_registry = skill_registry or SkillRegistry.from_directory()
-        self.workspace_loader = workspace_loader or WorkspaceLoader()
+        self.profile_loader = profile_loader or ProfileLoader()
         self._current_summary_session_key: str | None = None
         self._conversation_summaries: dict[str, ConversationSummaryState] = {}
         self.conversation_summary_config = (
@@ -130,7 +130,7 @@ class AgentLoop:
             conversation_summary_provider=self._current_conversation_summary_context,
             active_skills_provider=self._current_active_skills_context,
             skill_registry=self.skill_registry,
-            workspace_provider=self.workspace_loader,
+            profile_provider=self.profile_loader,
         )
         if self.context_builder.conversation_summary_provider is None:
             self.context_builder.conversation_summary_provider = (
@@ -200,14 +200,15 @@ class AgentLoop:
         self._trace(
             inbound.session_key,
             turn_id,
-            "workspace_loaded",
-            self.workspace_loader.to_trace_data(),
+            "profile_loaded",
+            self.profile_loader.to_trace_data(),
         )
         history = self._history_for(inbound.session_key)
+        visible_history = self._history_for_context(inbound.session_key, history)
         self._current_summary_session_key = inbound.session_key
         messages, context_report = self.context_builder.build_messages_with_report(
             inbound,
-            history,
+            visible_history,
         )
         self.context_builder.last_report = context_report
         self._trace(
@@ -217,6 +218,8 @@ class AgentLoop:
             {
                 "message_count": len(messages),
                 "roles": [message.get("role") for message in messages],
+                "full_history_messages": len(history),
+                "visible_history_messages": len(visible_history),
                 "context": context_report.to_dict(),
             },
         )
@@ -552,9 +555,17 @@ class AgentLoop:
     def _history_for(self, session_key: str) -> list[Message]:
         return self._history.setdefault(session_key, [])
 
+    def _history_for_context(self, session_key: str, history: list[Message]) -> list[Message]:
+        """Return raw history not already covered by the session summary."""
+        state = self._conversation_summaries.get(session_key)
+        if state is None:
+            return history
+        start = min(max(state.summarized_message_count, 0), len(history))
+        return history[start:]
+
     def _create_default_cron_service(self):
         from myagent.cron.service import CronService
-        store_path = Path.home() / ".myagent" / "workspace" / "cron" / "jobs.json"
+        store_path = Path.home() / ".myagent" / "runtime" / "cron" / "jobs.json"
         return CronService(
             store_path=store_path,
             on_job=self._on_cron_job,

@@ -45,7 +45,7 @@ class ContextItemKind(StrEnum):
     SESSION_SUMMARY = "session_summary"
     SESSION_HISTORY = "session_history"
     CURRENT_INPUT = "current_input"
-    WORKSPACE = "workspace"
+    PROFILE = "profile"
 
 
 class ContextRetentionPolicy(StrEnum):
@@ -75,7 +75,7 @@ class ContextBudget:
     """Budget knobs for first-stage context selection."""
 
     max_prompt_tokens: int | None = 6000
-    max_history_messages: int = 20
+    max_history_messages: int | None = None
     chars_per_token: int = 4
     history_token_ratio: float = 0.35
 
@@ -193,7 +193,7 @@ class ContextBuilder:
         active_skills_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
         budget: ContextBudget | None = None,
-        workspace_provider: Any | None = None,
+        profile_provider: Any | None = None,
     ) -> None:
         self.identity = identity or (
             "You are MyAgent, a lightweight ReAct agent runtime for learning "
@@ -207,7 +207,7 @@ class ContextBuilder:
         self.active_skills_provider = active_skills_provider
         self.skill_registry = skill_registry
         self.budget = budget or ContextBudget()
-        self.workspace_provider = workspace_provider
+        self.profile_provider = profile_provider
         self.last_report: ContextAssemblyReport | None = None
 
     def build_sections(self) -> list[ContextSection]:
@@ -223,8 +223,8 @@ class ContextBuilder:
                 policy=ContextRetentionPolicy.NEVER_DROP,
             ),
         ]
-        workspace_sections = self._build_workspace_sections()
-        sections.extend(workspace_sections)
+        profile_sections = self._build_profile_sections()
+        sections.extend(profile_sections)
         if self.runtime_environment:
             sections.append(
                 ContextSection(
@@ -237,7 +237,6 @@ class ContextBuilder:
                     policy=ContextRetentionPolicy.NEVER_DROP,
                 )
             )
-        core_memory = self.read_core_memory()
         if self.delegation_policy:
             sections.append(
                 ContextSection(
@@ -250,6 +249,7 @@ class ContextBuilder:
                     policy=ContextRetentionPolicy.NEVER_DROP,
                 )
             )
+        core_memory = self.read_core_memory()
         if core_memory:
             sections.append(
                 ContextSection(
@@ -318,9 +318,6 @@ class ContextBuilder:
         raw_history = history or []
         current_tokens = _estimate_tokens(current_message.content, self.budget.chars_per_token)
         system_items = self._items_from_sections(self.build_sections())
-        message_limited_history, message_limit_dropped = self._limit_history_by_message_count(
-            raw_history
-        )
         full_system_prompt = self._render_system_prompt(
             sorted(
                 [item for item in system_items if item.content.strip()],
@@ -331,11 +328,11 @@ class ContextBuilder:
             _estimate_tokens(full_system_prompt, self.budget.chars_per_token)
             + sum(
                 _estimate_tokens(str(message.get("content", "")), self.budget.chars_per_token)
-                for message in message_limited_history
+                for message in raw_history
             )
             + current_tokens
         )
-        history_reserved_tokens = self._history_reserved_tokens(message_limited_history)
+        history_reserved_tokens = self._history_reserved_tokens(raw_history)
         selected_items, section_reports, section_warnings = self._select_system_items(
             system_items,
             reserved_tokens=current_tokens + history_reserved_tokens,
@@ -351,8 +348,6 @@ class ContextBuilder:
         selected_history, history_report, history_warnings = self.select_history(
             raw_history,
             max_history_tokens=remaining_history_tokens,
-            message_limited_history=message_limited_history,
-            dropped_by_message_limit=message_limit_dropped,
             reserved_history_tokens=history_reserved_tokens,
         )
         warnings = self._combine_warnings(
@@ -378,24 +373,18 @@ class ContextBuilder:
         self,
         history: list[Message],
         max_history_tokens: int | None = None,
-        message_limited_history: list[Message] | None = None,
-        dropped_by_message_limit: int | None = None,
         reserved_history_tokens: int = 0,
     ) -> tuple[list[Message], ContextHistoryReport, list[str]]:
         """Select the history slice visible to the current model call."""
-        max_messages = max(self.budget.max_history_messages, 0)
-        if message_limited_history is None or dropped_by_message_limit is None:
-            message_limited_history, dropped_by_message_limit = self._limit_history_by_message_count(
-                history
-            )
         if max_history_tokens is None:
-            selected = list(message_limited_history)
+            selected = list(history)
             dropped_by_token_budget = 0
         else:
             selected, dropped_by_token_budget = self._limit_history_by_token_count(
-                message_limited_history,
+                history,
                 max_history_tokens,
             )
+        selected, dropped_by_message_limit = self._limit_history_by_message_count(selected)
         selected = _drop_invalid_leading_history(selected)
         dropped = len(history) - len(selected)
         estimated_tokens = sum(
@@ -413,7 +402,7 @@ class ContextBuilder:
                 total_messages=len(history),
                 included_messages=len(selected),
                 dropped_messages=dropped,
-                max_history_messages=max_messages,
+                max_history_messages=self.budget.max_history_messages or 0,
                 reserved_tokens=reserved_history_tokens,
                 estimated_tokens=estimated_tokens,
                 dropped_by_message_limit=dropped_by_message_limit,
@@ -530,6 +519,8 @@ class ContextBuilder:
 
     def _limit_history_by_message_count(self, history: list[Message]) -> tuple[list[Message], int]:
         """Apply the configured message-count history window."""
+        if self.budget.max_history_messages is None:
+            return list(history), 0
         max_messages = max(self.budget.max_history_messages, 0)
         dropped = max(len(history) - max_messages, 0)
         selected = history[-max_messages:] if max_messages else []
@@ -581,25 +572,25 @@ class ContextBuilder:
                 warnings.append(warning)
         return warnings
 
-    def _build_workspace_sections(self) -> list[ContextSection]:
-        """Build workspace-derived sections if a workspace provider is configured."""
-        if self.workspace_provider is None:
+    def _build_profile_sections(self) -> list[ContextSection]:
+        """Build agent profile sections if a profile provider is configured."""
+        if self.profile_provider is None:
             return []
         sections: list[ContextSection] = []
-        agent_principles = self.workspace_provider.load_file("AGENT.md").strip()
+        agent_principles = self.profile_provider.load_file("AGENT.md").strip()
         if agent_principles:
             sections.append(
                 ContextSection(
-                    name="Agent Principles",
+                    name="Agent Instructions",
                     content=agent_principles,
                     priority=5,
                     tier=ContextTier.PROTECTED,
-                    source="workspace:agent",
-                    kind=ContextItemKind.WORKSPACE,
+                    source="profile:agent",
+                    kind=ContextItemKind.PROFILE,
                     policy=ContextRetentionPolicy.NEVER_DROP,
                 )
             )
-        user_profile = self.workspace_provider.load_file("USER.md").strip()
+        user_profile = self.profile_provider.load_file("USER.md").strip()
         if user_profile:
             sections.append(
                 ContextSection(
@@ -607,12 +598,12 @@ class ContextBuilder:
                     content=user_profile,
                     priority=7,
                     tier=ContextTier.PROTECTED,
-                    source="workspace:user",
-                    kind=ContextItemKind.WORKSPACE,
+                    source="profile:user",
+                    kind=ContextItemKind.PROFILE,
                     policy=ContextRetentionPolicy.NEVER_DROP,
                 )
             )
-        tool_guidelines = self.workspace_provider.load_file("TOOLS.md").strip()
+        tool_guidelines = self.profile_provider.load_file("TOOLS.md").strip()
         if tool_guidelines:
             sections.append(
                 ContextSection(
@@ -620,8 +611,8 @@ class ContextBuilder:
                     content=tool_guidelines,
                     priority=35,
                     tier=ContextTier.MEDIUM,
-                    source="workspace:tools",
-                    kind=ContextItemKind.WORKSPACE,
+                    source="profile:tools",
+                    kind=ContextItemKind.PROFILE,
                     policy=ContextRetentionPolicy.DROP_IF_NEEDED,
                 )
             )

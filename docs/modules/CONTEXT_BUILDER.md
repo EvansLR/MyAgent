@@ -896,7 +896,7 @@ max_prompt_tokens = 6000
 always keep:
   Identity
   Runtime Environment
-  Agent Principles
+  Agent Instructions
   User Profile
   Delegation Policy
   current user message
@@ -1109,7 +1109,7 @@ ContextItemKind
   active_skill
   session_history
   current_input
-  workspace
+  profile
 
 ContextRetentionPolicy
   never_drop
@@ -1180,7 +1180,7 @@ high / medium / low / ephemeral
 ```text
 Identity
 Runtime Environment
-Agent Principles
+Agent Instructions
 User Profile
 Delegation Policy
 ```
@@ -2166,3 +2166,58 @@ Full verification：
 python -m pytest
 216 passed
 ```
+## 2026-05-18 Update: Profile / Memory / Runtime Boundaries
+
+Current ContextBuilder input boundaries are intentionally split:
+
+```text
+profile
+  ~/.myagent/profile/AGENT.md
+  ~/.myagent/profile/USER.md
+  ~/.myagent/profile/TOOLS.md
+
+memory
+  ~/.myagent/memory/MEMORY.md
+  ~/.myagent/memory/MEMORY_PROPOSALS.md
+  ~/.myagent/memory/daily/YYYY-MM-DD.md
+
+runtime
+  session history
+  conversation summary
+  active skills
+  tool results
+  ~/.myagent/runtime/cron/jobs.json
+```
+
+Rules:
+- `AGENTS.md` is repository collaboration guidance for coding agents. It is not injected into MyAgent runtime prompts.
+- `AGENT.md` is the MyAgent runtime profile file. It maps to the `Agent Instructions` context section.
+- `USER.md` is stable user profile information. It maps to the `User Profile` context section.
+- `TOOLS.md` is stable tool usage guidance. It maps to the `Tool Guidelines` context section.
+- `MEMORY.md` is durable memory. Only high-signal core sections are injected by default; larger memory material is retrieved with memory tools.
+- Session history and summaries are runtime state, not durable memory.
+
+## 2026-05-18 Update: Token-First History Selection
+
+History selection now follows the mature agent pattern more closely:
+
+```text
+Conversation Summary
++ token-budgeted raw history not covered by the summary
++ current user message
+```
+
+The default `max_history_messages` cap is disabled. ContextBuilder first uses
+the available token budget to keep as much recent raw history as fits. A message
+count cap can still be configured as an explicit safety valve, but it is no
+longer applied before token selection by default.
+
+When a session summary exists, `AgentLoop` passes only the raw history after
+`summarized_message_count` into ContextBuilder. Older messages are represented
+by the `Conversation Summary` section instead of being repeated as raw chat
+messages.
+
+Renaming:
+- Runtime profile files are loaded by `myagent.profile.ProfileLoader`.
+- There is no `~/.myagent/workspace/` fallback for runtime profile files.
+- Code workspace / filesystem workspace still means the current project root used by filesystem tools.

@@ -19,47 +19,70 @@ def make_workspace(name: str) -> Path:
     return root
 
 
-def test_memory_store_migrates_legacy_dreams_file_to_proposals() -> None:
-    root = make_workspace("legacy-dreams")
-    (root / "DREAMS.md").write_text(
-        "# Memory Dreams\n\n"
-        "## proposal-legacy\n\n"
-        "- target_section: Facts\n\n"
-        "Legacy proposal text.\n",
-        encoding="utf-8",
-    )
+def test_memory_store_creates_proposals_file() -> None:
+    root = make_workspace("proposals")
 
     MarkdownMemoryStore(root).ensure_layout()
 
     proposals = (root / "MEMORY_PROPOSALS.md").read_text(encoding="utf-8")
-    assert "# Memory Proposals" in proposals
-    assert "Legacy proposal text." in proposals
+    assert proposals == "# Memory Proposals\n\n"
+
+
+def test_default_memory_store_uses_dedicated_memory_directory(monkeypatch) -> None:
+    home = make_workspace("home-default")
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    store = MarkdownMemoryStore()
+    store.ensure_layout()
+
+    assert store.root == home / ".myagent" / "memory"
+    assert (store.root / "MEMORY.md").exists()
+    assert (store.root / "MEMORY.md").read_text(encoding="utf-8") == (
+        "# Memory\n\n## Always\n\n## Now\n\n## Later\n"
+    )
+
+
+def test_default_memory_store_does_not_read_legacy_workspace_memory(monkeypatch) -> None:
+    home = make_workspace("home-no-migrate")
+    legacy = home / ".myagent" / "workspace"
+    legacy.mkdir(parents=True)
+    (legacy / "MEMORY.md").write_text(
+        "# Long-term Memory\n\n## Profile\n\n- Legacy profile.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Path, "home", lambda: home)
+
+    store = MarkdownMemoryStore()
+    store.ensure_layout()
+
+    assert "Legacy profile" not in (store.root / "MEMORY.md").read_text(encoding="utf-8")
+    assert not (store.root / "daily" / "2026-05-18.md").exists()
 
 
 async def test_memory_tools_append_search_and_get() -> None:
     store = MarkdownMemoryStore(make_workspace("search"))
 
     append_result = await MemoryAppendDailyTool(store).execute(
-        note="用户正在准备 Java 后端面试。",
+        note="User is preparing for a Java backend interview.",
         tags=["interview"],
         importance=4,
     )
-    search_result = await MemorySearchTool(store).execute(query="Java 面试")
+    search_result = await MemorySearchTool(store).execute(query="Java interview")
 
     memory_id = append_result.split(" ")[3]
     get_result = await MemoryGetTool(store).execute(memory_id=memory_id)
 
     assert "Saved daily memory" in append_result
     assert memory_id in search_result
-    assert "用户正在准备 Java 后端面试。" in get_result
+    assert "User is preparing for a Java backend interview." in get_result
 
 
 async def test_memory_tool_saves_explicit_long_term_memory() -> None:
     store = MarkdownMemoryStore(make_workspace("proposal"))
 
     result = await MemoryProposeLongTermTool(store).execute(
-        content="用户偏好文档优先。",
-        section="Profile",
+        content="User prefers documentation-first changes.",
+        section="Always",
         tags=["preference"],
         importance=4,
         apply=True,
@@ -67,16 +90,32 @@ async def test_memory_tool_saves_explicit_long_term_memory() -> None:
 
     memory = (store.root / "MEMORY.md").read_text(encoding="utf-8")
     assert "Saved long-term memory" in result
-    assert "用户偏好文档优先。" in memory
-    assert "## Profile" in store.read_core_memory()
+    assert "User prefers documentation-first changes." in memory
+    assert "## Always" in store.read_core_memory()
+
+
+async def test_memory_later_is_searchable_but_not_visible_by_default() -> None:
+    store = MarkdownMemoryStore(make_workspace("later"))
+
+    await MemoryProposeLongTermTool(store).execute(
+        content="Old Feishu gateway notes are useful for interview examples.",
+        section="Later",
+        tags=["project"],
+        importance=3,
+        apply=True,
+    )
+
+    assert "Feishu gateway" not in store.read_core_memory()
+    search_result = await MemorySearchTool(store).execute(query="Feishu gateway")
+    assert "Feishu gateway" in search_result
 
 
 async def test_memory_tool_can_create_unapplied_long_term_proposal() -> None:
     store = MarkdownMemoryStore(make_workspace("unapplied-proposal"))
 
     result = await MemoryProposeLongTermTool(store).execute(
-        content="用户可能在准备 Java 后端面试。",
-        section="Facts",
+        content="User may be preparing for a Java backend interview.",
+        section="Later",
         tags=["candidate"],
         importance=2,
         apply=False,
@@ -85,8 +124,8 @@ async def test_memory_tool_can_create_unapplied_long_term_proposal() -> None:
     proposals = (store.root / "MEMORY_PROPOSALS.md").read_text(encoding="utf-8")
     memory = (store.root / "MEMORY.md").read_text(encoding="utf-8")
     assert "Created long-term memory proposal" in result
-    assert "用户可能在准备 Java 后端面试。" in proposals
-    assert "用户可能在准备 Java 后端面试。" not in memory
+    assert "User may be preparing for a Java backend interview." in proposals
+    assert "User may be preparing for a Java backend interview." not in memory
 
 
 async def test_memory_tool_defaults_to_long_term_proposal() -> None:
@@ -94,7 +133,7 @@ async def test_memory_tool_defaults_to_long_term_proposal() -> None:
 
     result = await MemoryProposeLongTermTool(store).execute(
         content="User prefers small incremental implementation.",
-        section="Preferences",
+        section="Always",
         tags=["workflow"],
         importance=3,
     )
@@ -109,20 +148,22 @@ async def test_memory_tool_defaults_to_long_term_proposal() -> None:
 async def test_memory_tool_forgets_matching_memory() -> None:
     store = MarkdownMemoryStore(make_workspace("forget"))
     await MemoryProposeLongTermTool(store).execute(
-        content="用户正在准备 Java 后端面试。",
-        section="Active Goals",
+        content="User is preparing for a Java backend interview.",
+        section="Now",
         tags=["interview"],
         importance=4,
         apply=True,
     )
     await MemoryAppendDailyTool(store).execute(
-        note="用户正在准备 Java 后端面试。",
+        note="User is preparing for a Java backend interview.",
         tags=["interview"],
         importance=2,
     )
 
-    result = await MemoryForgetTool(store).execute(query="Java 后端面试")
+    result = await MemoryForgetTool(store).execute(query="Java backend interview")
 
     assert "Forgot 2 markdown memory item" in result
-    assert "Java 后端面试" not in (store.root / "MEMORY.md").read_text(encoding="utf-8")
-    assert store.search("Java 后端面试") == []
+    assert "Java backend interview" not in (store.root / "MEMORY.md").read_text(
+        encoding="utf-8"
+    )
+    assert store.search("Java backend interview") == []

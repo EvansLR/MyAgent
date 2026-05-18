@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
-from myagent.memory.markdown import PROPOSALS_HEADER, MarkdownMemoryStore
+from myagent.memory.markdown import (
+    ALWAYS_MEMORY_CHAR_BUDGET,
+    MEMORY_HEADER,
+    NOW_MEMORY_CHAR_BUDGET,
+    PROPOSALS_HEADER,
+    MarkdownMemoryStore,
+)
 from myagent.providers.base import BaseProvider
 
 
@@ -13,36 +18,49 @@ _CONSOLIDATION_SYSTEM_PROMPT = """You are MyAgent's memory consolidation engine.
 
 Your task is to review pending memory proposals and merge them into the current long-term memory.
 
+SECTION DECISION:
+- Extractors and tools may suggest Always, Now, or Later, but those suggestions are hints.
+- You are responsible for placing each item in the section that best matches its durability and prompt value.
+
 RULES:
-1. Read the current long-term memory and the pending proposals carefully.
-2. Merge proposals into the appropriate sections. Each proposal has a target_section indicating where it belongs.
+1. Read the current memory and the pending proposals carefully.
+2. Merge proposals into Always, Now, or Later. Treat target_section as a hint, not a command.
 3. DEDUPLICATE: do not keep redundant or near-duplicate information.
 4. RESOLVE CONFLICTS: when proposals contradict each other, keep the most accurate/recent one. Discard outdated or wrong information.
 5. DISCARD low-quality proposals (importance < 2, vague, or irrelevant).
-6. Keep each section concise. Bullet points are preferred.
+6. Keep Always and Now within their prompt budgets. Bullet points are preferred.
 7. Output ONLY the complete new MEMORY.md content. No extra commentary.
 
+WHEN A VISIBLE SECTION IS TOO LARGE:
+1. Merge duplicates and near-duplicates.
+2. Compress related details into one higher-level bullet.
+3. Demote stale or lower-value Always items to Now or Later.
+4. Demote completed or no-longer-active Now items to Later.
+5. Discard only low-quality, contradicted, or obsolete information.
+Do not delete an item merely because it is old.
+
 MEMORY STRUCTURE (use exactly these section headings):
-# 长期记忆
+# Memory
 
-## Profile
-User identity, name, role, background.
+## Always
+Stable, high-signal information that should be visible in every conversation.
+Keep this very short. Prefer durable user preferences, identity/background, and
+standing collaboration rules. Target budget: {always_budget} characters.
 
-## Active Goals
-Current long-term goals the user is pursuing.
+## Now
+Current stage, active project state, open loops, and recent decisions that should
+stay visible for the next few sessions. Target budget: {now_budget} characters.
 
-## Preferences
-Stable preferences: tech stack, communication style, path aliases, etc.
-
-## Facts
-Important facts to remember: file locations, project info, decisions.
-
-## Notes
-Reference notes, observations, lower-confidence information.
+## Later
+Useful but non-urgent facts, historical context, references, and lower-confidence
+notes. This section is searchable but not injected into the prompt by default.
 
 If a section has no content after consolidation, keep the heading with a blank line after it.
 Do not add any commentary outside the markdown.
-"""
+""".format(
+    always_budget=ALWAYS_MEMORY_CHAR_BUDGET,
+    now_budget=NOW_MEMORY_CHAR_BUDGET,
+)
 
 
 class MemoryConsolidator:
@@ -76,27 +94,24 @@ class MemoryConsolidator:
             return False
 
         new_memory = response.strip()
-        if not new_memory or "# 长期记忆" not in new_memory:
+        if not new_memory or MEMORY_HEADER not in new_memory:
             return False
 
-        # Write back
         self.store.memory_path.write_text(new_memory + "\n", encoding="utf-8")
 
-        # Archive proposals instead of deleting
         archive_dir = self.store.root / "memory" / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         archive_path = archive_dir / f"MEMORY_PROPOSALS-{timestamp}.md"
         archive_path.write_text(proposals_text + "\n", encoding="utf-8")
 
-        # Clear proposals
         self.store.proposals_path.write_text(f"{PROPOSALS_HEADER}\n\n", encoding="utf-8")
 
         return True
 
     def _build_prompt(self, memory_text: str, proposals_text: str) -> str:
         parts = [
-            "## Current Long-term Memory",
+            "## Current Memory",
             memory_text if memory_text else "(empty)",
             "",
             "## Pending Proposals",

@@ -325,3 +325,36 @@ dbe2f47 feat: add /new command for all channels to start fresh session
 b884876 docs: clarify temporary memory proposals
 b992e5f feat: clarify memory proposal workflow
 ```
+
+## Profile / Memory / Runtime 边界收敛
+
+当前按成熟 coding-agent 工具的做法，把“人写的稳定指令”和“Agent 自己记住的内容”分开：
+
+```text
+~/.myagent/profile/
+  AGENT.md   # MyAgent 运行时身份、原则、行为风格
+  USER.md    # 用户资料和稳定偏好
+  TOOLS.md   # 工具使用提示
+
+~/.myagent/memory/
+  MEMORY.md
+  MEMORY_PROPOSALS.md
+  daily/YYYY-MM-DD.md
+
+~/.myagent/runtime/
+  cron/jobs.json
+```
+
+语义边界：
+- `AGENTS.md` 是开发这个 repo 的协作规则，不进入 MyAgent runtime prompt。
+- `profile/AGENT.md` 是 MyAgent 运行时 profile，类似 Claude Code 的 `CLAUDE.md` / Cursor rules。
+- `memory/MEMORY.md` 是长期记忆，只存用户偏好、长期事实、稳定目标。
+- session history、conversation summary、active skills 是进程内 session state，不是 long-term memory。
+- trace、cron jobs 是 runtime data，不是 memory。
+
+重命名策略：
+- 不保留 `~/.myagent/workspace/` runtime 兼容读取，避免 workspace 概念继续污染 profile / memory / runtime。
+- 旧 profile 文件需要手动移动到 `~/.myagent/profile/`。
+- 旧 memory 文件需要手动移动到 `~/.myagent/memory/`。
+- 旧 cron 文件需要手动移动到 `~/.myagent/runtime/cron/jobs.json`。
+- 代码层删除 `myagent.workspace.WorkspaceLoader`，改为 `myagent.profile.ProfileLoader`。

@@ -42,7 +42,7 @@ class MemoryExtractor:
             importance = _as_int(item.get("importance"), default=1)
             target = str(item.get("target", "daily")).strip().lower()
             if target == "long_term":
-                section = str(item.get("section", "Facts")).strip() or "Facts"
+                section = str(item.get("section", "Later")).strip() or "Later"
                 record = self.store.propose_long_term(
                     content=content,
                     section=section,
@@ -65,7 +65,7 @@ class MemoryExtractor:
 _EXTRACTOR_SYSTEM_PROMPT = """You are MyAgent's memory extractor.
 Extract only information that is likely to help MyAgent serve the user in future turns.
 Return strict JSON only:
-{"items":[{"content":"short standalone memory","target":"daily|long_term","section":"Facts","importance":1,"tags":["tag"]}]}
+{"items":[{"content":"short standalone memory","target":"daily|long_term","section":"Later","importance":1,"tags":["tag"]}]}
 If there is nothing worth remembering, return {"items":[]}.
 
 Be conservative. Do not record:
@@ -79,11 +79,9 @@ Use target=daily for recent working context, open loops, temporary project state
 Use target=long_term only for stable user preferences, long-term goals, identity/background, durable project facts, or decisions that should affect future behavior.
 
 For long_term memories, use one of these sections:
-- Profile: user identity, name, role, background
-- Active Goals: current long-term goals
-- Preferences: stable preferences (tech stack, style, aliases)
-- Facts: important facts (locations, projects, decisions)
-- Notes: reference notes, lower-confidence observations"""
+- Always: stable, high-signal information that should be visible in every conversation
+- Now: current project stage, active open loops, and recent decisions
+- Later: useful but non-urgent facts, historical context, references, and lower-confidence notes"""
 
 
 def _parse_items(response: str) -> list[dict[str, Any]]:

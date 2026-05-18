@@ -266,6 +266,8 @@ async def test_agent_loop_updates_summary_and_injects_it_next_turn() -> None:
     assert "# Conversation Summary" in third_call_system
     assert "lightweight summaries" in third_call_system
     third_call_history = provider.seen_messages[2][1:-1]
+    assert {"role": "user", "content": "first"} not in third_call_history
+    assert {"role": "assistant", "content": "answer 1"} not in third_call_history
     assert {"role": "user", "content": "second"} in third_call_history
     assert {"role": "assistant", "content": "answer 2"} in third_call_history
 

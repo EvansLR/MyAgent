@@ -65,8 +65,8 @@ class MemoryProposeLongTermTool(Tool):
     def description(self) -> str:
         return (
             "Create a durable long-term memory proposal. Use apply=true only when "
-            "the user explicitly asks you to remember stable profile, preference, "
-            "goal, or project information."
+            "the user explicitly asks you to remember stable or important "
+            "information. Use sections Always, Now, or Later."
         )
 
     @property
@@ -77,7 +77,7 @@ class MemoryProposeLongTermTool(Tool):
                 "content": {"type": "string", "description": "Standalone memory content."},
                 "section": {
                     "type": "string",
-                    "description": "Suggested MEMORY.md section, such as Core Memory.",
+                    "description": "Suggested MEMORY.md section: Always, Now, or Later.",
                 },
                 "tags": {"type": "array", "description": "Optional tags."},
                 "importance": {

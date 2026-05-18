@@ -130,11 +130,40 @@ def test_context_builder_omits_empty_conversation_summary() -> None:
     assert "# Conversation Summary" not in messages[0]["content"]
 
 
-def test_context_builder_trims_history_by_budget() -> None:
+def test_context_builder_keeps_history_when_token_budget_allows() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
         delegation_policy=None,
-        budget=ContextBudget(max_history_messages=2),
+        budget=ContextBudget(max_prompt_tokens=200, chars_per_token=4),
+    )
+    history = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "second"},
+        {"role": "user", "content": "third"},
+        {"role": "assistant", "content": "fourth"},
+    ]
+
+    messages, report = builder.build_messages_with_report(make_message("fifth"), history)
+
+    assert messages == [
+        {"role": "system", "content": "# Identity\n\nTest identity."},
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "second"},
+        {"role": "user", "content": "third"},
+        {"role": "assistant", "content": "fourth"},
+        {"role": "user", "content": "fifth"},
+    ]
+    assert report.history.total_messages == 4
+    assert report.history.included_messages == 4
+    assert report.history.dropped_messages == 0
+    assert report.warnings == []
+
+
+def test_context_builder_can_apply_optional_history_message_cap() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        delegation_policy=None,
+        budget=ContextBudget(max_prompt_tokens=200, max_history_messages=2, chars_per_token=4),
     )
     history = [
         {"role": "user", "content": "first"},
@@ -154,6 +183,8 @@ def test_context_builder_trims_history_by_budget() -> None:
     assert report.history.total_messages == 4
     assert report.history.included_messages == 2
     assert report.history.dropped_messages == 2
+    assert report.history.dropped_by_message_limit == 2
+    assert report.history.dropped_by_token_budget == 0
     assert report.warnings == ["history_trimmed"]
 
 

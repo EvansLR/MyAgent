@@ -1400,3 +1400,63 @@ python -m pytest
 ```text
 少记、记准 > 什么都记下来再让系统清理。
 ```
+## 2026-05-18 Update: Storage Boundary
+
+Current memory storage is separate from profile and runtime state:
+
+```text
+~/.myagent/memory/
+  MEMORY.md
+  MEMORY_PROPOSALS.md
+  daily/YYYY-MM-DD.md
+```
+
+Meaning:
+- `MEMORY.md` is durable, reviewed long-term memory with three sections:
+  `Always`, `Now`, and `Later`.
+- `Always` is very short, stable information that should be visible every turn.
+- `Now` is current project/session state that should stay visible for the near term.
+- `Later` is searchable background and does not enter the prompt by default.
+- `MEMORY_PROPOSALS.md` is the review queue for candidate long-term memory.
+- `daily/` stores lightweight daily notes and candidates.
+- `~/.myagent/profile/` stores stable human-authored profile instructions, not memory.
+- `~/.myagent/runtime/` stores operational state such as cron jobs, not memory.
+
+Prompt rule:
+- ContextBuilder sees only `Always` and `Now` by default.
+- `Later`, daily notes, and proposals are available through memory tools.
+
+Renaming:
+- Memory now reads and writes only `~/.myagent/memory/`.
+- There is no automatic migration from `~/.myagent/workspace/`.
+- `DREAMS.md` is no longer a supported input name. The current file is `MEMORY_PROPOSALS.md`.
+- The old `Profile / Active Goals / Preferences / Facts / Notes` structure is replaced by `Always / Now / Later`.
+
+## 2026-05-18 Update: Budget-Based Consolidation
+
+`Always` and `Now` are not fixed-size lists. The model may suggest a section
+when writing a proposal, but the consolidator is responsible for the final
+placement.
+
+Current consolidation policy:
+
+- `Always` targets a small visible-memory budget, currently about 4000
+  characters.
+- `Now` targets a larger working-memory budget, currently about 8000
+  characters.
+- `Later` is searchable archival memory and is not injected by default.
+- When a visible section grows too large, consolidation should merge duplicates,
+  compress related details, and demote stale or lower-value items to `Later`.
+- Deletion is reserved for vague, contradicted, obsolete, or low-value items.
+  Old items are not deleted merely because they are old.
+
+This keeps the design close to mature agent memory patterns:
+
+- `Always` behaves like compact core memory.
+- `Now` behaves like working memory for the current phase.
+- `Later` behaves like archival memory that can be retrieved when needed.
+
+The first implementation keeps this as an LLM consolidation rule rather than a
+large deterministic ranking system. That is intentional: it solves the current
+growth problem without adding vector search, scoring tables, or a separate
+memory database too early.

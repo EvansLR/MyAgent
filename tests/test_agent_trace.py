@@ -51,7 +51,7 @@ async def test_agent_loop_records_basic_trace_events() -> None:
 
     assert event_names == [
         "user_message",
-        "workspace_loaded",
+        "profile_loaded",
         "context_built",
         "llm_request",
         "llm_response",
@@ -59,7 +59,7 @@ async def test_agent_loop_records_basic_trace_events() -> None:
         "turn_completed",
     ]
     assert events[0]["data"]["content"] == "hello"
-    assert events[1]["event"] == "workspace_loaded"
+    assert events[1]["event"] == "profile_loaded"
     context = events[2]["data"]["context"]
     assert context["message_count"] == 2
     assert context["history"]["included_messages"] == 0
@@ -325,6 +325,14 @@ async def test_agent_loop_records_conversation_summary_trace_events() -> None:
     assert checked["data"]["new_messages_considered"] == 2
     assert updated["data"]["summarized_message_count_after"] == 2
     assert updated["data"]["summary_chars_after"] > 0
+
+    await bus.publish_inbound(make_message("third"))
+    await agent.process_next()
+
+    events = read_events(root / "cli_default.jsonl")
+    context_events = [event for event in events if event["event"] == "context_built"]
+    assert context_events[-1]["data"]["full_history_messages"] == 4
+    assert context_events[-1]["data"]["visible_history_messages"] == 2
 
 
 async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
