@@ -60,3 +60,7 @@
 
 - `reports/PROJECT_STAGE_REPORT_2026-05-17.md`
   - 当前阶段项目报告，覆盖项目定位、已完成能力、最近 Feishu/Gateway 工作、验证状态、当前限制和下一步建议。
+- `reports/INTERVIEW_MODULE_HIGHLIGHTS.md`
+  - 面试讲解版模块亮点，按模块整理定位、亮点、取舍、讲法和追问口径。
+- `reports/RESUME_BULLET_CANDIDATES.md`
+  - 简历描述候选池，按模块提供 bullet 版本、支撑实现、讲法、注意事项和推荐组合。
