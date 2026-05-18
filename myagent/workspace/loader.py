@@ -35,13 +35,6 @@ class WorkspaceLoader:
         except (OSError, UnicodeDecodeError):
             return ""
 
-    def load_all(self) -> dict[str, str]:
-        """Return all present workspace files keyed by logical name."""
-        return {
-            key: self.load_file(filename)
-            for key, filename in WORKSPACE_FILES.items()
-        }
-
     def exists(self, filename: str) -> bool:
         """Check whether a workspace file exists."""
         return (self.root / filename).exists()

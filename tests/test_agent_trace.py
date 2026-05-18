@@ -348,9 +348,9 @@ async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
     await bus.publish_inbound(make_message("second"))
     outbound = await agent.process_next()
 
-    assert outbound.content == "answer 2"
-    assert agent.conversation_summary_for("cli:default") is None
     events = read_events(root / "cli_default.jsonl")
+    assert outbound.content == "answer 2"
+    assert not [event for event in events if event["event"] == "conversation_summary_updated"]
     failed = next(event for event in events if event["event"] == "conversation_summary_failed")
     assert failed["data"]["type"] == "RuntimeError"
     assert failed["data"]["message"] == "summary down"

@@ -88,7 +88,7 @@ class TestJobManagement:
     def test_remove_job(self, tmp_service: CronService) -> None:
         j = tmp_service.add_job("x", CronSchedule(kind="every", every=10), "msg")
         assert tmp_service.remove_job(j.id) is True
-        assert tmp_service.get_job(j.id) is None
+        assert all(job.id != j.id for job in tmp_service.list_jobs(include_disabled=True))
         assert tmp_service.remove_job(j.id) is False
 
     def test_at_job_delete_after_run(self, tmp_service: CronService) -> None:
@@ -161,7 +161,9 @@ class TestTimerExecution:
         svc.stop()
 
         assert len(executed_jobs) == 1
-        assert svc.get_job(job.id) is None  # deleted after run
+        assert all(
+            existing.id != job.id for existing in svc.list_jobs(include_disabled=True)
+        )  # deleted after run
 
     @pytest.mark.asyncio
     async def test_error_in_callback_recorded(
@@ -191,7 +193,9 @@ class TestTimerExecution:
 
         svc2 = CronService(store_path=tmp_path / "jobs.json")
         await svc2.start()
-        loaded = svc2.get_job(j.id)
+        loaded = next(
+            job for job in svc2.list_jobs(include_disabled=True) if job.id == j.id
+        )
         assert loaded is not None
         assert loaded.name == "persist"
         assert loaded.state.next_run_at == original_next

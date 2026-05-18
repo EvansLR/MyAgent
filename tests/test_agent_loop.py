@@ -49,16 +49,17 @@ async def test_agent_loop_processes_one_message() -> None:
 
 async def test_agent_loop_adds_turn_to_history() -> None:
     bus = MessageBus()
-    agent = AgentLoop(bus, provider=EchoProvider())
-    inbound = make_message("hello")
+    provider = ConversationSummaryProvider()
+    agent = AgentLoop(bus, provider=provider)
 
-    await bus.publish_inbound(inbound)
+    await bus.publish_inbound(make_message("hello"))
+    await agent.process_next()
+    await bus.publish_inbound(make_message("again"))
     await agent.process_next()
 
-    assert agent.history_for(inbound.session_key) == [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "Echo: hello"},
-    ]
+    second_call_messages = provider.seen_messages[1]
+    assert {"role": "user", "content": "hello"} in second_call_messages
+    assert {"role": "assistant", "content": "answer 1"} in second_call_messages
 
 
 class ToolCallingProvider:
@@ -253,7 +254,7 @@ async def test_agent_loop_updates_summary_and_injects_it_next_turn() -> None:
     await bus.publish_inbound(make_message("second"))
     await agent.process_next()
 
-    state = agent.conversation_summary_for("cli:default")
+    state = agent._conversation_summaries.get("cli:default")
     assert state is not None
     assert state.summarized_message_count == 2
     assert provider.summary_prompts

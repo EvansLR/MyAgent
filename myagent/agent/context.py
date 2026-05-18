@@ -309,16 +309,6 @@ class ContextBuilder:
         selected_items, _, _ = self._select_system_items(items, reserved_tokens=0)
         return self._render_system_prompt(selected_items)
 
-    def build_messages(
-        self,
-        current_message: InboundMessage,
-        history: list[Message] | None = None,
-    ) -> list[Message]:
-        """Build the messages sent to a provider."""
-        messages, report = self.build_messages_with_report(current_message, history)
-        self.last_report = report
-        return messages
-
     def build_messages_with_report(
         self,
         current_message: InboundMessage,

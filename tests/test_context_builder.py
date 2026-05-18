@@ -41,7 +41,7 @@ def test_context_builder_builds_messages_with_history() -> None:
         {"role": "assistant", "content": "second"},
     ]
 
-    messages = builder.build_messages(make_message("third"), history)
+    messages, _ = builder.build_messages_with_report(make_message("third"), history)
 
     assert messages == [
         {"role": "system", "content": "# Identity\n\nTest identity."},
@@ -79,7 +79,7 @@ def test_context_builder_includes_core_memory() -> None:
         core_memory_provider=lambda: "## Profile\n\n- 用户偏好文档优先。",
     )
 
-    messages = builder.build_messages(make_message("hello"))
+    messages, _ = builder.build_messages_with_report(make_message("hello"))
 
     assert "# Long-term Memory" in messages[0]["content"]
     assert "用户偏好文档优先。" in messages[0]["content"]
@@ -125,7 +125,7 @@ def test_context_builder_omits_empty_conversation_summary() -> None:
         conversation_summary_provider=lambda: "   ",
     )
 
-    messages = builder.build_messages(make_message("hello"))
+    messages, _ = builder.build_messages_with_report(make_message("hello"))
 
     assert "# Conversation Summary" not in messages[0]["content"]
 
@@ -173,7 +173,7 @@ def test_context_builder_includes_available_skills() -> None:
         skill_registry=skill_registry,
     )
 
-    messages = builder.build_messages(make_message("你有哪些 skills？"))
+    messages, _ = builder.build_messages_with_report(make_message("你有哪些 skills？"))
 
     assert "# Available Skills" in messages[0]["content"]
     assert "code-review" in messages[0]["content"]
@@ -183,7 +183,7 @@ def test_context_builder_includes_available_skills() -> None:
 def test_context_builder_omits_active_skills_when_none_active() -> None:
     builder = ContextBuilder(identity="Test identity.", active_skills_provider=lambda: "")
 
-    messages = builder.build_messages(make_message("hello"))
+    messages, _ = builder.build_messages_with_report(make_message("hello"))
 
     assert "# Active Skills" not in messages[0]["content"]
 

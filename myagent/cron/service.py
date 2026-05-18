@@ -222,10 +222,6 @@ class CronService:
             self._arm_timer()
         return removed
 
-    def get_job(self, job_id: str) -> CronJob | None:
-        """Get a job by ID."""
-        return next((j for j in self._jobs if j.id == job_id), None)
-
     def status(self) -> dict:
         """Get service status."""
         return {

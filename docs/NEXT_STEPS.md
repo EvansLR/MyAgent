@@ -152,8 +152,32 @@ Feishu Gateway、CronService、MessageTool 已落地：
 
 ```text
 python -m pytest
-256 passed
+257 passed
 ```
+
+最近 Feishu 长连接稳定性修正：
+
+```text
+python -m pytest tests/test_channels_feishu.py
+23 passed
+
+python -m pytest tests/test_channels_feishu.py tests/test_cli_channel.py tests/test_shell_tool.py tests/test_channels_manager.py
+65 passed
+
+python -m pytest
+257 passed
+```
+
+最近代码收敛清理：
+- 删除只剩测试引用的旧便捷 API：`ContextBuilder.build_messages`、`AgentLoop.history_for`、`AgentLoop.conversation_summary_for`、`MessageBus.inbound_size/outbound_size`、`CronService.get_job`、`WorkspaceLoader.load_all`。
+- 删除旧 JSONL memory 时代遗留的 `MemoryEntry` 结构；当前主线使用 Markdown-backed memory。
+- 对应测试改为验证主链路行为或现有核心接口，避免测试继续“供养”不再使用的旧代码。
+
+实现记录：
+- Feishu WebSocket 增加外层重连循环；如果 lark-oapi `client.start()` 异常退出或意外返回，gateway 进程会等待 5 秒后重建 WSClient。
+- tenant_access_token 记录过期时间，发送前提前刷新；发送失败若命中 token 失效类错误，会刷新后重试一次。
+- 发送失败、token 刷新失败、WebSocket 退出会打印可见诊断，避免 gateway 看起来还活着但用户侧无响应。
+- 审批请求在 token 不可用时会直接返回拒绝结果，避免 future 永久挂起。
 
 最近真实渠道 smoke test：
 

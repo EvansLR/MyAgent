@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from myagent.approval import (
@@ -37,6 +38,9 @@ from myagent.tools import (
 )
 from myagent.tracing import JsonlTraceStore, TraceStore
 from myagent.workspace import WorkspaceLoader
+
+if TYPE_CHECKING:
+    from myagent.cron.service import CronService
 
 MAX_TOOL_ITERATIONS = 50
 MAX_REPEATED_TOOL_CALLS = 2
@@ -544,14 +548,6 @@ class AgentLoop:
     def stop(self) -> None:
         """Request the processing loop to stop."""
         self._running = False
-
-    def history_for(self, session_key: str) -> list[Message]:
-        """Return a copy of the current session history."""
-        return list(self._history_for(session_key))
-
-    def conversation_summary_for(self, session_key: str) -> ConversationSummaryState | None:
-        """Return the current in-memory conversation summary for a session."""
-        return self._conversation_summaries.get(session_key)
 
     def _history_for(self, session_key: str) -> list[Message]:
         return self._history.setdefault(session_key, [])

@@ -1,9 +1,16 @@
 """Tests for BaseChannel abstraction."""
 
+import asyncio
+
 import pytest
 
 from myagent.bus import MessageBus, OutboundMessage
 from myagent.channels.base import BaseChannel
+
+
+async def assert_no_inbound_message(bus: MessageBus) -> None:
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(bus.consume_inbound(), timeout=0.01)
 
 
 class FakeChannel(BaseChannel):
@@ -52,7 +59,7 @@ class TestBaseChannel:
         assert ch._session_indices.get("u1") == 1
         assert len(ch.sent) == 1
         assert "已新建对话" in ch.sent[0].content
-        assert bus.inbound_size == 0
+        await assert_no_inbound_message(bus)
 
     @pytest.mark.asyncio
     async def test_handle_message_help_command(self, bus):
@@ -60,7 +67,7 @@ class TestBaseChannel:
         await ch._handle_message("u1", "c1", "/help")
         assert len(ch.sent) == 1
         assert "/new" in ch.sent[0].content
-        assert bus.inbound_size == 0
+        await assert_no_inbound_message(bus)
 
     @pytest.mark.asyncio
     async def test_handle_message_with_session_override(self, bus):

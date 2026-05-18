@@ -52,18 +52,6 @@ def test_workspace_present_and_missing_files() -> None:
     assert "USER.md" in loader.missing_files()
 
 
-def test_workspace_load_all() -> None:
-    root = make_workspace("load-all")
-    (root / "AGENT.md").write_text("agent", encoding="utf-8")
-    (root / "USER.md").write_text("user", encoding="utf-8")
-    loader = WorkspaceLoader(root)
-
-    all_files = loader.load_all()
-    assert all_files["agent"] == "agent"
-    assert all_files["user"] == "user"
-    assert all_files["tools"] == ""
-
-
 def test_workspace_trace_data() -> None:
     root = make_workspace("trace")
     (root / "AGENT.md").write_text("x", encoding="utf-8")
