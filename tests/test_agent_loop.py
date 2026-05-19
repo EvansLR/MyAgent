@@ -272,6 +272,33 @@ async def test_agent_loop_updates_summary_and_injects_it_next_turn() -> None:
     assert {"role": "assistant", "content": "answer 2"} in third_call_history
 
 
+async def test_agent_loop_updates_summary_when_history_token_pressure_is_high() -> None:
+    bus = MessageBus()
+    provider = ConversationSummaryProvider()
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        conversation_summary_config=ConversationSummaryConfig(
+            trigger_messages=100,
+            trigger_tokens=20,
+            keep_recent_messages=2,
+            min_new_messages=6,
+        ),
+        start_cron=False,
+    )
+    agent.memory_extractor = None
+
+    await bus.publish_inbound(make_message("first " + ("large " * 30)))
+    await agent.process_next()
+    await bus.publish_inbound(make_message("second " + ("large " * 30)))
+    await agent.process_next()
+
+    state = agent._conversation_summaries.get("cli:default")
+    assert state is not None
+    assert state.summarized_message_count == 2
+    assert provider.summary_prompts
+
+
 def test_agent_loop_exposes_lock_state() -> None:
     agent = AgentLoop(MessageBus(), provider=EchoProvider())
 

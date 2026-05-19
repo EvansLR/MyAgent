@@ -92,6 +92,8 @@ async def test_memory_tool_saves_explicit_long_term_memory() -> None:
     assert "Saved long-term memory" in result
     assert "User prefers documentation-first changes." in memory
     assert "## Always" in store.read_core_memory()
+    assert "User prefers documentation-first changes." in store.read_always_memory()
+    assert store.read_now_memory() == ""
 
 
 async def test_memory_later_is_searchable_but_not_visible_by_default() -> None:

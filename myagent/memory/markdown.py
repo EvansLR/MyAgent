@@ -48,15 +48,28 @@ class MarkdownMemoryStore:
 
     def read_core_memory(self) -> str:
         """Return the high-signal sections that should enter the system prompt."""
-        if not self.memory_path.exists():
-            return ""
-        sections = _parse_markdown_sections(self.memory_path.read_text(encoding="utf-8"))
-        parts: list[str] = []
+        visible_sections = self.read_visible_memory_sections()
+        parts = []
         for name in VISIBLE_MEMORY_SECTIONS:
-            content = sections.get(name, "").strip()
+            content = visible_sections.get(name, "").strip()
             if content:
                 parts.append(f"## {name}\n\n{content}")
         return "\n\n".join(parts)
+
+    def read_always_memory(self) -> str:
+        """Return compact stable memory that should normally survive budgeting."""
+        return self.read_visible_memory_sections().get("Always", "").strip()
+
+    def read_now_memory(self) -> str:
+        """Return compact current working memory for the active project phase."""
+        return self.read_visible_memory_sections().get("Now", "").strip()
+
+    def read_visible_memory_sections(self) -> dict[str, str]:
+        """Return visible MEMORY.md sections keyed by section name."""
+        if not self.memory_path.exists():
+            return {}
+        sections = _parse_markdown_sections(self.memory_path.read_text(encoding="utf-8"))
+        return {name: sections.get(name, "").strip() for name in VISIBLE_MEMORY_SECTIONS}
 
     def append_daily(
         self,

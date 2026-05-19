@@ -1460,3 +1460,29 @@ The first implementation keeps this as an LLM consolidation rule rather than a
 large deterministic ranking system. That is intentional: it solves the current
 growth problem without adding vector search, scoring tables, or a separate
 memory database too early.
+
+## 2026-05-19 Update: Visible Memory Sections
+
+Visible memory is split before it reaches ContextBuilder:
+
+```text
+Always Memory
+  compact, stable, near-protected
+
+Now Memory
+  compact, current, budgeted
+
+Later
+  searchable archive, not injected by default
+```
+
+This avoids treating all long-term memory as one large section. `Always` should
+survive normal budgeting because it is already compacted by consolidation.
+`Now` is also compacted, but it can be dropped earlier than `Always` if the
+current turn is unusually large.
+
+The main design rule is:
+
+```text
+compress memory first; drop only as a final prompt-budget fallback
+```

@@ -143,7 +143,7 @@ def format_context_summary(event: dict[str, Any]) -> str:
             "- "
             f"{section.get('name')}: "
             f"kind={section.get('kind')}, "
-            f"tier={section.get('tier')}, "
+            f"retention={section.get('retention') or section.get('tier')}, "
             f"source={section.get('source')}, "
             f"tokens={section.get('estimated_tokens') or 0}, "
             f"chars={section.get('chars') or 0}, "

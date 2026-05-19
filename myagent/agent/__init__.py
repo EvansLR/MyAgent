@@ -7,10 +7,9 @@ from myagent.agent.context import (
     ContextHistoryReport,
     ContextItem,
     ContextItemKind,
-    ContextRetentionPolicy,
+    ContextRetention,
     ContextSection,
     ContextSectionReport,
-    ContextTier,
     format_runtime_environment,
 )
 from myagent.agent.loop import AgentLoop
@@ -32,10 +31,9 @@ __all__ = [
     "ContextHistoryReport",
     "ContextItem",
     "ContextItemKind",
-    "ContextRetentionPolicy",
+    "ContextRetention",
     "ContextSection",
     "ContextSectionReport",
-    "ContextTier",
     "DelegateTaskTool",
     "SubAgentProfile",
     "SubAgentRunner",

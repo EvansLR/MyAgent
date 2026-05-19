@@ -25,14 +25,13 @@ DEFAULT_DELEGATION_POLICY = (
 )
 
 
-class ContextTier(StrEnum):
-    """Priority class used by the context composer."""
+class ContextRetention(StrEnum):
+    """How strongly a system context section should survive final budgeting."""
 
-    PROTECTED = "protected"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    EPHEMERAL = "ephemeral"
+    REQUIRED = "required"
+    CORE = "core"
+    CONTEXT = "context"
+    OPTIONAL = "optional"
 
 
 class ContextItemKind(StrEnum):
@@ -48,26 +47,15 @@ class ContextItemKind(StrEnum):
     PROFILE = "profile"
 
 
-class ContextRetentionPolicy(StrEnum):
-    """How a context item should behave when the prompt is over budget."""
-
-    NEVER_DROP = "never_drop"
-    KEEP_IF_FITS = "keep_if_fits"
-    DROP_IF_NEEDED = "drop_if_needed"
-    KEEP_RECENT_BY_TOKEN = "keep_recent_by_token"
-
-
 @dataclass(frozen=True, slots=True)
 class ContextSection:
     """One section of the system prompt."""
 
     name: str
     content: str
-    priority: int = 100
-    tier: ContextTier = ContextTier.MEDIUM
     source: str = "runtime"
     kind: ContextItemKind = ContextItemKind.INSTRUCTION
-    policy: ContextRetentionPolicy = ContextRetentionPolicy.KEEP_IF_FITS
+    retention: ContextRetention = ContextRetention.CONTEXT
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,11 +75,10 @@ class ContextItem:
     id: str
     name: str
     kind: ContextItemKind
-    tier: ContextTier
-    priority: int
+    retention: ContextRetention
+    order: int
     source: str
     content: str
-    policy: ContextRetentionPolicy
     estimated_tokens: int
 
 
@@ -101,14 +88,12 @@ class ContextSectionReport:
 
     name: str
     kind: str
-    tier: str
-    priority: int
+    retention: str
     source: str
     chars: int
     estimated_tokens: int
     included: bool
     reason: str
-    policy: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,14 +135,12 @@ class ContextAssemblyReport:
                 {
                     "name": section.name,
                     "kind": section.kind,
-                    "tier": section.tier,
-                    "priority": section.priority,
+                    "retention": section.retention,
                     "source": section.source,
                     "chars": section.chars,
                     "estimated_tokens": section.estimated_tokens,
                     "included": section.included,
                     "reason": section.reason,
-                    "policy": section.policy,
                 }
                 for section in self.sections
             ],
@@ -187,8 +170,11 @@ class ContextBuilder:
         self,
         identity: str | None = None,
         runtime_environment: str | None = None,
+        runtime_environment_provider: Callable[[], str] | None = None,
         delegation_policy: str | None = DEFAULT_DELEGATION_POLICY,
         core_memory_provider: Callable[[], str] | None = None,
+        always_memory_provider: Callable[[], str] | None = None,
+        now_memory_provider: Callable[[], str] | None = None,
         conversation_summary_provider: Callable[[], str] | None = None,
         active_skills_provider: Callable[[], str] | None = None,
         skill_registry: SkillRegistry | None = None,
@@ -201,8 +187,11 @@ class ContextBuilder:
             "current limitations."
         )
         self.runtime_environment = runtime_environment
+        self.runtime_environment_provider = runtime_environment_provider
         self.delegation_policy = delegation_policy
         self.core_memory_provider = core_memory_provider
+        self.always_memory_provider = always_memory_provider
+        self.now_memory_provider = now_memory_provider
         self.conversation_summary_provider = conversation_summary_provider
         self.active_skills_provider = active_skills_provider
         self.skill_registry = skill_registry
@@ -211,30 +200,27 @@ class ContextBuilder:
         self.last_report: ContextAssemblyReport | None = None
 
     def build_sections(self) -> list[ContextSection]:
-        """Return system prompt sections in first-stage priority order."""
+        """Return system prompt sections in their model-facing order."""
         sections = [
             ContextSection(
                 name="Identity",
                 content=self.identity,
-                priority=1,
-                tier=ContextTier.PROTECTED,
                 source="identity",
                 kind=ContextItemKind.INSTRUCTION,
-                policy=ContextRetentionPolicy.NEVER_DROP,
+                retention=ContextRetention.REQUIRED,
             ),
         ]
         profile_sections = self._build_profile_sections()
         sections.extend(profile_sections)
-        if self.runtime_environment:
+        runtime_environment = self.read_runtime_environment()
+        if runtime_environment:
             sections.append(
                 ContextSection(
                     name="Runtime Environment",
-                    content=self.runtime_environment,
-                    priority=20,
-                    tier=ContextTier.PROTECTED,
+                    content=runtime_environment,
                     source="runtime:environment",
                     kind=ContextItemKind.INSTRUCTION,
-                    policy=ContextRetentionPolicy.NEVER_DROP,
+                    retention=ContextRetention.REQUIRED,
                 )
             )
         if self.delegation_policy:
@@ -242,24 +228,42 @@ class ContextBuilder:
                 ContextSection(
                     name="Delegation Policy",
                     content=self.delegation_policy,
-                    priority=25,
-                    tier=ContextTier.PROTECTED,
                     source="agent:delegation_policy",
                     kind=ContextItemKind.INSTRUCTION,
-                    policy=ContextRetentionPolicy.NEVER_DROP,
+                    retention=ContextRetention.REQUIRED,
                 )
             )
-        core_memory = self.read_core_memory()
+        always_memory = self.read_always_memory()
+        now_memory = self.read_now_memory()
+        core_memory = "" if (always_memory or now_memory) else self.read_core_memory()
+        if always_memory:
+            sections.append(
+                ContextSection(
+                    name="Always Memory",
+                    content=always_memory,
+                    source="memory:always",
+                    kind=ContextItemKind.MEMORY_CORE,
+                    retention=ContextRetention.CORE,
+                )
+            )
+        if now_memory:
+            sections.append(
+                ContextSection(
+                    name="Now Memory",
+                    content=now_memory,
+                    source="memory:now",
+                    kind=ContextItemKind.MEMORY_CORE,
+                    retention=ContextRetention.CONTEXT,
+                )
+            )
         if core_memory:
             sections.append(
                 ContextSection(
                     name="Long-term Memory",
                     content=core_memory,
-                    priority=30,
-                    tier=ContextTier.HIGH,
                     source="memory:core",
                     kind=ContextItemKind.MEMORY_CORE,
-                    policy=ContextRetentionPolicy.KEEP_IF_FITS,
+                    retention=ContextRetention.CORE,
                 )
             )
         conversation_summary = self.read_conversation_summary()
@@ -268,11 +272,9 @@ class ContextBuilder:
                 ContextSection(
                     name="Conversation Summary",
                     content=conversation_summary,
-                    priority=32,
-                    tier=ContextTier.MEDIUM,
                     source="session:summary",
                     kind=ContextItemKind.SESSION_SUMMARY,
-                    policy=ContextRetentionPolicy.KEEP_IF_FITS,
+                    retention=ContextRetention.CONTEXT,
                 )
             )
         active_skills = self.read_active_skills()
@@ -281,11 +283,9 @@ class ContextBuilder:
                 ContextSection(
                     name="Active Skills",
                     content=active_skills,
-                    priority=20,
-                    tier=ContextTier.MEDIUM,
                     source="skills:active",
                     kind=ContextItemKind.ACTIVE_SKILL,
-                    policy=ContextRetentionPolicy.DROP_IF_NEEDED,
+                    retention=ContextRetention.OPTIONAL,
                 )
             )
         skills_content = self.format_skills()
@@ -294,11 +294,9 @@ class ContextBuilder:
                 ContextSection(
                     name="Available Skills",
                     content=skills_content,
-                    priority=30,
-                    tier=ContextTier.MEDIUM,
                     source="skills:summary",
                     kind=ContextItemKind.SKILL_SUMMARY,
-                    policy=ContextRetentionPolicy.DROP_IF_NEEDED,
+                    retention=ContextRetention.OPTIONAL,
                 )
             )
         return sections
@@ -319,10 +317,7 @@ class ContextBuilder:
         current_tokens = _estimate_tokens(current_message.content, self.budget.chars_per_token)
         system_items = self._items_from_sections(self.build_sections())
         full_system_prompt = self._render_system_prompt(
-            sorted(
-                [item for item in system_items if item.content.strip()],
-                key=lambda item: item.priority,
-            )
+            [item for item in system_items if item.content.strip()]
         )
         estimated_tokens_before_budget = (
             _estimate_tokens(full_system_prompt, self.budget.chars_per_token)
@@ -414,18 +409,17 @@ class ContextBuilder:
     def _items_from_sections(self, sections: list[ContextSection]) -> list[ContextItem]:
         """Convert public sections into internal budgetable items."""
         items = []
-        for section in sections:
+        for order, section in enumerate(sections):
             content = section.content.strip()
             items.append(
                 ContextItem(
                     id=f"{section.source}:{section.name}",
                     name=section.name,
                     kind=section.kind,
-                    tier=section.tier,
-                    priority=section.priority,
+                    retention=section.retention,
+                    order=order,
                     source=section.source,
                     content=content,
-                    policy=section.policy,
                     estimated_tokens=_estimate_tokens(content, self.budget.chars_per_token),
                 )
             )
@@ -442,28 +436,19 @@ class ContextBuilder:
         if max_prompt_tokens is None:
             selected_ids = {item.id for item in non_empty}
             return (
-                sorted(non_empty, key=lambda item: item.priority),
+                sorted(non_empty, key=lambda item: item.order),
                 self._section_reports(items, selected_ids, {}),
                 [],
             )
 
-        protected = [
-            item
-            for item in non_empty
-            if item.tier == ContextTier.PROTECTED or item.policy == ContextRetentionPolicy.NEVER_DROP
-        ]
-        selected: list[ContextItem] = list(protected)
+        required = [item for item in non_empty if item.retention == ContextRetention.REQUIRED]
+        selected: list[ContextItem] = list(required)
         used_tokens = sum(item.estimated_tokens for item in selected) + reserved_tokens
         dropped_reasons: dict[str, str] = {}
         warnings: list[str] = []
 
-        candidates = [
-            item
-            for item in non_empty
-            if item.tier != ContextTier.PROTECTED
-            and item.policy != ContextRetentionPolicy.NEVER_DROP
-        ]
-        for item in sorted(candidates, key=_budget_candidate_sort_key):
+        candidates = [item for item in non_empty if item.retention != ContextRetention.REQUIRED]
+        for item in sorted(candidates, key=_retention_sort_key):
             if used_tokens + item.estimated_tokens <= max_prompt_tokens:
                 selected.append(item)
                 used_tokens += item.estimated_tokens
@@ -471,12 +456,12 @@ class ContextBuilder:
                 dropped_reasons[item.id] = "budget_exceeded"
 
         if used_tokens > max_prompt_tokens:
-            warnings.append("protected_context_over_budget")
+            warnings.append("required_context_over_budget")
         if dropped_reasons:
             warnings.append("section_dropped")
         selected_ids = {item.id for item in selected}
         return (
-            sorted(selected, key=lambda item: item.priority),
+            sorted(selected, key=lambda item: item.order),
             self._section_reports(items, selected_ids, dropped_reasons),
             warnings,
         )
@@ -489,7 +474,7 @@ class ContextBuilder:
     ) -> list[ContextSectionReport]:
         """Build section reports for both included and dropped items."""
         reports = []
-        for item in sorted(items, key=lambda value: value.priority):
+        for item in sorted(items, key=lambda value: value.order):
             has_content = bool(item.content.strip())
             included = item.id in selected_ids
             reason = "included" if included else dropped_reasons.get(item.id, "empty")
@@ -499,14 +484,12 @@ class ContextBuilder:
                 ContextSectionReport(
                     name=item.name,
                     kind=item.kind.value,
-                    tier=item.tier.value,
-                    priority=item.priority,
+                    retention=item.retention.value,
                     source=item.source,
                     chars=len(item.content),
                     estimated_tokens=item.estimated_tokens,
                     included=included,
                     reason=reason,
-                    policy=item.policy.value,
                 )
             )
         return reports
@@ -583,11 +566,9 @@ class ContextBuilder:
                 ContextSection(
                     name="Agent Instructions",
                     content=agent_principles,
-                    priority=5,
-                    tier=ContextTier.PROTECTED,
                     source="profile:agent",
                     kind=ContextItemKind.PROFILE,
-                    policy=ContextRetentionPolicy.NEVER_DROP,
+                    retention=ContextRetention.REQUIRED,
                 )
             )
         user_profile = self.profile_provider.load_file("USER.md").strip()
@@ -596,11 +577,9 @@ class ContextBuilder:
                 ContextSection(
                     name="User Profile",
                     content=user_profile,
-                    priority=7,
-                    tier=ContextTier.PROTECTED,
                     source="profile:user",
                     kind=ContextItemKind.PROFILE,
-                    policy=ContextRetentionPolicy.NEVER_DROP,
+                    retention=ContextRetention.REQUIRED,
                 )
             )
         tool_guidelines = self.profile_provider.load_file("TOOLS.md").strip()
@@ -609,11 +588,9 @@ class ContextBuilder:
                 ContextSection(
                     name="Tool Guidelines",
                     content=tool_guidelines,
-                    priority=35,
-                    tier=ContextTier.MEDIUM,
                     source="profile:tools",
                     kind=ContextItemKind.PROFILE,
-                    policy=ContextRetentionPolicy.DROP_IF_NEEDED,
+                    retention=ContextRetention.OPTIONAL,
                 )
             )
         return sections
@@ -623,6 +600,24 @@ class ContextBuilder:
         if self.core_memory_provider is None:
             return ""
         return self.core_memory_provider().strip()
+
+    def read_runtime_environment(self) -> str:
+        """Read current runtime facts for the system prompt."""
+        if self.runtime_environment_provider is not None:
+            return self.runtime_environment_provider().strip()
+        return (self.runtime_environment or "").strip()
+
+    def read_always_memory(self) -> str:
+        """Read stable compact memory for the system prompt."""
+        if self.always_memory_provider is None:
+            return ""
+        return self.always_memory_provider().strip()
+
+    def read_now_memory(self) -> str:
+        """Read compact current working memory for the system prompt."""
+        if self.now_memory_provider is None:
+            return ""
+        return self.now_memory_provider().strip()
 
     def read_conversation_summary(self) -> str:
         """Read compact session summary for the system prompt."""
@@ -680,16 +675,14 @@ def _estimate_tokens(text: str, chars_per_token: int) -> int:
     return max((len(text) + divisor - 1) // divisor, 0)
 
 
-def _budget_candidate_sort_key(item: ContextItem) -> tuple[int, int, str]:
-    """Sort budget candidates by survival tier, then local priority."""
-    tier_rank = {
-        ContextTier.HIGH: 0,
-        ContextTier.MEDIUM: 1,
-        ContextTier.LOW: 2,
-        ContextTier.EPHEMERAL: 3,
-        ContextTier.PROTECTED: -1,
+def _retention_sort_key(item: ContextItem) -> tuple[int, int, str]:
+    """Sort candidates by survival strength, then model-facing order."""
+    retention_rank = {
+        ContextRetention.CORE: 0,
+        ContextRetention.CONTEXT: 1,
+        ContextRetention.OPTIONAL: 2,
     }
-    return (tier_rank.get(item.tier, 99), item.priority, item.name)
+    return (retention_rank.get(item.retention, 99), item.order, item.name)
 
 
 def _drop_invalid_leading_history(history: list[Message]) -> list[Message]:

@@ -188,7 +188,7 @@ def _section_row(section: dict[str, Any], max_tokens: int) -> str:
     return (
         '<div class="section-row">'
         f"<span><b>{escape(str(section.get('name') or ''))}</b><em>{included}</em><small>{escape(detail)}</small></span>"
-        f"<span>{escape(str(section.get('tier') or ''))}</span>"
+        f"<span>{escape(str(section.get('retention') or section.get('tier') or ''))}</span>"
         f"<span>{escape(str(section.get('source') or ''))}</span>"
         f"<span>{tokens}</span>"
         '<span class="bar-cell">'
@@ -595,7 +595,7 @@ function sectionRow(section, maxTokens) {
   return `
     <div class="row">
       <span><b>${escapeHtml(section.name || '')}</b><em>${section.included ? 'included' : 'dropped'}</em><small>${escapeHtml(detail)}</small></span>
-      <span>${escapeHtml(section.tier || '')}</span>
+      <span>${escapeHtml(section.retention || section.tier || '')}</span>
       <span>${escapeHtml(section.source || '')}</span>
       <span>${tokens}</span>
       <span class="bar"><i style="width:${width}%"></i><small>${Number(section.chars || 0)} chars</small></span>

@@ -2125,6 +2125,7 @@ turn N+1:
 ```text
 enabled = True
 trigger_messages = 24
+trigger_tokens = 3000
 keep_recent_messages = 12
 min_new_messages = 6
 max_summary_chars = 4000
@@ -2221,3 +2222,47 @@ Renaming:
 - Runtime profile files are loaded by `myagent.profile.ProfileLoader`.
 - There is no `~/.myagent/workspace/` fallback for runtime profile files.
 - Code workspace / filesystem workspace still means the current project root used by filesystem tools.
+
+## 2026-05-19 Update: Compression Before Drop
+
+ContextBuilder should not be the primary mechanism for fighting context growth.
+The preferred flow is:
+
+```text
+source module compacts its own context
+  -> ContextBuilder assembles compact context
+  -> retention is only an emergency fallback
+```
+
+This keeps the design simpler:
+
+- `Always Memory` is stable core memory. It should be compacted by the memory
+  layer and treated as near-protected context during assembly.
+- `Now Memory` is current working memory. It should also be compacted by the
+  memory layer, but may be dropped before `Always Memory` under extreme budget
+  pressure.
+- `Conversation Summary` is compacted session history.
+- raw `History` is dynamic context and is selected by token budget after old
+  turns have been summarized.
+
+Conversation summary can be triggered by either message count or estimated
+history token pressure. This keeps large pasted/tool-heavy turns from waiting
+for an arbitrary number of messages before compaction can run.
+
+In this model, ContextBuilder exposes one survival concept: `retention`.
+
+```text
+required  never intentionally dropped
+core      compact stable context, kept before normal context
+context   useful working context, kept if it fits
+optional  helpful extras, dropped first
+```
+
+The older `tier + policy + priority` split was removed from the code because it
+made a learning-oriented project harder to reason about. Model-facing order now
+comes from the fixed section assembly order; budget fallback uses only
+`retention`.
+
+Runtime Environment is also provider-based now. `AgentLoop` passes a callable
+instead of a pre-rendered string, so date/time facts are refreshed on every
+ContextBuilder build rather than freezing at process startup.

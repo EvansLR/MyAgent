@@ -125,8 +125,9 @@ class AgentLoop:
             self.conversation_summary_config,
         )
         self.context_builder = context_builder or ContextBuilder(
-            runtime_environment=format_runtime_environment(workspace_root),
-            core_memory_provider=self.markdown_memory_store.read_core_memory,
+            runtime_environment_provider=lambda: format_runtime_environment(workspace_root),
+            always_memory_provider=self.markdown_memory_store.read_always_memory,
+            now_memory_provider=self.markdown_memory_store.read_now_memory,
             conversation_summary_provider=self._current_conversation_summary_context,
             active_skills_provider=self._current_active_skills_context,
             skill_registry=self.skill_registry,
@@ -233,7 +234,7 @@ class AgentLoop:
                         {
                             "name": section.name,
                             "kind": section.kind,
-                            "tier": section.tier,
+                            "retention": section.retention,
                             "source": section.source,
                             "reason": section.reason,
                             "estimated_tokens": section.estimated_tokens,

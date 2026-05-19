@@ -160,7 +160,7 @@ def test_trace_inspect_formats_latest_context_summary() -> None:
                         {
                             "name": "Identity",
                             "kind": "instruction",
-                            "tier": "protected",
+                            "retention": "required",
                             "source": "identity",
                             "chars": 100,
                             "estimated_tokens": 25,
@@ -170,7 +170,7 @@ def test_trace_inspect_formats_latest_context_summary() -> None:
                         {
                             "name": "Available Skills",
                             "kind": "skill_summary",
-                            "tier": "medium",
+                            "retention": "optional",
                             "source": "skills:summary",
                             "chars": 800,
                             "estimated_tokens": 200,
@@ -201,8 +201,8 @@ def test_trace_inspect_formats_latest_context_summary() -> None:
     assert "max_prompt_tokens: 500" in formatted
     assert "history: 2/4 included, 2 dropped, reserved=175, tokens=80" in formatted
     assert "warnings: history_trimmed" in formatted
-    assert "- Identity: kind=instruction, tier=protected, source=identity, tokens=25, chars=100, included=yes" in formatted
-    assert "- Available Skills: kind=skill_summary, tier=medium, source=skills:summary, tokens=200, chars=800, included=no, reason=budget_exceeded" in formatted
+    assert "- Identity: kind=instruction, retention=required, source=identity, tokens=25, chars=100, included=yes" in formatted
+    assert "- Available Skills: kind=skill_summary, retention=optional, source=skills:summary, tokens=200, chars=800, included=no, reason=budget_exceeded" in formatted
 
 
 def test_trace_inspect_formats_context_dropped_event() -> None:
@@ -237,7 +237,7 @@ def test_trace_html_report_includes_context_and_runtime_sections() -> None:
                     "sections": [
                         {
                             "name": "Identity",
-                            "tier": "protected",
+                            "retention": "required",
                             "source": "identity",
                             "chars": 100,
                             "estimated_tokens": 25,

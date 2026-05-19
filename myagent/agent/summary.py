@@ -26,6 +26,7 @@ class ConversationSummaryConfig:
 
     enabled: bool = True
     trigger_messages: int = 24
+    trigger_tokens: int | None = 3000
     keep_recent_messages: int = 12
     min_new_messages: int = 6
     max_summary_chars: int = 4000
@@ -76,13 +77,28 @@ class ConversationSummarizer:
         if not self.config.enabled:
             return ConversationSummaryDecision(False, "disabled", 0, 0)
         history_count = len(history)
-        if history_count < self.config.trigger_messages:
+        history_tokens = sum(
+            _estimate_tokens(str(message.get("content", "")), self.chars_per_token)
+            for message in history
+        )
+        token_pressure = (
+            self.config.trigger_tokens is not None
+            and history_tokens >= self.config.trigger_tokens
+        )
+        if history_count < self.config.trigger_messages and not token_pressure:
             return ConversationSummaryDecision(False, "below_trigger", 0, 0)
         keep_recent = max(self.config.keep_recent_messages, 0)
         eligible_end = max(history_count - keep_recent, 0)
         summarized_count = state.summarized_message_count if state else 0
         new_message_count = max(eligible_end - summarized_count, 0)
-        if new_message_count < self.config.min_new_messages:
+        if new_message_count <= 0:
+            return ConversationSummaryDecision(
+                False,
+                "no_eligible_history",
+                eligible_end,
+                new_message_count,
+            )
+        if new_message_count < self.config.min_new_messages and not token_pressure:
             return ConversationSummaryDecision(
                 False,
                 "not_enough_new_messages",

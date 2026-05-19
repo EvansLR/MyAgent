@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import shutil
 from datetime import datetime, timezone
 
@@ -69,35 +69,71 @@ def test_context_builder_includes_runtime_environment() -> None:
     assert "Resolve relative dates" in messages[0]["content"]
     assert "Do not invent absolute paths." in messages[0]["content"]
     sections = {section.name: section for section in report.sections}
-    assert sections["Runtime Environment"].tier == "protected"
+    assert sections["Runtime Environment"].retention == "required"
     assert sections["Runtime Environment"].source == "runtime:environment"
+
+
+def test_context_builder_refreshes_runtime_environment_provider_each_build() -> None:
+    values = iter(["time one", "time two"])
+    builder = ContextBuilder(
+        identity="Test identity.",
+        runtime_environment_provider=lambda: next(values),
+    )
+
+    first, _ = builder.build_messages_with_report(make_message("hello"))
+    second, _ = builder.build_messages_with_report(make_message("hello again"))
+
+    assert "time one" in first[0]["content"]
+    assert "time two" in second[0]["content"]
 
 
 def test_context_builder_includes_core_memory() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
-        core_memory_provider=lambda: "## Profile\n\n- 用户偏好文档优先。",
+        core_memory_provider=lambda: "## Always\n\n- User prefers docs first.",
     )
 
     messages, _ = builder.build_messages_with_report(make_message("hello"))
 
     assert "# Long-term Memory" in messages[0]["content"]
-    assert "用户偏好文档优先。" in messages[0]["content"]
+    assert "User prefers docs first." in messages[0]["content"]
 
 
-def test_context_builder_reports_sections_and_core_memory_tier() -> None:
+def test_context_builder_splits_always_and_now_memory() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
-        core_memory_provider=lambda: "## Profile\n\n- 用户名字是 lin。",
+        always_memory_provider=lambda: "- Stable preference.",
+        now_memory_provider=lambda: "- Current project state.",
+    )
+
+    messages, report = builder.build_messages_with_report(make_message("hello"))
+
+    system_prompt = messages[0]["content"]
+    assert "# Always Memory" in system_prompt
+    assert "Stable preference." in system_prompt
+    assert "# Now Memory" in system_prompt
+    assert "Current project state." in system_prompt
+    assert "# Long-term Memory" not in system_prompt
+    sections = {section.name: section for section in report.sections}
+    assert sections["Always Memory"].source == "memory:always"
+    assert sections["Always Memory"].retention == "core"
+    assert sections["Now Memory"].source == "memory:now"
+    assert sections["Now Memory"].retention == "context"
+
+
+def test_context_builder_reports_sections_and_core_memory_retention() -> None:
+    builder = ContextBuilder(
+        identity="Test identity.",
+        core_memory_provider=lambda: "## Always\n\n- User name is Lin.",
     )
 
     messages, report = builder.build_messages_with_report(make_message("hello"))
 
     assert messages[0]["role"] == "system"
     sections = {section.name: section for section in report.sections}
-    assert sections["Identity"].tier == "protected"
+    assert sections["Identity"].retention == "required"
     assert sections["Identity"].source == "identity"
-    assert sections["Long-term Memory"].tier == "high"
+    assert sections["Long-term Memory"].retention == "core"
     assert sections["Long-term Memory"].source == "memory:core"
     assert report.total_chars > 0
     assert report.estimated_tokens > 0
@@ -116,7 +152,7 @@ def test_context_builder_includes_conversation_summary_section() -> None:
     sections = {section.name: section for section in report.sections}
     assert sections["Conversation Summary"].kind == "session_summary"
     assert sections["Conversation Summary"].source == "session:summary"
-    assert sections["Conversation Summary"].tier == "medium"
+    assert sections["Conversation Summary"].retention == "context"
 
 
 def test_context_builder_omits_empty_conversation_summary() -> None:
@@ -204,7 +240,7 @@ def test_context_builder_includes_available_skills() -> None:
         skill_registry=skill_registry,
     )
 
-    messages, _ = builder.build_messages_with_report(make_message("你有哪些 skills？"))
+    messages, _ = builder.build_messages_with_report(make_message("what skills are available?"))
 
     assert "# Available Skills" in messages[0]["content"]
     assert "code-review" in messages[0]["content"]
@@ -231,11 +267,11 @@ def test_context_builder_includes_compact_active_skills_section() -> None:
     assert "frontend-design: Frontend Design" in messages[0]["content"]
     assert "reason: loaded_by_skill_get" in messages[0]["content"]
     sections = {section.name: section for section in report.sections}
-    assert sections["Active Skills"].tier == "medium"
+    assert sections["Active Skills"].retention == "optional"
     assert sections["Active Skills"].source == "skills:active"
 
 
-def test_context_builder_includes_delegation_policy_as_protected_section() -> None:
+def test_context_builder_includes_delegation_policy_as_required_section() -> None:
     builder = ContextBuilder(identity="Test identity.")
 
     messages, report = builder.build_messages_with_report(make_message("research this"))
@@ -244,11 +280,11 @@ def test_context_builder_includes_delegation_policy_as_protected_section() -> No
     assert "Use delegate_task proactively" in messages[0]["content"]
     assert "Do not require the user to explicitly ask for a subagent" in messages[0]["content"]
     sections = {section.name: section for section in report.sections}
-    assert sections["Delegation Policy"].tier == "protected"
+    assert sections["Delegation Policy"].retention == "required"
     assert sections["Delegation Policy"].source == "agent:delegation_policy"
 
 
-def test_context_builder_drops_medium_sections_when_over_budget() -> None:
+def test_context_builder_drops_optional_sections_when_over_budget() -> None:
     skill_registry = SkillRegistry(
         [
             SkillEntry(
@@ -272,7 +308,7 @@ def test_context_builder_drops_medium_sections_when_over_budget() -> None:
     assert "# Available Skills" not in messages[0]["content"]
     sections = {section.name: section for section in report.sections}
     assert sections["Identity"].included is True
-    assert sections["Identity"].policy == "never_drop"
+    assert sections["Identity"].retention == "required"
     assert sections["Available Skills"].included is False
     assert sections["Available Skills"].reason == "budget_exceeded"
     assert "context_budget_exceeded" in report.warnings
@@ -341,3 +377,4 @@ def test_context_builder_reserves_budget_for_history() -> None:
     sections = {section.name: section for section in report.sections}
     assert sections["Active Skills"].included is False
     assert sections["Active Skills"].reason == "budget_exceeded"
+
