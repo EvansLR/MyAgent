@@ -128,10 +128,7 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
         markdown_memory_store=MarkdownMemoryStore(root / "memory"),
         trace_store=JsonlTraceStore(root / "traces"),
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=100,
-            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=6,
         ),
         start_cron=False,
     )

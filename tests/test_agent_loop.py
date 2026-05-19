@@ -248,10 +248,7 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
         provider=provider,
         context_builder=context_builder,
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=100,
-            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=6,
         ),
         start_cron=False,
     )
@@ -270,35 +267,32 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
     assert state is not None
     assert state.summarized_message_count == 2
     assert provider.summary_prompts
+    assert provider.seen_messages[0][1:-1] == [
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer 2"},
+    ]
 
     call_system = provider.seen_messages[0][0]["content"]
     assert "# Conversation Summary" in call_system
     assert "lightweight summaries" in call_system
-    call_history = provider.seen_messages[0][1:-1]
-    assert not any("first" in str(message.get("content", "")) for message in call_history)
-    assert not any("answer 1" in str(message.get("content", "")) for message in call_history)
-    assert {"role": "user", "content": "second"} in call_history
-    assert {"role": "assistant", "content": "answer 2"} in call_history
 
 
-async def test_agent_loop_forces_summary_under_context_pressure_even_with_few_new_messages() -> None:
+async def test_agent_loop_compacts_history_to_half_history_budget() -> None:
     bus = MessageBus()
     provider = ConversationSummaryProvider()
     context_builder = ContextBuilder(
         identity="You are MyAgent.",
         runtime_environment="",
         delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=400, chars_per_token=1, history_token_ratio=0.0),
+        budget=ContextBudget(max_prompt_tokens=400, chars_per_token=1, history_token_ratio=0.5),
     )
     agent = AgentLoop(
         bus,
         provider=provider,
         context_builder=context_builder,
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=100,
-            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=6,
+            compact_target_ratio=0.5,
         ),
         start_cron=False,
     )
@@ -317,6 +311,9 @@ async def test_agent_loop_forces_summary_under_context_pressure_even_with_few_ne
     assert state is not None
     assert state.summarized_message_count == 2
     assert provider.summary_prompts
+    raw_history = provider.seen_messages[0][1:-1]
+    raw_history_tokens = sum(len(message["content"]) for message in raw_history)
+    assert raw_history_tokens <= 100
 
 
 def test_agent_loop_exposes_lock_state() -> None:

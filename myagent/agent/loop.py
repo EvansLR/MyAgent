@@ -206,24 +206,17 @@ class AgentLoop:
             self.profile_loader.to_trace_data(),
         )
         history = self._history_for(inbound.session_key)
-        visible_history = self._history_for_context(inbound.session_key, history)
         self._current_summary_session_key = inbound.session_key
+        await self._compact_history_before_context(
+            inbound.session_key,
+            turn_id,
+            history,
+        )
+        visible_history = self._history_for_context(inbound.session_key, history)
         messages, context_report = self.context_builder.build_messages_with_report(
             inbound,
             visible_history,
         )
-        if self._should_compact_history_before_context(context_report):
-            compacted = await self._compact_history_before_context(
-                inbound.session_key,
-                turn_id,
-                history,
-            )
-            if compacted:
-                visible_history = self._history_for_context(inbound.session_key, history)
-                messages, context_report = self.context_builder.build_messages_with_report(
-                    inbound,
-                    visible_history,
-                )
         self.context_builder.last_report = context_report
         self._trace(
             inbound.session_key,
@@ -702,21 +695,32 @@ class AgentLoop:
             lines.append(f"- {skill_id} ({name}): scope={scope}; reason={reason}")
         return "\n".join(lines)
 
-    @staticmethod
-    def _should_compact_history_before_context(context_report) -> bool:
-        """Return whether history selection already needed to drop raw messages."""
-        history = context_report.history
-        return bool(history.dropped_by_token_budget or history.dropped_by_message_limit)
-
     async def _compact_history_before_context(
         self,
         session_key: str,
         turn_id: str,
         history: list[Message],
     ) -> bool:
-        """Flush and summarize older history before the model call drops it."""
+        """Flush and summarize older history before building model context."""
+        visible_history = self._history_for_context(session_key, history)
+        history_budget = self._history_compaction_budget(visible_history)
+        if history_budget is None:
+            return False
+
+        visible_tokens = self.conversation_summarizer.estimate_messages_tokens(visible_history)
+        if visible_tokens <= history_budget:
+            return False
+
         state = self._conversation_summaries.get(session_key)
-        decision = self.conversation_summarizer.decide(history, state, force=True)
+        target_tokens = int(
+            history_budget
+            * min(max(self.conversation_summary_config.compact_target_ratio, 0.0), 1.0)
+        )
+        decision = self.conversation_summarizer.decide_for_budget(
+            history,
+            state,
+            target_history_tokens=target_tokens,
+        )
         if not decision.should_update:
             self._trace(
                 session_key,
@@ -727,6 +731,11 @@ class AgentLoop:
                     state,
                     decision,
                     reason=f"pre_context_{decision.reason}",
+                    budget_data={
+                        "history_budget_tokens": history_budget,
+                        "target_history_tokens": target_tokens,
+                        "visible_history_tokens": visible_tokens,
+                    },
                 ),
             )
             return False
@@ -743,6 +752,11 @@ class AgentLoop:
                 state,
                 decision,
                 reason="pre_context_budget_pressure",
+                budget_data={
+                    "history_budget_tokens": history_budget,
+                    "target_history_tokens": target_tokens,
+                    "visible_history_tokens": visible_tokens,
+                },
             ),
         )
         try:
@@ -763,6 +777,11 @@ class AgentLoop:
                         state,
                         decision,
                         reason="pre_context_failed",
+                        budget_data={
+                            "history_budget_tokens": history_budget,
+                            "target_history_tokens": target_tokens,
+                            "visible_history_tokens": visible_tokens,
+                        },
                     ),
                     "type": type(exc).__name__,
                     "message": str(exc),
@@ -781,9 +800,25 @@ class AgentLoop:
                 decision,
                 previous_state=state,
                 reason="pre_context_updated",
+                budget_data={
+                    "history_budget_tokens": history_budget,
+                    "target_history_tokens": target_tokens,
+                    "visible_history_tokens": visible_tokens,
+                    "raw_history_tokens_after": self.conversation_summarizer.estimate_messages_tokens(
+                        self._history_for_context(session_key, history)
+                    ),
+                },
             ),
         )
         return True
+
+    def _history_compaction_budget(self, history: list[Message]) -> int | None:
+        """Return the raw-history token budget that triggers pre-context compaction."""
+        budget = self.context_builder.budget
+        if budget.max_prompt_tokens is None or not history:
+            return None
+        ratio = min(max(budget.history_token_ratio, 0.0), 1.0)
+        return int(budget.max_prompt_tokens * ratio)
 
     async def _flush_memory_before_summary(
         self,
@@ -831,10 +866,11 @@ class AgentLoop:
         *,
         reason: str,
         previous_state: ConversationSummaryState | None = None,
+        budget_data: dict[str, object] | None = None,
     ) -> dict[str, object]:
         """Build trace data for conversation summary decisions."""
         before = previous_state if previous_state is not None else state
-        return {
+        data: dict[str, object] = {
             "history_messages": len(history),
             "summarized_message_count_before": (
                 before.summarized_message_count if before else 0
@@ -849,6 +885,9 @@ class AgentLoop:
             "revision": state.revision if state else 0,
             "reason": reason,
         }
+        if budget_data:
+            data.update(budget_data)
+        return data
 
     def _trace(
         self,

@@ -312,10 +312,7 @@ async def test_agent_loop_records_conversation_summary_trace_events() -> None:
         context_builder=context_builder,
         trace_store=JsonlTraceStore(root),
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=100,
-            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=6,
         ),
         start_cron=False,
     )
@@ -359,10 +356,7 @@ async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
         context_builder=context_builder,
         trace_store=JsonlTraceStore(root),
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=100,
-            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=6,
         ),
         start_cron=False,
     )

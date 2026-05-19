@@ -1864,10 +1864,9 @@ ConversationSummaryState
 ```python
 ConversationSummaryConfig
   enabled: bool = True
-  trigger_messages: int = 24
   keep_recent_messages: int = 12
-  min_new_messages: int = 6
   max_summary_chars: int = 4000
+  compact_target_ratio: float = 0.5
 ```
 
 语义：
@@ -1875,8 +1874,8 @@ ConversationSummaryConfig
 - `summarized_message_count` 表示 `_history[session_key]` 前多少条已经进入
   summary。
 - `keep_recent_messages` 表示永远保留最近 N 条 raw messages，不总结。
-- `min_new_messages` 避免每轮都调用 LLM。
 - `max_summary_chars` 控制 summary 自身不要变成新的膨胀源。
+- `compact_target_ratio` 控制触发后把 raw history 压到 history 预算的多少比例。
 
 ### Summary Content Rules
 
@@ -1959,15 +1958,15 @@ process_message(...)
 触发逻辑：
 
 ```text
-history_count = len(history)
-eligible_end = max(history_count - keep_recent_messages, 0)
-new_count = eligible_end - summarized_message_count
+visible_history_tokens = estimate(history[summarized_message_count:])
+history_budget = max_prompt_tokens * history_token_ratio
+target = history_budget * compact_target_ratio
 
-if history_count < trigger_messages:
-  skip
-elif new_count < min_new_messages:
+if visible_history_tokens <= history_budget:
   skip
 else:
+  pick the earliest eligible_end where estimate(history[eligible_end:]) <= target
+  never summarize the latest keep_recent_messages
   summarize history[summarized_message_count:eligible_end]
 ```
 
@@ -2124,11 +2123,9 @@ turn N+1:
 
 ```text
 enabled = True
-trigger_messages = 24
-trigger_tokens = 3000
 keep_recent_messages = 12
-min_new_messages = 6
 max_summary_chars = 4000
+compact_target_ratio = 0.5
 ```
 
 ### Important Boundaries
@@ -2136,7 +2133,7 @@ max_summary_chars = 4000
 - `_history` 原始消息仍然完整保留在内存里。
 - summary 只是一种 model-visible view。
 - summary 不写入 `MEMORY.md`。
-- summary 不进入 daily / memory proposals / MemoryExtractor。
+- summary 前会先把同一段旧 history 送入 MemoryExtractor，写入 archive/proposal。
 - summary 不包含 tool messages，因为 MyAgent 当前跨 turn history 不保存 tool messages。
 - summary 失败不会影响用户回复。
 
@@ -2150,7 +2147,7 @@ conversation_summary_updated
 conversation_summary_failed
 ```
 
-为了避免短对话 trace 噪声，低于 `trigger_messages` 时不会记录 checked event。
+为了避免短对话 trace 噪声，未出现 history 预算压力时不会记录 checked event。
 
 ### Verification
 
@@ -2245,24 +2242,27 @@ This keeps the design simpler:
 - raw `History` is dynamic context and is selected by token budget after old
   turns have been summarized.
 
-Conversation summary can be triggered by either message count or estimated
-history token pressure. This keeps large pasted/tool-heavy turns from waiting
-for an arbitrary number of messages before compaction can run.
+Conversation summary is triggered by estimated history token pressure, not by a
+fixed message count. This keeps large pasted/tool-heavy turns from waiting for
+an arbitrary number of messages before compaction can run.
 
 Current runtime behavior is pre-context:
 
 ```text
-build context once
-  -> if history selection would drop raw messages
-  -> flush the old history chunk to memory archive/proposals
+estimate visible raw history tokens
+  -> if raw history exceeds its reserved budget
+  -> choose an old chunk so remaining raw history aims for 50% of that budget
+  -> flush the old chunk to memory archive/proposals
   -> fold the same old chunk into Conversation Summary
-  -> rebuild context with summary + recent raw history
+  -> build context once with summary + recent raw history
 ```
 
-The recent tail remains raw text. `keep_recent_messages` controls how many
-latest messages are never summarized in this pass. MyAgent no longer runs a
-default post-turn MemoryExtractor; automatic extraction happens only when old
-history is about to leave the visible context.
+The compact target is controlled by `compact_target_ratio`, currently `0.5`.
+The target applies to the raw-history budget, not to the whole prompt window.
+The recent tail remains raw text. `keep_recent_messages` controls the minimum
+number of latest messages that are never summarized in this pass. MyAgent no
+longer runs a default post-turn MemoryExtractor; automatic extraction happens
+only when old history is about to leave the visible context.
 
 In this model, ContextBuilder exposes one survival concept: `retention`.
 

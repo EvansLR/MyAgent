@@ -25,11 +25,9 @@ class ConversationSummaryConfig:
     """Configuration for in-memory conversation summary updates."""
 
     enabled: bool = True
-    trigger_messages: int = 24
-    trigger_tokens: int | None = 3000
     keep_recent_messages: int = 12
-    min_new_messages: int = 6
     max_summary_chars: int = 4000
+    compact_target_ratio: float = 0.5
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,31 +66,33 @@ class ConversationSummarizer:
         self.config = config or ConversationSummaryConfig()
         self.chars_per_token = chars_per_token
 
-    def decide(
+    def decide_for_budget(
         self,
         history: list[Message],
-        state: ConversationSummaryState | None = None,
+        state: ConversationSummaryState | None,
         *,
-        force: bool = False,
+        target_history_tokens: int,
     ) -> ConversationSummaryDecision:
-        """Return whether enough old history exists to update the summary."""
+        """Return a summary decision that aims to fit raw history under a target."""
         if not self.config.enabled:
             return ConversationSummaryDecision(False, "disabled", 0, 0)
+
         history_count = len(history)
-        history_tokens = sum(
-            _estimate_tokens(str(message.get("content", "")), self.chars_per_token)
-            for message in history
-        )
-        token_pressure = (
-            self.config.trigger_tokens is not None
-            and history_tokens >= self.config.trigger_tokens
-        )
-        if not force and history_count < self.config.trigger_messages and not token_pressure:
-            return ConversationSummaryDecision(False, "below_trigger", 0, 0)
         keep_recent = max(self.config.keep_recent_messages, 0)
-        eligible_end = max(history_count - keep_recent, 0)
+        max_eligible_end = max(history_count - keep_recent, 0)
         summarized_count = state.summarized_message_count if state else 0
-        new_message_count = max(eligible_end - summarized_count, 0)
+        start = min(max(summarized_count, 0), history_count)
+        if max_eligible_end <= start:
+            return ConversationSummaryDecision(False, "no_eligible_history", max_eligible_end, 0)
+
+        target = max(target_history_tokens, 0)
+        eligible_end = max_eligible_end
+        for index in range(start + 1, max_eligible_end + 1):
+            if self.estimate_messages_tokens(history[index:]) <= target:
+                eligible_end = index
+                break
+
+        new_message_count = max(eligible_end - start, 0)
         if new_message_count <= 0:
             return ConversationSummaryDecision(
                 False,
@@ -100,16 +100,9 @@ class ConversationSummarizer:
                 eligible_end,
                 new_message_count,
             )
-        if new_message_count < self.config.min_new_messages and not token_pressure and not force:
-            return ConversationSummaryDecision(
-                False,
-                "not_enough_new_messages",
-                eligible_end,
-                new_message_count,
-            )
         return ConversationSummaryDecision(
             True,
-            "forced" if force else "ready",
+            "budget_pressure",
             eligible_end,
             new_message_count,
         )
@@ -143,6 +136,13 @@ class ConversationSummarizer:
             revision=revision,
             updated_at=datetime.now(timezone.utc).isoformat(),
             estimated_tokens=_estimate_tokens(content, self.chars_per_token),
+        )
+
+    def estimate_messages_tokens(self, messages: list[Message]) -> int:
+        """Estimate token cost for a list of chat messages."""
+        return sum(
+            _estimate_tokens(str(message.get("content", "")), self.chars_per_token)
+            for message in messages
         )
 
 
