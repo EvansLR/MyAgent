@@ -288,12 +288,6 @@ class ContextBuilder:
             )
         return sections
 
-    def build_system_prompt(self) -> str:
-        """Build the system prompt from ordered sections."""
-        items = self._items_from_sections(self.build_sections())
-        selected_items, _, _ = self._select_system_items(items, reserved_tokens=0)
-        return self._render_system_prompt(selected_items)
-
     def build_messages_with_report(
         self,
         current_message: InboundMessage,

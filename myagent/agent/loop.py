@@ -344,7 +344,6 @@ class AgentLoop:
 
         working_messages = list(messages)
         for iteration in range(1, self.max_tool_iterations + 1):
-            working_messages = self._refresh_system_message(working_messages)
             turn_state.iteration = iteration
             self._trace_llm_request(
                 inbound.session_key,
@@ -388,16 +387,6 @@ class AgentLoop:
             "Tool call limit reached before a stable final answer was produced. "
             "Please narrow the request, or ask me to continue with one specific direction."
         )
-
-    def _refresh_system_message(self, messages: list[Message]) -> list[Message]:
-        """Rebuild the system prompt so turn-local runtime context can evolve within one turn."""
-        if not messages:
-            return messages
-        refreshed = list(messages)
-        if refreshed[0].get("role") != "system":
-            return refreshed
-        refreshed[0] = {"role": "system", "content": self.context_builder.build_system_prompt()}
-        return refreshed
 
 
     async def _execute_tool_call(

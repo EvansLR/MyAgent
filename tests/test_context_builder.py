@@ -25,10 +25,11 @@ def make_workspace(name: str) -> Path:
     return root
 
 
-def test_context_builder_builds_system_prompt() -> None:
+def test_context_builder_builds_system_message() -> None:
     builder = ContextBuilder()
 
-    prompt = builder.build_system_prompt()
+    messages, _ = builder.build_messages_with_report(make_message("hello"))
+    prompt = messages[0]["content"]
 
     assert "# Identity" in prompt
     assert "MyAgent" in prompt

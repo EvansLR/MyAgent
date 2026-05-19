@@ -1244,3 +1244,24 @@ Focused verification:
 python -m pytest tests/test_context_builder.py tests/test_agent_skills.py
 16 passed
 ```
+
+## 2026-05-19 Update: Active Skills Prompt Timing
+
+Active Skills are no longer re-injected into the main system prompt during the
+same tool-calling turn. The main AgentLoop now keeps one system prompt for the
+whole turn.
+
+Current behavior:
+
+```text
+turn starts
+  ContextBuilder builds system prompt once
+  model may call skill_get
+  skill_get records active skill for trace/subagent context
+  later tool iterations in the same turn keep the original system prompt
+next turn / next context build
+  active skill context can be injected if still exposed by the runtime provider
+```
+
+This removes the old mid-turn system prompt refresh path and keeps budgeting
+consistent.

@@ -194,7 +194,7 @@ async def test_agent_loop_traces_skill_get_usage() -> None:
         assert len(event["turn_id"]) == 32
 
 
-async def test_agent_loop_includes_active_skill_section_after_skill_get() -> None:
+async def test_agent_loop_does_not_refresh_active_skill_section_mid_turn() -> None:
     root = make_workspace("active-skill-section")
     write_skill(root, "code-review", "Review code changes.")
     provider = SkillGetThenContinueProvider()
@@ -209,6 +209,4 @@ async def test_agent_loop_includes_active_skill_section_after_skill_get() -> Non
     await agent.process_next()
 
     second_call_system_prompt = provider.seen_messages[1][0]["content"]
-    assert "# Active Skills" in second_call_system_prompt
-    assert "code-review: code-review" in second_call_system_prompt
-    assert "reason: loaded_by_skill_get" in second_call_system_prompt
+    assert "# Active Skills" not in second_call_system_prompt

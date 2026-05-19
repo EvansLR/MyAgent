@@ -2271,3 +2271,26 @@ The old `core_memory_provider` / `Long-term Memory` compatibility path has been
 removed. ContextBuilder now only accepts explicit `Always Memory` and
 `Now Memory` providers. This keeps the learning version free of legacy memory
 format branches.
+
+## 2026-05-19 Update: One System Prompt Per Turn
+
+ContextBuilder now has a single runtime entry point:
+
+```text
+build_messages_with_report(...)
+```
+
+The old standalone `build_system_prompt()` refresh path was removed. A turn now
+keeps the same system prompt across tool-call iterations. This avoids a second,
+slightly different budget path inside the tool loop.
+
+Tradeoff:
+
+- Runtime date/time refreshes on each new turn, not within every tool-call
+  iteration.
+- Active Skills selected during a turn are available for trace/subagent context,
+  but they are not re-injected into the main system prompt until the next context
+  build.
+
+This is intentional for the learning version: one turn is expected to be short,
+and a single prompt assembly path is easier to explain and debug.
