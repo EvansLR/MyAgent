@@ -1486,3 +1486,16 @@ The main design rule is:
 ```text
 compress memory first; drop only as a final prompt-budget fallback
 ```
+
+Legacy compatibility is intentionally removed in the current learning version.
+`MEMORY.md` should use only:
+
+```text
+## Always
+## Now
+## Later
+```
+
+Old `Core Memory`, `Profile`, `Active Goals`, and `Long-term Memory` fallback
+paths are not read by ContextBuilder anymore. If an old local memory file exists,
+rewrite it into the current shape instead of keeping migration logic in code.

@@ -172,7 +172,6 @@ class ContextBuilder:
         runtime_environment: str | None = None,
         runtime_environment_provider: Callable[[], str] | None = None,
         delegation_policy: str | None = DEFAULT_DELEGATION_POLICY,
-        core_memory_provider: Callable[[], str] | None = None,
         always_memory_provider: Callable[[], str] | None = None,
         now_memory_provider: Callable[[], str] | None = None,
         conversation_summary_provider: Callable[[], str] | None = None,
@@ -189,7 +188,6 @@ class ContextBuilder:
         self.runtime_environment = runtime_environment
         self.runtime_environment_provider = runtime_environment_provider
         self.delegation_policy = delegation_policy
-        self.core_memory_provider = core_memory_provider
         self.always_memory_provider = always_memory_provider
         self.now_memory_provider = now_memory_provider
         self.conversation_summary_provider = conversation_summary_provider
@@ -235,7 +233,6 @@ class ContextBuilder:
             )
         always_memory = self.read_always_memory()
         now_memory = self.read_now_memory()
-        core_memory = "" if (always_memory or now_memory) else self.read_core_memory()
         if always_memory:
             sections.append(
                 ContextSection(
@@ -254,16 +251,6 @@ class ContextBuilder:
                     source="memory:now",
                     kind=ContextItemKind.MEMORY_CORE,
                     retention=ContextRetention.CONTEXT,
-                )
-            )
-        if core_memory:
-            sections.append(
-                ContextSection(
-                    name="Long-term Memory",
-                    content=core_memory,
-                    source="memory:core",
-                    kind=ContextItemKind.MEMORY_CORE,
-                    retention=ContextRetention.CORE,
                 )
             )
         conversation_summary = self.read_conversation_summary()
@@ -594,12 +581,6 @@ class ContextBuilder:
                 )
             )
         return sections
-
-    def read_core_memory(self) -> str:
-        """Read always-visible long-term memory for the system prompt."""
-        if self.core_memory_provider is None:
-            return ""
-        return self.core_memory_provider().strip()
 
     def read_runtime_environment(self) -> str:
         """Read current runtime facts for the system prompt."""

@@ -2266,3 +2266,8 @@ comes from the fixed section assembly order; budget fallback uses only
 Runtime Environment is also provider-based now. `AgentLoop` passes a callable
 instead of a pre-rendered string, so date/time facts are refreshed on every
 ContextBuilder build rather than freezing at process startup.
+
+The old `core_memory_provider` / `Long-term Memory` compatibility path has been
+removed. ContextBuilder now only accepts explicit `Always Memory` and
+`Now Memory` providers. This keeps the learning version free of legacy memory
+format branches.

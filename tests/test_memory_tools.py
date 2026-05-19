@@ -91,7 +91,6 @@ async def test_memory_tool_saves_explicit_long_term_memory() -> None:
     memory = (store.root / "MEMORY.md").read_text(encoding="utf-8")
     assert "Saved long-term memory" in result
     assert "User prefers documentation-first changes." in memory
-    assert "## Always" in store.read_core_memory()
     assert "User prefers documentation-first changes." in store.read_always_memory()
     assert store.read_now_memory() == ""
 
@@ -107,7 +106,8 @@ async def test_memory_later_is_searchable_but_not_visible_by_default() -> None:
         apply=True,
     )
 
-    assert "Feishu gateway" not in store.read_core_memory()
+    assert "Feishu gateway" not in store.read_always_memory()
+    assert "Feishu gateway" not in store.read_now_memory()
     search_result = await MemorySearchTool(store).execute(query="Feishu gateway")
     assert "Feishu gateway" in search_result
 

@@ -87,18 +87,6 @@ def test_context_builder_refreshes_runtime_environment_provider_each_build() -> 
     assert "time two" in second[0]["content"]
 
 
-def test_context_builder_includes_core_memory() -> None:
-    builder = ContextBuilder(
-        identity="Test identity.",
-        core_memory_provider=lambda: "## Always\n\n- User prefers docs first.",
-    )
-
-    messages, _ = builder.build_messages_with_report(make_message("hello"))
-
-    assert "# Long-term Memory" in messages[0]["content"]
-    assert "User prefers docs first." in messages[0]["content"]
-
-
 def test_context_builder_splits_always_and_now_memory() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
@@ -121,10 +109,10 @@ def test_context_builder_splits_always_and_now_memory() -> None:
     assert sections["Now Memory"].retention == "context"
 
 
-def test_context_builder_reports_sections_and_core_memory_retention() -> None:
+def test_context_builder_reports_sections_and_always_memory_retention() -> None:
     builder = ContextBuilder(
         identity="Test identity.",
-        core_memory_provider=lambda: "## Always\n\n- User name is Lin.",
+        always_memory_provider=lambda: "- User name is Lin.",
     )
 
     messages, report = builder.build_messages_with_report(make_message("hello"))
@@ -133,8 +121,8 @@ def test_context_builder_reports_sections_and_core_memory_retention() -> None:
     sections = {section.name: section for section in report.sections}
     assert sections["Identity"].retention == "required"
     assert sections["Identity"].source == "identity"
-    assert sections["Long-term Memory"].retention == "core"
-    assert sections["Long-term Memory"].source == "memory:core"
+    assert sections["Always Memory"].retention == "core"
+    assert sections["Always Memory"].source == "memory:always"
     assert report.total_chars > 0
     assert report.estimated_tokens > 0
 

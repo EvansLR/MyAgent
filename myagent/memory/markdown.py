@@ -46,16 +46,6 @@ class MarkdownMemoryStore:
         if not self.proposals_path.exists():
             self.proposals_path.write_text(f"{PROPOSALS_HEADER}\n\n", encoding="utf-8")
 
-    def read_core_memory(self) -> str:
-        """Return the high-signal sections that should enter the system prompt."""
-        visible_sections = self.read_visible_memory_sections()
-        parts = []
-        for name in VISIBLE_MEMORY_SECTIONS:
-            content = visible_sections.get(name, "").strip()
-            if content:
-                parts.append(f"## {name}\n\n{content}")
-        return "\n\n".join(parts)
-
     def read_always_memory(self) -> str:
         """Return compact stable memory that should normally survive budgeting."""
         return self.read_visible_memory_sections().get("Always", "").strip()
