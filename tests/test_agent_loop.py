@@ -234,24 +234,36 @@ class ConversationSummaryProvider:
         return ProviderResponse(content=f"answer {self.calls}")
 
 
-async def test_agent_loop_updates_summary_and_injects_it_next_turn() -> None:
+async def test_agent_loop_updates_summary_before_context_when_history_would_trim() -> None:
     bus = MessageBus()
     provider = ConversationSummaryProvider()
+    context_builder = ContextBuilder(
+        identity="You are MyAgent.",
+        runtime_environment="",
+        delegation_policy=None,
+        budget=ContextBudget(max_prompt_tokens=400, chars_per_token=1, history_token_ratio=0.0),
+    )
     agent = AgentLoop(
         bus,
         provider=provider,
+        context_builder=context_builder,
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=4,
+            trigger_messages=100,
+            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=2,
+            min_new_messages=6,
         ),
         start_cron=False,
     )
     agent.memory_extractor = None
+    agent._history["cli:default"] = [
+        {"role": "user", "content": "first " + ("large " * 40)},
+        {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer 2"},
+    ]
 
-    await bus.publish_inbound(make_message("first"))
-    await agent.process_next()
-    await bus.publish_inbound(make_message("second"))
+    await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
     state = agent._conversation_summaries.get("cli:default")
@@ -259,38 +271,46 @@ async def test_agent_loop_updates_summary_and_injects_it_next_turn() -> None:
     assert state.summarized_message_count == 2
     assert provider.summary_prompts
 
-    await bus.publish_inbound(make_message("third"))
-    await agent.process_next()
-
-    third_call_system = provider.seen_messages[2][0]["content"]
-    assert "# Conversation Summary" in third_call_system
-    assert "lightweight summaries" in third_call_system
-    third_call_history = provider.seen_messages[2][1:-1]
-    assert {"role": "user", "content": "first"} not in third_call_history
-    assert {"role": "assistant", "content": "answer 1"} not in third_call_history
-    assert {"role": "user", "content": "second"} in third_call_history
-    assert {"role": "assistant", "content": "answer 2"} in third_call_history
+    call_system = provider.seen_messages[0][0]["content"]
+    assert "# Conversation Summary" in call_system
+    assert "lightweight summaries" in call_system
+    call_history = provider.seen_messages[0][1:-1]
+    assert not any("first" in str(message.get("content", "")) for message in call_history)
+    assert not any("answer 1" in str(message.get("content", "")) for message in call_history)
+    assert {"role": "user", "content": "second"} in call_history
+    assert {"role": "assistant", "content": "answer 2"} in call_history
 
 
-async def test_agent_loop_updates_summary_when_history_token_pressure_is_high() -> None:
+async def test_agent_loop_forces_summary_under_context_pressure_even_with_few_new_messages() -> None:
     bus = MessageBus()
     provider = ConversationSummaryProvider()
+    context_builder = ContextBuilder(
+        identity="You are MyAgent.",
+        runtime_environment="",
+        delegation_policy=None,
+        budget=ContextBudget(max_prompt_tokens=400, chars_per_token=1, history_token_ratio=0.0),
+    )
     agent = AgentLoop(
         bus,
         provider=provider,
+        context_builder=context_builder,
         conversation_summary_config=ConversationSummaryConfig(
             trigger_messages=100,
-            trigger_tokens=20,
+            trigger_tokens=None,
             keep_recent_messages=2,
             min_new_messages=6,
         ),
         start_cron=False,
     )
     agent.memory_extractor = None
+    agent._history["cli:default"] = [
+        {"role": "user", "content": "first " + ("large " * 40)},
+        {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer 2"},
+    ]
 
-    await bus.publish_inbound(make_message("first " + ("large " * 30)))
-    await agent.process_next()
-    await bus.publish_inbound(make_message("second " + ("large " * 30)))
+    await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
     state = agent._conversation_summaries.get("cli:default")

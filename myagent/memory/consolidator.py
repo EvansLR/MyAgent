@@ -19,12 +19,12 @@ _CONSOLIDATION_SYSTEM_PROMPT = """You are MyAgent's memory consolidation engine.
 Your task is to review pending memory proposals and merge them into the current long-term memory.
 
 SECTION DECISION:
-- Extractors and tools may suggest Always, Now, or Later, but those suggestions are hints.
+- Extractors and tools may suggest Always or Now, but those suggestions are hints.
 - You are responsible for placing each item in the section that best matches its durability and prompt value.
 
 RULES:
 1. Read the current memory and the pending proposals carefully.
-2. Merge proposals into Always, Now, or Later. Treat target_section as a hint, not a command.
+2. Merge proposals into Always or Now. Treat section_hint as a hint, not a command.
 3. DEDUPLICATE: do not keep redundant or near-duplicate information.
 4. RESOLVE CONFLICTS: when proposals contradict each other, keep the most accurate/recent one. Discard outdated or wrong information.
 5. DISCARD low-quality proposals (importance < 2, vague, or irrelevant).
@@ -34,8 +34,8 @@ RULES:
 WHEN A VISIBLE SECTION IS TOO LARGE:
 1. Merge duplicates and near-duplicates.
 2. Compress related details into one higher-level bullet.
-3. Demote stale or lower-value Always items to Now or Later.
-4. Demote completed or no-longer-active Now items to Later.
+3. Demote stale or lower-value Always items to Now.
+4. Remove completed or no-longer-active Now items from visible memory; archive is handled separately.
 5. Discard only low-quality, contradicted, or obsolete information.
 Do not delete an item merely because it is old.
 
@@ -50,10 +50,6 @@ standing collaboration rules. Target budget: {always_budget} characters.
 ## Now
 Current stage, active project state, open loops, and recent decisions that should
 stay visible for the next few sessions. Target budget: {now_budget} characters.
-
-## Later
-Useful but non-urgent facts, historical context, references, and lower-confidence
-notes. This section is searchable but not injected into the prompt by default.
 
 If a section has no content after consolidation, keep the heading with a blank line after it.
 Do not add any commentary outside the markdown.
@@ -99,7 +95,7 @@ class MemoryConsolidator:
 
         self.store.memory_path.write_text(new_memory + "\n", encoding="utf-8")
 
-        archive_dir = self.store.root / "memory" / "archive"
+        archive_dir = self.store.root / "archive" / "proposals"
         archive_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         archive_path = archive_dir / f"MEMORY_PROPOSALS-{timestamp}.md"

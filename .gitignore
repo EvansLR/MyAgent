@@ -8,3 +8,4 @@ data/
 myagent.json
 .test-workspaces/
 battery-report.html
+.test-tmp/

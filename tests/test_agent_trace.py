@@ -300,34 +300,43 @@ class TraceSummaryProvider:
 async def test_agent_loop_records_conversation_summary_trace_events() -> None:
     root = make_workspace("conversation-summary-trace")
     bus = MessageBus()
+    context_builder = ContextBuilder(
+        identity="You are MyAgent.",
+        runtime_environment="",
+        delegation_policy=None,
+        budget=ContextBudget(max_prompt_tokens=100, chars_per_token=1),
+    )
     agent = AgentLoop(
         bus,
         provider=TraceSummaryProvider(),
+        context_builder=context_builder,
         trace_store=JsonlTraceStore(root),
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=4,
+            trigger_messages=100,
+            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=2,
+            min_new_messages=6,
         ),
         start_cron=False,
     )
     agent.memory_extractor = None
+    agent._history["cli:default"] = [
+        {"role": "user", "content": "first " + ("large " * 12)},
+        {"role": "assistant", "content": "answer 1 " + ("large " * 12)},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer 2"},
+    ]
 
-    await bus.publish_inbound(make_message("first"))
-    await agent.process_next()
-    await bus.publish_inbound(make_message("second"))
+    await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
     events = read_events(root / "cli_default.jsonl")
     checked = next(event for event in events if event["event"] == "conversation_summary_checked")
     updated = next(event for event in events if event["event"] == "conversation_summary_updated")
-    assert checked["data"]["reason"] == "ready"
+    assert checked["data"]["reason"] == "pre_context_budget_pressure"
     assert checked["data"]["new_messages_considered"] == 2
     assert updated["data"]["summarized_message_count_after"] == 2
     assert updated["data"]["summary_chars_after"] > 0
-
-    await bus.publish_inbound(make_message("third"))
-    await agent.process_next()
 
     events = read_events(root / "cli_default.jsonl")
     context_events = [event for event in events if event["event"] == "context_built"]
@@ -338,26 +347,38 @@ async def test_agent_loop_records_conversation_summary_trace_events() -> None:
 async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
     root = make_workspace("conversation-summary-failed")
     bus = MessageBus()
+    context_builder = ContextBuilder(
+        identity="You are MyAgent.",
+        runtime_environment="",
+        delegation_policy=None,
+        budget=ContextBudget(max_prompt_tokens=100, chars_per_token=1),
+    )
     agent = AgentLoop(
         bus,
         provider=TraceSummaryProvider(fail_summary=True),
+        context_builder=context_builder,
         trace_store=JsonlTraceStore(root),
         conversation_summary_config=ConversationSummaryConfig(
-            trigger_messages=4,
+            trigger_messages=100,
+            trigger_tokens=None,
             keep_recent_messages=2,
-            min_new_messages=2,
+            min_new_messages=6,
         ),
         start_cron=False,
     )
     agent.memory_extractor = None
+    agent._history["cli:default"] = [
+        {"role": "user", "content": "first " + ("large " * 12)},
+        {"role": "assistant", "content": "answer 1 " + ("large " * 12)},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer 2"},
+    ]
 
-    await bus.publish_inbound(make_message("first"))
-    await agent.process_next()
-    await bus.publish_inbound(make_message("second"))
+    await bus.publish_inbound(make_message("third"))
     outbound = await agent.process_next()
 
     events = read_events(root / "cli_default.jsonl")
-    assert outbound.content == "answer 2"
+    assert outbound.content == "answer 1"
     assert not [event for event in events if event["event"] == "conversation_summary_updated"]
     failed = next(event for event in events if event["event"] == "conversation_summary_failed")
     assert failed["data"]["type"] == "RuntimeError"

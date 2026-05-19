@@ -10,7 +10,6 @@ from uuid import uuid4
 
 
 VISIBLE_MEMORY_SECTIONS = ("Always", "Now")
-SEARCHABLE_MEMORY_SECTIONS = ("Later",)
 MEMORY_HEADER = "# Memory"
 PROPOSALS_HEADER = "# Memory Proposals"
 ALWAYS_MEMORY_CHAR_BUDGET = 4000
@@ -36,11 +35,11 @@ class MarkdownMemoryStore:
         self.memory_path = self.root / "MEMORY.md"
         self.proposals_path = self.root / "MEMORY_PROPOSALS.md"
         self.dreams_path = self.proposals_path
-        self.daily_dir = self.root / "daily"
+        self.archive_dir = self.root / "archive"
 
     def ensure_layout(self) -> None:
         """Create the default local memory files if they do not exist."""
-        self.daily_dir.mkdir(parents=True, exist_ok=True)
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
         if not self.memory_path.exists():
             self.memory_path.write_text(_default_memory_text(), encoding="utf-8")
         if not self.proposals_path.exists():
@@ -61,7 +60,7 @@ class MarkdownMemoryStore:
         sections = _parse_markdown_sections(self.memory_path.read_text(encoding="utf-8"))
         return {name: sections.get(name, "").strip() for name in VISIBLE_MEMORY_SECTIONS}
 
-    def append_daily(
+    def append_archive(
         self,
         note: str,
         tags: list[str] | None = None,
@@ -69,14 +68,14 @@ class MarkdownMemoryStore:
         source: str = "agent",
         day: date | None = None,
     ) -> MarkdownMemoryRecord:
-        """Append one working note or candidate to today's daily memory file."""
+        """Append one episodic note to today's searchable archive file."""
         self.ensure_layout()
         target_day = day or date.today()
-        path = self.daily_dir / f"{target_day.isoformat()}.md"
+        path = self.archive_dir / f"{target_day.isoformat()}.md"
         if not path.exists():
-            path.write_text(f"# Daily Memory {target_day.isoformat()}\n\n", encoding="utf-8")
+            path.write_text(f"# Memory Archive {target_day.isoformat()}\n\n", encoding="utf-8")
 
-        memory_id = f"daily-{target_day.strftime('%Y%m%d')}-{uuid4().hex[:8]}"
+        memory_id = f"archive-{target_day.strftime('%Y%m%d')}-{uuid4().hex[:8]}"
         clean_note = note.strip()
         tag_text = ", ".join(tags or [])
         timestamp = datetime.now().isoformat(timespec="seconds")
@@ -97,19 +96,16 @@ class MarkdownMemoryStore:
             content=clean_note,
         )
 
-    def propose_long_term(
+    def propose_memory(
         self,
         content: str,
-        section: str,
+        section_hint: str,
         tags: list[str] | None = None,
         importance: int = 3,
         source: str = "agent",
-        apply: bool = False,
     ) -> MarkdownMemoryRecord:
         """Record a proposal for promotion to long-term memory."""
         self.ensure_layout()
-        if apply:
-            return self.append_long_term(content=content, section=section, tags=tags)
 
         proposal_id = f"proposal-{uuid4().hex[:8]}"
         tag_text = ", ".join(tags or [])
@@ -117,7 +113,7 @@ class MarkdownMemoryStore:
         clean_content = content.strip()
         block = (
             f"\n## {proposal_id}\n\n"
-            f"- target_section: {section}\n"
+            f"- section_hint: {section_hint}\n"
             f"- source: {source}\n"
             f"- importance: {importance}\n"
             f"- tags: {tag_text}\n"
@@ -133,16 +129,16 @@ class MarkdownMemoryStore:
             content=clean_content,
         )
 
-    def append_long_term(
+    def remember(
         self,
         content: str,
         section: str,
         tags: list[str] | None = None,
     ) -> MarkdownMemoryRecord:
-        """Append one reviewed long-term memory bullet to MEMORY.md."""
+        """Write one explicit visible memory directly to MEMORY.md."""
         self.ensure_layout()
         clean_content = content.strip()
-        target_section = section.strip() or "Later"
+        target_section = _visible_section_or_default(section)
         memory_id = f"memory-{uuid4().hex[:8]}"
         marker = f"<!-- id: {memory_id} tags: {', '.join(tags or [])} -->"
         text = self.memory_path.read_text(encoding="utf-8")
@@ -215,8 +211,8 @@ class MarkdownMemoryStore:
             paths.append(self.memory_path)
         if self.proposals_path.exists():
             paths.append(self.proposals_path)
-        if self.daily_dir.exists():
-            paths.extend(sorted(self.daily_dir.glob("*.md")))
+        if self.archive_dir.exists():
+            paths.extend(sorted(self.archive_dir.glob("*.md")))
         return paths
 
 
@@ -249,9 +245,15 @@ def _default_memory_text() -> str:
     return (
         f"{MEMORY_HEADER}\n\n"
         "## Always\n\n"
-        "## Now\n\n"
-        "## Later\n"
+        "## Now\n"
     )
+
+
+def _visible_section_or_default(section: str) -> str:
+    clean = section.strip()
+    if clean in VISIBLE_MEMORY_SECTIONS:
+        return clean
+    return "Now"
 
 
 def _append_to_markdown_section(text: str, section: str, line: str) -> str:
@@ -397,7 +399,7 @@ def _parse_markdown_sections(text: str) -> dict[str, str]:
 
 
 def _looks_like_memory_id(section: str) -> bool:
-    return section.startswith(("daily-", "proposal-"))
+    return section.startswith(("archive-", "proposal-"))
 
 
 def _strip_metadata_block(content: str) -> str:

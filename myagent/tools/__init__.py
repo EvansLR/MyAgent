@@ -12,10 +12,11 @@ from myagent.tools.filesystem import (
     WriteFileTool,
 )
 from myagent.tools.memory import (
-    MemoryAppendDailyTool,
+    MemoryArchiveTool,
     MemoryForgetTool,
     MemoryGetTool,
-    MemoryProposeLongTermTool,
+    MemoryProposeTool,
+    MemoryRememberTool,
     MemorySearchTool,
 )
 from myagent.tools.cron import CronTool
@@ -55,10 +56,11 @@ __all__ = [
     "ListDirTool",
     "MessageTool",
     "MoveFileTool",
-    "MemoryAppendDailyTool",
+    "MemoryArchiveTool",
     "MemoryForgetTool",
     "MemoryGetTool",
-    "MemoryProposeLongTermTool",
+    "MemoryProposeTool",
+    "MemoryRememberTool",
     "MemorySearchTool",
     "ReadFileTool",
     "ShellCommandTool",

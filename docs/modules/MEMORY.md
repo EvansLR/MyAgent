@@ -14,34 +14,43 @@ Memory 把用户明确告诉 MyAgent 的长期信息保存到文件里，并在�
 
 ## 当前状态速览
 
-这份文档前半部分保留了 Memory 第一阶段的设计口径，用来解释它最初为什么从
-显式写入 + JSONL append-only 开始。
+这份文档后半部分保留了一些早期设计记录，用来说明 Memory 是怎么从
+显式写入 + JSONL append-only 演进过来的。当前真实实现已经收敛到一个更简单的
+Markdown-backed memory workspace：
 
-但当前真实实现已经进入 Memory v2 的最小闭环阶段，主路径不再是早期的
-`facts.jsonl` + 简单关键词召回，而是 Markdown-backed memory workspace：
-
-- `MEMORY.md`
-- `MEMORY_PROPOSALS.md`
-- `daily/YYYY-MM-DD.md`
+```text
+~/.myagent/memory/
+  MEMORY.md
+  MEMORY_PROPOSALS.md
+  archive/YYYY-MM-DD.md
+  archive/proposals/MEMORY_PROPOSALS-*.md
+```
 
 当前主线能力：
 
-- ContextBuilder 默认组装 `MEMORY.md` 中的高信号 section。
+- `MEMORY.md` 只保留会默认注入上下文的可见记忆，分为 `Always` 和 `Now`。
+- `MEMORY_PROPOSALS.md` 保存候选语义记忆，由 consolidation 后续整理进 `Always` 或 `Now`。
+- `archive/YYYY-MM-DD.md` 保存事件型归档记录，可搜索，但默认不注入上下文。
+- `archive/proposals/` 保存已经处理过的 proposal 快照，避免候选区无限堆积。
+- ContextBuilder 默认只组装 `MEMORY.md` 里的 `Always` 和 `Now`。
 - Agent 可用 memory tools：
-  - `memory_append_daily`
-  - `memory_propose_long_term`
+  - `memory_remember`
+  - `memory_propose`
+  - `memory_archive`
   - `memory_search`
   - `memory_get`
   - `memory_forget`
-- `MemoryExtractor` 在 final answer 后运行，但默认只写 daily candidate 或 proposal。
-- 自动提取不会直接污染长期 `MEMORY.md`。
+- `MemoryExtractor` 只在 pre-context compaction 前处理即将被折叠的旧 history chunk，
+  写入 archive note 或 proposal，不直接写 visible memory。
+- `MemoryConsolidator` 周期性把 proposals 压缩、去重、合并进 `Always` / `Now`，并归档已处理 proposal。
 
 当前边界：
 
 - 不上向量库。
 - 不上 SQLite。
 - 不做 knowledge graph。
-- 不让模型随意直接改长期 memory。
+- 不保留 `Later` 可见区。
+- 不做每轮结束后的 post-turn 自动提取，避免和 pre-context memory flush 重复。
 
 ## 为什么需要它
 

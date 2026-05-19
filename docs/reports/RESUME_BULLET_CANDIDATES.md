@@ -292,13 +292,13 @@ taskkill /f /im PhoneExperienceHost.exe
 ### 简历 bullet 候选
 
 ```text
-- 设计 Markdown-backed memory 机制，将长期记忆、候选记忆和 daily 工作上下文分层存储，支持保守写入和定时 consolidation。
+- 设计 Markdown-backed memory 机制，将可见记忆、候选记忆和事件归档分层存储，支持保守写入和定时 consolidation。
 ```
 
 更短版本：
 
 ```text
-- 实现 Markdown-backed memory，将长期稳定信息、候选记忆和 daily 上下文分离，提升个人助理跨会话连续性。
+- 实现 Markdown-backed memory，将长期稳定信息、候选记忆和事件归档分离，提升个人助理跨会话连续性。
 ```
 
 更强调取舍：
@@ -321,7 +321,7 @@ taskkill /f /im PhoneExperienceHost.exe
 讲重点：
 
 - Memory 不是把所有对话都存起来
-- 长期稳定事实、候选记忆、daily 上下文分开
+- 长期稳定事实、候选记忆、事件归档分开
 - proposal 不长期堆积
 - summary 不等于 memory
 
@@ -550,7 +550,7 @@ Trace 用来解释 Agent 为什么这样回答：
 - 实现 local-first 个人助理 Agent runtime，支持 CLI/Feishu 多渠道对话、工具调用、长期记忆、定时任务和主动消息发送。
 - 接入 Feishu Gateway，支持 `/new` 会话重置、Markdown-ish 富文本回复、工具审批卡片和当前 chat 路由，完成真实 IM 场景 smoke test。
 - 设计受控文件与 Shell 工具，支持项目文件读写、PowerShell 查询、工作目录持久化和危险操作审批，平衡本地自动化能力与安全边界。
-- 设计 Markdown-backed memory，将长期稳定信息、候选记忆和 daily 上下文分离，避免临时对话污染长期记忆。
+- 设计 Markdown-backed memory，将长期稳定信息、候选记忆和事件归档分离，避免临时对话污染长期记忆。
 ```
 
 ### 组合 C：偏工程架构 / 可扩展性
@@ -571,7 +571,7 @@ Trace 用来解释 Agent 为什么这样回答：
 - 实现预算感知的上下文管理，支持 system section 分层、history 裁剪和 conversation summary，缓解长对话 prompt 膨胀并保留近期细节。
 - 抽象统一 ToolRegistry，基于 JSON Schema 暴露工具参数并执行校验，接入文件、Web、Shell、Memory、SubAgent 和 MCP 外部工具。
 - 接入 Feishu Gateway，支持 `/new` 会话重置、Markdown-ish 富文本回复、工具审批卡片和当前 chat 路由，完成真实 IM 场景 smoke test。
-- 设计 Markdown-backed memory 与受控 SubAgent 机制，将长期/候选/daily 记忆分层，并通过 profile + tool allowlist 控制子 Agent 任务边界。
+- 设计 Markdown-backed memory 与受控 SubAgent 机制，将可见/候选/归档记忆分层，并通过 profile + tool allowlist 控制子 Agent 任务边界。
 ```
 
 ## 下一步筛选方式

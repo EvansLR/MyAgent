@@ -6,21 +6,22 @@ from myagent.memory.markdown import MarkdownMemoryStore
 from myagent.tools.base import Tool
 
 
-class MemoryAppendDailyTool(Tool):
-    """Append a daily working-memory note."""
+class MemoryArchiveTool(Tool):
+    """Append an episodic archive note."""
 
     def __init__(self, store: MarkdownMemoryStore) -> None:
         self.store = store
 
     @property
     def name(self) -> str:
-        return "memory_append_daily"
+        return "memory_archive"
 
     @property
     def description(self) -> str:
         return (
-            "Append a short working-memory note or candidate observation to today's "
-            "local daily memory file."
+            "Append a short episodic note to searchable archive. Use for completed "
+            "work, temporary observations, or historical context that should not "
+            "change the default prompt."
         )
 
     @property
@@ -47,26 +48,26 @@ class MemoryAppendDailyTool(Tool):
         importance: int = 1,
         **_: Any,
     ) -> str:
-        record = self.store.append_daily(note=note, tags=tags, importance=importance)
-        return f"Saved daily memory {record.id} in {record.source}."
+        record = self.store.append_archive(note=note, tags=tags, importance=importance)
+        return f"Archived memory note {record.id} in {record.source}."
 
 
-class MemoryProposeLongTermTool(Tool):
-    """Create or apply a long-term memory."""
+class MemoryRememberTool(Tool):
+    """Write explicit visible memory."""
 
     def __init__(self, store: MarkdownMemoryStore) -> None:
         self.store = store
 
     @property
     def name(self) -> str:
-        return "memory_propose_long_term"
+        return "memory_remember"
 
     @property
     def description(self) -> str:
         return (
-            "Create a durable long-term memory proposal. Use apply=true only when "
-            "the user explicitly asks you to remember stable or important "
-            "information. Use sections Always, Now, or Later."
+            "Immediately remember explicit user-approved information in visible "
+            "memory. Use only when the user asks you to remember something or "
+            "clearly establishes durable/current context. Sections: Always or Now."
         )
 
     @property
@@ -77,19 +78,9 @@ class MemoryProposeLongTermTool(Tool):
                 "content": {"type": "string", "description": "Standalone memory content."},
                 "section": {
                     "type": "string",
-                    "description": "Suggested MEMORY.md section: Always, Now, or Later.",
+                    "description": "Visible memory section: Always or Now.",
                 },
                 "tags": {"type": "array", "description": "Optional tags."},
-                "importance": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "Importance from 1 to 5.",
-                },
-                "apply": {
-                    "type": "boolean",
-                    "description": "Whether to write directly to MEMORY.md. Default false.",
-                },
             },
             "required": ["content", "section"],
         }
@@ -99,20 +90,70 @@ class MemoryProposeLongTermTool(Tool):
         content: str,
         section: str,
         tags: list[str] | None = None,
-        importance: int = 3,
-        apply: bool = False,
         **_: Any,
     ) -> str:
-        record = self.store.propose_long_term(
+        record = self.store.remember(
             content=content,
             section=section,
             tags=tags,
-            importance=importance,
-            apply=apply,
         )
-        if apply:
-            return f"Saved long-term memory {record.id} in {record.source}#{record.section}."
-        return f"Created long-term memory proposal {record.id} in {record.source}."
+        return f"Remembered {record.id} in {record.source}#{record.section}."
+
+
+class MemoryProposeTool(Tool):
+    """Create a candidate visible memory."""
+
+    def __init__(self, store: MarkdownMemoryStore) -> None:
+        self.store = store
+
+    @property
+    def name(self) -> str:
+        return "memory_propose"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Create a candidate memory proposal for later consolidation. Use when "
+            "information may be useful but was not explicitly approved for immediate "
+            "visible memory. Section hints: Always or Now."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Standalone candidate memory."},
+                "section_hint": {
+                    "type": "string",
+                    "description": "Suggested visible section: Always or Now.",
+                },
+                "tags": {"type": "array", "description": "Optional tags."},
+                "importance": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "Importance from 1 to 5.",
+                },
+            },
+            "required": ["content", "section_hint"],
+        }
+
+    async def execute(
+        self,
+        content: str,
+        section_hint: str,
+        tags: list[str] | None = None,
+        importance: int = 3,
+        **_: Any,
+    ) -> str:
+        record = self.store.propose_memory(
+            content=content,
+            section_hint=section_hint,
+            tags=tags,
+            importance=importance,
+        )
+        return f"Created memory proposal {record.id} in {record.source}."
 
 
 class MemoryForgetTool(Tool):
@@ -170,8 +211,7 @@ class MemorySearchTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Search out-of-context memory such as daily notes, memory proposals, and "
-            "non-core MEMORY.md sections."
+            "Search out-of-context memory such as archive notes and memory proposals."
         )
 
     @property

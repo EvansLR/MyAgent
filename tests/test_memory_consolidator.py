@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 import shutil
 
 from myagent.memory import MemoryConsolidator, MarkdownMemoryStore
@@ -33,6 +33,10 @@ def make_workspace(name: str) -> Path:
     return root
 
 
+def memory_text(*, always: str = "", now: str = "") -> str:
+    return f"# Memory\n\n## Always\n\n{always}\n\n## Now\n\n{now}".rstrip()
+
+
 async def test_consolidator_noop_when_proposals_empty() -> None:
     root = make_workspace("empty-proposals")
     store = MarkdownMemoryStore(root)
@@ -62,56 +66,42 @@ async def test_consolidator_merges_proposals_into_memory() -> None:
     root = make_workspace("merge")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
-    store.propose_long_term(
+    store.propose_memory(
         content="User's name is Lin.",
-        section="Always",
+        section_hint="Always",
         tags=["name"],
         importance=5,
     )
 
-    new_memory = (
-        "# Memory\n\n"
-        "## Always\n\n"
-        "- User's name is Lin.\n\n"
-        "## Now\n\n"
-        "## Later\n"
-    )
-    provider = FakeProvider(new_memory)
+    provider = FakeProvider(memory_text(always="- User's name is Lin."))
     consolidator = MemoryConsolidator(provider, store)
 
     result = await consolidator.consolidate()
 
     assert result is True
-    memory_text = store.memory_path.read_text(encoding="utf-8")
-    assert MEMORY_HEADER in memory_text
-    assert "## Always" in memory_text
-    assert "User's name is Lin." in memory_text
+    memory = store.memory_path.read_text(encoding="utf-8")
+    assert MEMORY_HEADER in memory
+    assert "## Always" in memory
+    assert "User's name is Lin." in memory
 
 
 async def test_consolidator_archives_proposals() -> None:
     root = make_workspace("archive")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
-    store.propose_long_term(
+    store.propose_memory(
         content="User prefers Python.",
-        section="Always",
+        section_hint="Always",
         tags=["tech"],
         importance=3,
     )
 
-    new_memory = (
-        "# Memory\n\n"
-        "## Always\n\n"
-        "- User prefers Python.\n\n"
-        "## Now\n\n"
-        "## Later\n"
-    )
-    provider = FakeProvider(new_memory)
+    provider = FakeProvider(memory_text(always="- User prefers Python."))
     consolidator = MemoryConsolidator(provider, store)
 
     await consolidator.consolidate()
 
-    archive_dir = root / "memory" / "archive"
+    archive_dir = root / "archive" / "proposals"
     assert archive_dir.exists()
     archives = list(archive_dir.glob("MEMORY_PROPOSALS-*.md"))
     assert len(archives) == 1
@@ -122,21 +112,14 @@ async def test_consolidator_clears_proposals_after_merge() -> None:
     root = make_workspace("clear")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
-    store.propose_long_term(
+    store.propose_memory(
         content="User is preparing for interviews.",
-        section="Now",
+        section_hint="Now",
         tags=["goal"],
         importance=4,
     )
 
-    new_memory = (
-        "# Memory\n\n"
-        "## Always\n\n"
-        "## Now\n\n"
-        "- User is preparing for interviews.\n\n"
-        "## Later\n"
-    )
-    provider = FakeProvider(new_memory)
+    provider = FakeProvider(memory_text(now="- User is preparing for interviews."))
     consolidator = MemoryConsolidator(provider, store)
 
     await consolidator.consolidate()
@@ -149,9 +132,9 @@ async def test_consolidator_returns_false_on_bad_llm_output() -> None:
     root = make_workspace("bad-llm")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
-    store.propose_long_term(
+    store.propose_memory(
         content="User prefers Python.",
-        section="Always",
+        section_hint="Always",
         tags=["tech"],
         importance=3,
     )
@@ -170,21 +153,14 @@ async def test_consolidator_prompt_uses_budgets_instead_of_hard_counts() -> None
     root = make_workspace("budget-prompt")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
-    store.propose_long_term(
+    store.propose_memory(
         content="User prefers concise engineering explanations.",
-        section="Always",
+        section_hint="Always",
         tags=["preference"],
         importance=4,
     )
 
-    new_memory = (
-        "# Memory\n\n"
-        "## Always\n\n"
-        "- User prefers concise engineering explanations.\n\n"
-        "## Now\n\n"
-        "## Later\n"
-    )
-    provider = FakeProvider(new_memory)
+    provider = FakeProvider(memory_text(always="- User prefers concise engineering explanations."))
     consolidator = MemoryConsolidator(provider, store)
 
     await consolidator.consolidate()

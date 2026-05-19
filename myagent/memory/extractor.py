@@ -1,4 +1,4 @@
-"""Post-turn memory extraction."""
+"""Memory extraction for history chunks that are about to be compacted."""
 
 from __future__ import annotations
 
@@ -6,30 +6,27 @@ import json
 from typing import Any
 
 from myagent.memory.markdown import MarkdownMemoryStore
-from myagent.providers.base import BaseProvider, Message
+from myagent.providers.base import BaseProvider
 
 
 class MemoryExtractor:
-    """Ask the model to extract candidate memory after a completed turn."""
+    """Ask the model to extract candidate memory from a history chunk."""
 
     def __init__(self, provider: BaseProvider, store: MarkdownMemoryStore) -> None:
         self.provider = provider
         self.store = store
 
-    async def extract_turn(self, user_message: str, assistant_answer: str) -> list[str]:
-        """Extract candidate memories and write them to daily notes or proposals."""
+    async def extract_messages(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        source: str = "pre_context_compaction",
+    ) -> list[str]:
+        """Extract candidate memories and write them to proposals or archive."""
         response = await self.provider.generate(
             [
                 {"role": "system", "content": _EXTRACTOR_SYSTEM_PROMPT},
-                {
-                    "role": "user",
-                    "content": (
-                        "User message:\n"
-                        f"{user_message.strip()}\n\n"
-                        "Assistant answer:\n"
-                        f"{assistant_answer.strip()}"
-                    ),
-                },
+                {"role": "user", "content": _build_messages_prompt(messages)},
             ]
         )
         items = _parse_items(response)
@@ -40,23 +37,22 @@ class MemoryExtractor:
                 continue
             tags = _as_str_list(item.get("tags"))
             importance = _as_int(item.get("importance"), default=1)
-            target = str(item.get("target", "daily")).strip().lower()
+            target = str(item.get("target", "archive")).strip().lower()
             if target == "long_term":
-                section = str(item.get("section", "Later")).strip() or "Later"
-                record = self.store.propose_long_term(
+                section_hint = str(item.get("section", "Now")).strip() or "Now"
+                record = self.store.propose_memory(
                     content=content,
-                    section=section,
+                    section_hint=section_hint,
                     tags=tags,
                     importance=importance,
-                    source="post_turn_extractor",
-                    apply=False,
+                    source=source,
                 )
             else:
-                record = self.store.append_daily(
+                record = self.store.append_archive(
                     note=content,
                     tags=tags,
                     importance=importance,
-                    source="post_turn_extractor",
+                    source=source,
                 )
             written_ids.append(record.id)
         return written_ids
@@ -65,7 +61,7 @@ class MemoryExtractor:
 _EXTRACTOR_SYSTEM_PROMPT = """You are MyAgent's memory extractor.
 Extract only information that is likely to help MyAgent serve the user in future turns.
 Return strict JSON only:
-{"items":[{"content":"short standalone memory","target":"daily|long_term","section":"Later","importance":1,"tags":["tag"]}]}
+{"items":[{"content":"short standalone memory","target":"archive|long_term","section":"Now","importance":1,"tags":["tag"]}]}
 If there is nothing worth remembering, return {"items":[]}.
 
 Be conservative. Do not record:
@@ -75,13 +71,23 @@ Be conservative. Do not record:
 - assistant plans unless they describe an unfinished user-relevant open loop
 - raw conversation text unless it is itself a durable memory
 
-Use target=daily for recent working context, open loops, temporary project state, or uncertain observations.
+Use target=archive for episodic notes, completed work, temporary project state, or uncertain observations.
 Use target=long_term only for stable user preferences, long-term goals, identity/background, durable project facts, or decisions that should affect future behavior.
 
 For long_term memories, use one of these sections:
 - Always: stable, high-signal information that should be visible in every conversation
-- Now: current project stage, active open loops, and recent decisions
-- Later: useful but non-urgent facts, historical context, references, and lower-confidence notes"""
+- Now: current project stage, active open loops, and recent decisions"""
+
+
+def _build_messages_prompt(messages: list[dict[str, object]]) -> str:
+    lines = ["## History Chunk To Inspect"]
+    for message in messages:
+        role = str(message.get("role", "unknown")).upper()
+        content = message.get("content", "")
+        if not isinstance(content, str):
+            content = repr(content)
+        lines.append(f"[{role}] {content}")
+    return "\n".join(lines)
 
 
 def _parse_items(response: str) -> list[dict[str, Any]]:

@@ -1,12 +1,13 @@
-from pathlib import Path
+﻿from pathlib import Path
 import shutil
 
 from myagent.memory import MarkdownMemoryStore
 from myagent.tools.memory import (
-    MemoryAppendDailyTool,
+    MemoryArchiveTool,
     MemoryForgetTool,
     MemoryGetTool,
-    MemoryProposeLongTermTool,
+    MemoryProposeTool,
+    MemoryRememberTool,
     MemorySearchTool,
 )
 
@@ -38,7 +39,7 @@ def test_default_memory_store_uses_dedicated_memory_directory(monkeypatch) -> No
     assert store.root == home / ".myagent" / "memory"
     assert (store.root / "MEMORY.md").exists()
     assert (store.root / "MEMORY.md").read_text(encoding="utf-8") == (
-        "# Memory\n\n## Always\n\n## Now\n\n## Later\n"
+        "# Memory\n\n## Always\n\n## Now\n"
     )
 
 
@@ -56,54 +57,50 @@ def test_default_memory_store_does_not_read_legacy_workspace_memory(monkeypatch)
     store.ensure_layout()
 
     assert "Legacy profile" not in (store.root / "MEMORY.md").read_text(encoding="utf-8")
-    assert not (store.root / "daily" / "2026-05-18.md").exists()
+    assert not (store.root / "archive" / "2026-05-18.md").exists()
 
 
-async def test_memory_tools_append_search_and_get() -> None:
+async def test_memory_tools_archive_search_and_get() -> None:
     store = MarkdownMemoryStore(make_workspace("search"))
 
-    append_result = await MemoryAppendDailyTool(store).execute(
+    archive_result = await MemoryArchiveTool(store).execute(
         note="User is preparing for a Java backend interview.",
         tags=["interview"],
         importance=4,
     )
     search_result = await MemorySearchTool(store).execute(query="Java interview")
 
-    memory_id = append_result.split(" ")[3]
+    memory_id = archive_result.split(" ")[3]
     get_result = await MemoryGetTool(store).execute(memory_id=memory_id)
 
-    assert "Saved daily memory" in append_result
+    assert "Archived memory note" in archive_result
     assert memory_id in search_result
     assert "User is preparing for a Java backend interview." in get_result
 
 
-async def test_memory_tool_saves_explicit_long_term_memory() -> None:
-    store = MarkdownMemoryStore(make_workspace("proposal"))
+async def test_memory_remember_writes_visible_memory() -> None:
+    store = MarkdownMemoryStore(make_workspace("remember"))
 
-    result = await MemoryProposeLongTermTool(store).execute(
+    result = await MemoryRememberTool(store).execute(
         content="User prefers documentation-first changes.",
         section="Always",
         tags=["preference"],
-        importance=4,
-        apply=True,
     )
 
     memory = (store.root / "MEMORY.md").read_text(encoding="utf-8")
-    assert "Saved long-term memory" in result
+    assert "Remembered" in result
     assert "User prefers documentation-first changes." in memory
     assert "User prefers documentation-first changes." in store.read_always_memory()
     assert store.read_now_memory() == ""
 
 
-async def test_memory_later_is_searchable_but_not_visible_by_default() -> None:
-    store = MarkdownMemoryStore(make_workspace("later"))
+async def test_memory_archive_is_searchable_but_not_visible_by_default() -> None:
+    store = MarkdownMemoryStore(make_workspace("archive"))
 
-    await MemoryProposeLongTermTool(store).execute(
-        content="Old Feishu gateway notes are useful for interview examples.",
-        section="Later",
+    await MemoryArchiveTool(store).execute(
+        note="Old Feishu gateway notes are useful for interview examples.",
         tags=["project"],
         importance=3,
-        apply=True,
     )
 
     assert "Feishu gateway" not in store.read_always_memory()
@@ -112,51 +109,32 @@ async def test_memory_later_is_searchable_but_not_visible_by_default() -> None:
     assert "Feishu gateway" in search_result
 
 
-async def test_memory_tool_can_create_unapplied_long_term_proposal() -> None:
-    store = MarkdownMemoryStore(make_workspace("unapplied-proposal"))
+async def test_memory_tool_can_create_proposal() -> None:
+    store = MarkdownMemoryStore(make_workspace("proposal"))
 
-    result = await MemoryProposeLongTermTool(store).execute(
+    result = await MemoryProposeTool(store).execute(
         content="User may be preparing for a Java backend interview.",
-        section="Later",
+        section_hint="Now",
         tags=["candidate"],
         importance=2,
-        apply=False,
     )
 
     proposals = (store.root / "MEMORY_PROPOSALS.md").read_text(encoding="utf-8")
     memory = (store.root / "MEMORY.md").read_text(encoding="utf-8")
-    assert "Created long-term memory proposal" in result
+    assert "Created memory proposal" in result
     assert "User may be preparing for a Java backend interview." in proposals
+    assert "section_hint: Now" in proposals
     assert "User may be preparing for a Java backend interview." not in memory
-
-
-async def test_memory_tool_defaults_to_long_term_proposal() -> None:
-    store = MarkdownMemoryStore(make_workspace("default-proposal"))
-
-    result = await MemoryProposeLongTermTool(store).execute(
-        content="User prefers small incremental implementation.",
-        section="Always",
-        tags=["workflow"],
-        importance=3,
-    )
-
-    proposals = (store.root / "MEMORY_PROPOSALS.md").read_text(encoding="utf-8")
-    memory = (store.root / "MEMORY.md").read_text(encoding="utf-8")
-    assert "Created long-term memory proposal" in result
-    assert "User prefers small incremental implementation." in proposals
-    assert "User prefers small incremental implementation." not in memory
 
 
 async def test_memory_tool_forgets_matching_memory() -> None:
     store = MarkdownMemoryStore(make_workspace("forget"))
-    await MemoryProposeLongTermTool(store).execute(
+    await MemoryRememberTool(store).execute(
         content="User is preparing for a Java backend interview.",
         section="Now",
         tags=["interview"],
-        importance=4,
-        apply=True,
     )
-    await MemoryAppendDailyTool(store).execute(
+    await MemoryArchiveTool(store).execute(
         note="User is preparing for a Java backend interview.",
         tags=["interview"],
         importance=2,

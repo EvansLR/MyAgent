@@ -27,10 +27,11 @@ from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.skills import SkillRegistry
 from myagent.tools import (
-    MemoryAppendDailyTool,
+    MemoryArchiveTool,
     MemoryForgetTool,
     MemoryGetTool,
-    MemoryProposeLongTermTool,
+    MemoryProposeTool,
+    MemoryRememberTool,
     MemorySearchTool,
     SkillGetTool,
     ToolRegistry,
@@ -211,6 +212,18 @@ class AgentLoop:
             inbound,
             visible_history,
         )
+        if self._should_compact_history_before_context(context_report):
+            compacted = await self._compact_history_before_context(
+                inbound.session_key,
+                turn_id,
+                history,
+            )
+            if compacted:
+                visible_history = self._history_for_context(inbound.session_key, history)
+                messages, context_report = self.context_builder.build_messages_with_report(
+                    inbound,
+                    visible_history,
+                )
         self.context_builder.last_report = context_report
         self._trace(
             inbound.session_key,
@@ -309,14 +322,12 @@ class AgentLoop:
                 "turn_completed",
                 {**turn_state.to_completion_data(), "suppressed_final_reply": True},
             )
-        await self._extract_memory_after_turn(inbound, content, turn_id)
         history.extend(
             [
                 {"role": "user", "content": inbound.content},
                 {"role": "assistant", "content": content},
             ]
         )
-        await self._maybe_update_conversation_summary(inbound.session_key, turn_id, history)
         self._active_skills_by_turn.pop((inbound.session_key, turn_id), None)
         self._current_turn_key = None
         self._current_summary_session_key = None
@@ -562,7 +573,7 @@ class AgentLoop:
         )
 
     def _register_memory_consolidation_job(self) -> None:
-        """Register the daily memory consolidation system job."""
+        """Register the periodic memory consolidation system job."""
         from myagent.cron.types import CronSchedule
         for job in self.cron_service.list_jobs(include_disabled=True):
             if job.name == "memory_consolidation" and job.payload.job_type == "system":
@@ -610,8 +621,9 @@ class AgentLoop:
     def _register_memory_tools(self) -> None:
         """Expose local personal memory tools to the main agent."""
         tools = (
-            MemoryAppendDailyTool(self.markdown_memory_store),
-            MemoryProposeLongTermTool(self.markdown_memory_store),
+            MemoryRememberTool(self.markdown_memory_store),
+            MemoryProposeTool(self.markdown_memory_store),
+            MemoryArchiveTool(self.markdown_memory_store),
             MemorySearchTool(self.markdown_memory_store),
             MemoryGetTool(self.markdown_memory_store),
             MemoryForgetTool(self.markdown_memory_store),
@@ -690,30 +702,38 @@ class AgentLoop:
             lines.append(f"- {skill_id} ({name}): scope={scope}; reason={reason}")
         return "\n".join(lines)
 
-    async def _maybe_update_conversation_summary(
+    @staticmethod
+    def _should_compact_history_before_context(context_report) -> bool:
+        """Return whether history selection already needed to drop raw messages."""
+        history = context_report.history
+        return bool(history.dropped_by_token_budget or history.dropped_by_message_limit)
+
+    async def _compact_history_before_context(
         self,
         session_key: str,
         turn_id: str,
         history: list[Message],
-    ) -> None:
-        """Fold older in-memory history into a compact session summary when useful."""
+    ) -> bool:
+        """Flush and summarize older history before the model call drops it."""
         state = self._conversation_summaries.get(session_key)
-        decision = self.conversation_summarizer.decide(history, state)
+        decision = self.conversation_summarizer.decide(history, state, force=True)
         if not decision.should_update:
-            if decision.reason != "below_trigger":
-                self._trace(
-                    session_key,
-                    turn_id,
-                    "conversation_summary_checked",
-                    self._conversation_summary_trace_data(
-                        history,
-                        state,
-                        decision,
-                        reason=decision.reason,
-                    ),
-                )
-            return
+            self._trace(
+                session_key,
+                turn_id,
+                "conversation_summary_checked",
+                self._conversation_summary_trace_data(
+                    history,
+                    state,
+                    decision,
+                    reason=f"pre_context_{decision.reason}",
+                ),
+            )
+            return False
 
+        start = state.summarized_message_count if state else 0
+        chunk = history[start:decision.eligible_end]
+        await self._flush_memory_before_summary(session_key, turn_id, chunk)
         self._trace(
             session_key,
             turn_id,
@@ -722,7 +742,7 @@ class AgentLoop:
                 history,
                 state,
                 decision,
-                reason="ready",
+                reason="pre_context_budget_pressure",
             ),
         )
         try:
@@ -742,13 +762,13 @@ class AgentLoop:
                         history,
                         state,
                         decision,
-                        reason="failed",
+                        reason="pre_context_failed",
                     ),
                     "type": type(exc).__name__,
                     "message": str(exc),
                 },
             )
-            return
+            return False
 
         self._conversation_summaries[session_key] = updated
         self._trace(
@@ -760,9 +780,48 @@ class AgentLoop:
                 updated,
                 decision,
                 previous_state=state,
-                reason="updated",
+                reason="pre_context_updated",
             ),
         )
+        return True
+
+    async def _flush_memory_before_summary(
+        self,
+        session_key: str,
+        turn_id: str,
+        messages: list[Message],
+    ) -> None:
+        """Extract durable candidates from history before it is folded into summary."""
+        if not messages or self.memory_extractor is None:
+            return
+        try:
+            memory_ids = await self.memory_extractor.extract_messages(
+                messages,
+                source="pre_context_compaction",
+            )
+        except Exception as exc:
+            self._trace(
+                session_key,
+                turn_id,
+                "memory_extraction_error",
+                {
+                    "phase": "pre_context",
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                },
+            )
+            return
+        if memory_ids:
+            self._trace(
+                session_key,
+                turn_id,
+                "memory_candidates_saved",
+                {
+                    "phase": "pre_context",
+                    "memory_ids": memory_ids,
+                    "count": len(memory_ids),
+                },
+            )
 
     def _conversation_summary_trace_data(
         self,
@@ -790,42 +849,6 @@ class AgentLoop:
             "revision": state.revision if state else 0,
             "reason": reason,
         }
-
-    async def _extract_memory_after_turn(
-        self,
-        inbound: InboundMessage,
-        assistant_answer: str,
-        turn_id: str,
-    ) -> None:
-        """Run post-turn memory extraction after the final answer."""
-        if self.memory_extractor is None:
-            return
-        try:
-            memory_ids = await self.memory_extractor.extract_turn(
-                inbound.content,
-                assistant_answer,
-            )
-        except Exception as exc:
-            self._trace(
-                inbound.session_key,
-                turn_id,
-                "memory_extraction_error",
-                {
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                },
-            )
-            return
-        if memory_ids:
-            self._trace(
-                inbound.session_key,
-                turn_id,
-                "memory_candidates_saved",
-                {
-                    "memory_ids": memory_ids,
-                    "count": len(memory_ids),
-                },
-            )
 
     def _trace(
         self,

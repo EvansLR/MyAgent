@@ -72,6 +72,8 @@ class ConversationSummarizer:
         self,
         history: list[Message],
         state: ConversationSummaryState | None = None,
+        *,
+        force: bool = False,
     ) -> ConversationSummaryDecision:
         """Return whether enough old history exists to update the summary."""
         if not self.config.enabled:
@@ -85,7 +87,7 @@ class ConversationSummarizer:
             self.config.trigger_tokens is not None
             and history_tokens >= self.config.trigger_tokens
         )
-        if history_count < self.config.trigger_messages and not token_pressure:
+        if not force and history_count < self.config.trigger_messages and not token_pressure:
             return ConversationSummaryDecision(False, "below_trigger", 0, 0)
         keep_recent = max(self.config.keep_recent_messages, 0)
         eligible_end = max(history_count - keep_recent, 0)
@@ -98,7 +100,7 @@ class ConversationSummarizer:
                 eligible_end,
                 new_message_count,
             )
-        if new_message_count < self.config.min_new_messages and not token_pressure:
+        if new_message_count < self.config.min_new_messages and not token_pressure and not force:
             return ConversationSummaryDecision(
                 False,
                 "not_enough_new_messages",
@@ -107,7 +109,7 @@ class ConversationSummarizer:
             )
         return ConversationSummaryDecision(
             True,
-            "ready",
+            "forced" if force else "ready",
             eligible_end,
             new_message_count,
         )

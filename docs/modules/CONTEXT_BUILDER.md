@@ -2180,7 +2180,7 @@ profile
 memory
   ~/.myagent/memory/MEMORY.md
   ~/.myagent/memory/MEMORY_PROPOSALS.md
-  ~/.myagent/memory/daily/YYYY-MM-DD.md
+  ~/.myagent/memory/archive/YYYY-MM-DD.md
 
 runtime
   session history
@@ -2248,6 +2248,21 @@ This keeps the design simpler:
 Conversation summary can be triggered by either message count or estimated
 history token pressure. This keeps large pasted/tool-heavy turns from waiting
 for an arbitrary number of messages before compaction can run.
+
+Current runtime behavior is pre-context:
+
+```text
+build context once
+  -> if history selection would drop raw messages
+  -> flush the old history chunk to memory archive/proposals
+  -> fold the same old chunk into Conversation Summary
+  -> rebuild context with summary + recent raw history
+```
+
+The recent tail remains raw text. `keep_recent_messages` controls how many
+latest messages are never summarized in this pass. MyAgent no longer runs a
+default post-turn MemoryExtractor; automatic extraction happens only when old
+history is about to leave the visible context.
 
 In this model, ContextBuilder exposes one survival concept: `retention`.
 
