@@ -1,20 +1,15 @@
 import asyncio
-from pathlib import Path
-import shutil
 
 import pytest
-from typer.testing import CliRunner
 
 from myagent.cli.commands import (
     CliState,
-    app,
     handle_cli_command,
     make_help_text,
     make_inbound_message,
     parse_cli_command,
     run_chat,
     format_approval_prompt,
-    _trace_startup,
     _make_cli_approval_callback,
 )
 from myagent.approval import (
@@ -23,10 +18,6 @@ from myagent.approval import (
     set_current_approval_route,
 )
 from myagent.bus import MessageBus, OutboundMessage
-from myagent.tracing import JsonlTraceStore
-
-
-runner = CliRunner()
 
 
 def test_parse_help_command() -> None:
@@ -121,68 +112,6 @@ async def test_run_chat_handles_help_and_stop() -> None:
 
     assert any("/help" in output for output in outputs)
     assert outputs[-1] == "Stopping MyAgent CLI."
-
-
-def test_trace_startup_records_runtime_event() -> None:
-    root = Path(".test-workspaces") / "cli-channel" / "startup-trace"
-    if root.exists():
-        shutil.rmtree(root)
-    store = JsonlTraceStore(root)
-
-    _trace_startup(
-        store,
-        "mcp_server_registered",
-        {
-            "server_name": "demo",
-            "transport": "stdio",
-            "tool_count": 1,
-        },
-    )
-
-    content = (root / "runtime_startup.jsonl").read_text(encoding="utf-8")
-    assert "mcp_server_registered" in content
-    assert '"server_name": "demo"' in content
-
-
-def test_trace_latest_command_prints_latest_turn_summary() -> None:
-    root = Path(".test-workspaces") / "cli-channel" / "trace-latest"
-    if root.exists():
-        shutil.rmtree(root)
-    store = JsonlTraceStore(root)
-    store.record("cli:default", "turn-1", "user_message", {"content": "hello"})
-    store.record(
-        "cli:default",
-        "turn-1",
-        "turn_completed",
-        {
-            "stop_reason": "final_output",
-            "iterations": 1,
-            "tool_call_count": 0,
-            "tool_error_count": 0,
-            "warning_count": 0,
-        },
-    )
-
-    result = runner.invoke(app, ["trace", "latest", "--trace-dir", str(root)])
-
-    assert result.exit_code == 0
-    assert "turn_id: turn-1" in result.output
-    assert "stop_reason: final_output" in result.output
-
-
-def test_trace_show_command_prints_recent_events() -> None:
-    root = Path(".test-workspaces") / "cli-channel" / "trace-show"
-    if root.exists():
-        shutil.rmtree(root)
-    store = JsonlTraceStore(root)
-    store.record("cli:default", "turn-1", "user_message", {"content": "hello"})
-    store.record("cli:default", "turn-1", "final_answer", {"content_preview": "hi"})
-
-    result = runner.invoke(app, ["trace", "show", "--trace-dir", str(root), "--limit", "2"])
-
-    assert result.exit_code == 0
-    assert "turn-1 user_message - hello" in result.output
-    assert "turn-1 final_answer - hi" in result.output
 
 
 async def test_run_chat_sends_message_and_prints_outbound() -> None:

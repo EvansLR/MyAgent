@@ -1,19 +1,18 @@
 """Task-oriented subagent runner exposed through a delegation tool."""
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from myagent.agent.context.types import Message
 from myagent.agent.runtime.messages import assistant_tool_call_message, tool_result_message
-from myagent.providers.base import BaseProvider, ToolCall
+from myagent.providers.base import BaseProvider
 from myagent.tools.base import Tool
 from myagent.tools.registry import ToolRegistry
 
 
 DEFAULT_SUBAGENT_PROFILE = "researcher"
 MAX_SUBAGENT_ITERATIONS = 4
-SubAgentTraceHook = Callable[[str, dict[str, object]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,14 +70,10 @@ class SubAgentRunner:
         provider: BaseProvider,
         tool_registry: ToolRegistry,
         max_iterations: int = MAX_SUBAGENT_ITERATIONS,
-        trace_hook: SubAgentTraceHook | None = None,
-        subagent_task_id: str | None = None,
     ) -> None:
         self.provider = provider
         self.tool_registry = tool_registry
         self.max_iterations = max_iterations
-        self.trace_hook = trace_hook
-        self.subagent_task_id = subagent_task_id
 
     async def run(
         self,
@@ -102,48 +97,10 @@ class SubAgentRunner:
 
             working_messages.append(assistant_tool_call_message(response))
             for tool_call in response.tool_calls:
-                self._trace_tool_call(tool_call)
                 result = await self.tool_registry.execute(tool_call.name, tool_call.arguments)
-                self._trace_tool_result(tool_call, result)
                 working_messages.append(tool_result_message(tool_call, result))
 
-        self._trace(
-            "subagent_iteration_limit",
-            {
-                "subagent_task_id": self.subagent_task_id or "",
-                "agent_type": profile.name,
-                "max_iterations": self.max_iterations,
-            },
-        )
         return "SubAgent reached its tool iteration limit before producing a final answer."
-
-    def _trace_tool_call(self, tool_call: ToolCall) -> None:
-        self._trace(
-            "subagent_tool_call",
-            {
-                "subagent_task_id": self.subagent_task_id or "",
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "arguments": tool_call.arguments,
-            },
-        )
-
-    def _trace_tool_result(self, tool_call: ToolCall, result: str) -> None:
-        self._trace(
-            "subagent_tool_result",
-            {
-                "subagent_task_id": self.subagent_task_id or "",
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "result_preview": _preview(result),
-                "result_length": len(result),
-            },
-        )
-
-    def _trace(self, event: str, data: dict[str, object]) -> None:
-        if self.trace_hook is None:
-            return
-        self.trace_hook(event, data)
 
 
 class DelegateTaskTool(Tool):
@@ -202,37 +159,19 @@ class DelegateTaskTool(Tool):
         agent_type: str = DEFAULT_SUBAGENT_PROFILE,
         context: str = "",
         reason: str = "",
-        **_: Any,
-    ) -> str:
-        return await self.execute_with_trace(
-            task=task,
-            agent_type=agent_type,
-            context=context,
-            reason=reason,
-        )
-
-    async def execute_with_trace(
-        self,
-        task: str,
-        agent_type: str = DEFAULT_SUBAGENT_PROFILE,
-        context: str = "",
-        reason: str = "",
         active_skill_context: str = "",
-        trace_hook: SubAgentTraceHook | None = None,
-        subagent_task_id: str | None = None,
+        **_: Any,
     ) -> str:
         profile = get_subagent_profile(agent_type)
         child_registry = create_subagent_registry(
             self.parent_registry,
             profile.allowed_tools,
         )
-        task_id = subagent_task_id or uuid4().hex[:8]
+        task_id = uuid4().hex[:8]
         runner = SubAgentRunner(
             provider=self.provider,
             tool_registry=child_registry,
             max_iterations=profile.max_iterations or self.max_iterations,
-            trace_hook=trace_hook,
-            subagent_task_id=task_id,
         )
         merged_context = _merge_context(context, active_skill_context)
         result = await runner.run(task=task, agent_type=profile.name, context=merged_context)
@@ -295,8 +234,3 @@ def _merge_context(context: str, active_skill_context: str) -> str:
     return "\n\n".join(parts)
 
 
-def _preview(text: str, limit: int = 300) -> str:
-    compact = " ".join(text.split())
-    if len(compact) <= limit:
-        return compact
-    return f"{compact[: limit - 3]}..."

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from myagent.agent.runtime.run_events import AgentRunEvents
-
 
 class AgentSkillState:
     """Track active skills loaded during a main-agent turn."""
 
-    def __init__(self, events: AgentRunEvents) -> None:
-        self.events = events
+    def __init__(self) -> None:
         self.active_by_turn: dict[tuple[str, str], list[dict[str, object]]] = {}
         self.current_turn_key: tuple[str, str] | None = None
 
@@ -21,11 +18,9 @@ class AgentSkillState:
         if self.current_turn_key == (session_key, turn_id):
             self.current_turn_key = None
 
-    def trace_event(self, event: str, data: dict[str, object]) -> None:
-        """Record skill events and remember active turn skills."""
-        turn_id = self.current_turn_key[1] if self.current_turn_key else "skills"
-        self.events.record("runtime:skills", turn_id, event, data)
-        if event != "active_skill_set" or self.current_turn_key is None:
+    def set_active_skill(self, data: dict[str, object]) -> None:
+        """Remember a skill loaded during the current turn."""
+        if self.current_turn_key is None:
             return
         active_skills = self.active_by_turn.setdefault(self.current_turn_key, [])
         skill_id = str(data.get("skill_id") or "")

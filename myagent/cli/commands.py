@@ -15,27 +15,13 @@ import typer
 from myagent.approval import current_approval_route
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.channels import ChannelManager, FeishuChannel
-from myagent.cli.runtime import create_agent_runtime, trace_startup as record_startup_trace
+from myagent.cli.runtime import create_agent_runtime
 from myagent.config import Settings
-from myagent.tracing import (
-    TraceStore,
-    format_context_summary,
-    format_trace_events,
-    format_turn_summary,
-    latest_context_event,
-    latest_turn_summary,
-    read_trace_events,
-    write_trace_report,
-    write_trace_viewer,
-)
 
 DEFAULT_SENDER_ID = "local-user"
 DEFAULT_CHAT_ID = "default"
 SUPPORTED_COMMANDS = {"/help", "/new", "/stop"}
 CONSOLE = Console()
-DEFAULT_TRACE_SESSION = "cli:default"
-SKILLS_TRACE_SESSION = "runtime:skills"
-STARTUP_TRACE_SESSION = "runtime:startup"
 
 
 @dataclass(slots=True)
@@ -328,20 +314,11 @@ def _make_cli_approval_callback(bus: MessageBus):
     return approve
 
 
-def _trace_startup(
-    trace_store: TraceStore | None,
-    event: str,
-    data: dict[str, object],
-) -> None:
-    record_startup_trace(trace_store, event, data)
-
-
 app = typer.Typer(
     name="myagent",
     help="MyAgent - lightweight ReAct agent runtime.",
     no_args_is_help=False,
 )
-trace_app = typer.Typer(help="Inspect local JSONL trace files.")
 
 
 @app.callback(invoke_without_command=True)
@@ -371,173 +348,3 @@ def gateway(
 ) -> None:
     """Run the gateway (AgentLoop + Channels + Cron)."""
     asyncio.run(run_gateway(config_path=config))
-
-
-@trace_app.command("latest")
-def trace_latest(
-    session: str = typer.Option(
-        DEFAULT_TRACE_SESSION,
-        "--session",
-        "-s",
-        help="Trace session key, for example cli:default.",
-    ),
-    trace_dir: Path = typer.Option(
-        Path("data/traces"),
-        "--trace-dir",
-        help="Directory containing JSONL trace files.",
-    ),
-) -> None:
-    """Show a compact summary of the latest turn in a session trace."""
-    events = read_trace_events(session, trace_dir)
-    if not events:
-        typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
-        raise typer.Exit(code=1)
-    summary = latest_turn_summary(events)
-    if summary is None:
-        typer.echo(f"No turns found for session {session!r}.")
-        raise typer.Exit(code=1)
-    typer.echo(format_turn_summary(summary))
-
-
-@trace_app.command("show")
-def trace_show(
-    session: str = typer.Option(
-        DEFAULT_TRACE_SESSION,
-        "--session",
-        "-s",
-        help="Trace session key, for example cli:default.",
-    ),
-    limit: int = typer.Option(
-        20,
-        "--limit",
-        "-n",
-        help="Number of recent events to show.",
-    ),
-    trace_dir: Path = typer.Option(
-        Path("data/traces"),
-        "--trace-dir",
-        help="Directory containing JSONL trace files.",
-    ),
-) -> None:
-    """Show recent events for a session trace."""
-    events = read_trace_events(session, trace_dir)
-    if not events:
-        typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
-        raise typer.Exit(code=1)
-    typer.echo(format_trace_events(events, limit=limit))
-
-
-@trace_app.command("context")
-def trace_context(
-    session: str = typer.Option(
-        DEFAULT_TRACE_SESSION,
-        "--session",
-        "-s",
-        help="Trace session key, for example cli:default.",
-    ),
-    trace_dir: Path = typer.Option(
-        Path("data/traces"),
-        "--trace-dir",
-        help="Directory containing JSONL trace files.",
-    ),
-) -> None:
-    """Show the latest ContextBuilder assembly report for a session."""
-    events = read_trace_events(session, trace_dir)
-    if not events:
-        typer.echo(f"No trace events found for session {session!r} in {trace_dir}.")
-        raise typer.Exit(code=1)
-    event = latest_context_event(events)
-    if event is None:
-        typer.echo(f"No context_built event found for session {session!r}.")
-        raise typer.Exit(code=1)
-    typer.echo(format_context_summary(event))
-
-
-@trace_app.command("report")
-def trace_report(
-    session: str = typer.Option(
-        DEFAULT_TRACE_SESSION,
-        "--session",
-        "-s",
-        help="Trace session key, for example cli:default.",
-    ),
-    trace_dir: Path = typer.Option(
-        Path("data/traces"),
-        "--trace-dir",
-        help="Directory containing JSONL trace files.",
-    ),
-    output: Path = typer.Option(
-        Path("data/traces/report.html"),
-        "--output",
-        "-o",
-        help="HTML report output path.",
-    ),
-) -> None:
-    """Generate a static HTML report for trace inspection."""
-    path = write_trace_report(
-        output_path=output,
-        trace_root=trace_dir,
-        session_key=session,
-    )
-    typer.echo(f"Trace report written to {path}")
-
-
-@trace_app.command("viewer")
-def trace_viewer(
-    output: Path = typer.Option(
-        Path("data/traces/viewer.html"),
-        "--output",
-        "-o",
-        help="Interactive HTML viewer output path.",
-    ),
-) -> None:
-    """Generate an interactive local HTML viewer that can load JSONL trace files."""
-    path = write_trace_viewer(output)
-    typer.echo(f"Trace viewer written to {path}")
-
-
-@trace_app.command("skills")
-def trace_skills(
-    limit: int = typer.Option(
-        20,
-        "--limit",
-        "-n",
-        help="Number of recent skill events to show.",
-    ),
-    trace_dir: Path = typer.Option(
-        Path("data/traces"),
-        "--trace-dir",
-        help="Directory containing JSONL trace files.",
-    ),
-) -> None:
-    """Show recent runtime skill events such as skill_loaded and active_skill_set."""
-    events = read_trace_events(SKILLS_TRACE_SESSION, trace_dir)
-    if not events:
-        typer.echo(f"No skill trace events found in {trace_dir}.")
-        raise typer.Exit(code=1)
-    typer.echo(format_trace_events(events, limit=limit))
-
-
-@trace_app.command("startup")
-def trace_startup(
-    limit: int = typer.Option(
-        20,
-        "--limit",
-        "-n",
-        help="Number of recent startup events to show.",
-    ),
-    trace_dir: Path = typer.Option(
-        Path("data/traces"),
-        "--trace-dir",
-        help="Directory containing JSONL trace files.",
-    ),
-) -> None:
-    """Show recent runtime startup events such as MCP server registration."""
-    events = read_trace_events(STARTUP_TRACE_SESSION, trace_dir)
-    if not events:
-        typer.echo(f"No startup trace events found in {trace_dir}.")
-        raise typer.Exit(code=1)
-    typer.echo(format_trace_events(events, limit=limit))
-
-
-app.add_typer(trace_app, name="trace")

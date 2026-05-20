@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from myagent.agent.context.types import ContextBudget, Message
-from myagent.agent.runtime.run_events import AgentRunEvents
 from myagent.agent.context.summary import (
     ConversationSummarizer,
     ConversationSummaryConfig,
@@ -20,12 +19,10 @@ class AgentSessionHistory:
         summarizer: ConversationSummarizer,
         config: ConversationSummaryConfig,
         memory_extractor: MemoryExtractor | None,
-        events: AgentRunEvents,
     ) -> None:
         self.summarizer = summarizer
         self.config = config
         self.memory_extractor = memory_extractor
-        self.events = events
         self.raw: dict[str, list[Message]] = {}
         self.summaries: dict[str, ConversationSummaryState] = {}
         self.current_summary_session_key: str | None = None
@@ -89,24 +86,7 @@ class AgentSessionHistory:
             state,
             target_history_tokens=budget.raw_history_target_tokens,
         )
-        budget_data = {
-            "raw_history_token_limit": history_limit,
-            "target_history_tokens": budget.raw_history_target_tokens,
-            "visible_history_tokens": visible_tokens,
-        }
         if not decision.should_update:
-            self.events.conversation_summary_checked(
-                session_key,
-                turn_id,
-                self.events.conversation_summary_data(
-                    history,
-                    state,
-                    decision,
-                    keep_recent_messages=self.config.keep_recent_messages,
-                    reason=f"pre_context_{decision.reason}",
-                    budget_data=budget_data,
-                ),
-            )
             return False
 
         start = state.summarized_message_count if state else 0
@@ -115,18 +95,6 @@ class AgentSessionHistory:
             turn_id,
             history[start:decision.eligible_end],
         )
-        self.events.conversation_summary_checked(
-            session_key,
-            turn_id,
-            self.events.conversation_summary_data(
-                history,
-                state,
-                decision,
-                keep_recent_messages=self.config.keep_recent_messages,
-                reason="pre_context_budget_pressure",
-                budget_data=budget_data,
-            ),
-        )
         try:
             updated = await self.summarizer.summarize(
                 session_key,
@@ -134,20 +102,7 @@ class AgentSessionHistory:
                 state,
                 decision,
             )
-        except Exception as exc:
-            self.events.conversation_summary_failed(
-                session_key,
-                turn_id,
-                self.events.conversation_summary_data(
-                    history,
-                    state,
-                    decision,
-                    keep_recent_messages=self.config.keep_recent_messages,
-                    reason="pre_context_failed",
-                    budget_data=budget_data,
-                ),
-                exc,
-            )
+        except Exception:
             return False
 
         self.summaries[session_key] = updated
@@ -170,25 +125,6 @@ class AgentSessionHistory:
             budget,
         )
         self.summaries[session_key] = updated
-        self.events.conversation_summary_updated(
-            session_key,
-            turn_id,
-            self.events.conversation_summary_data(
-                history,
-                updated,
-                decision,
-                keep_recent_messages=self.config.keep_recent_messages,
-                previous_state=state,
-                reason="pre_context_updated",
-                budget_data={
-                    **budget_data,
-                    "pruned_raw_history_messages": pruned_count,
-                    "raw_history_tokens_after": self.summarizer.estimate_messages_tokens(
-                        self.visible_history_for_context(session_key, history)
-                    ),
-                },
-            ),
-        )
         return True
 
     async def _flush_memory_before_summary(
@@ -200,24 +136,12 @@ class AgentSessionHistory:
         if not messages or self.memory_extractor is None:
             return
         try:
-            memory_ids = await self.memory_extractor.extract_messages(
+            await self.memory_extractor.extract_messages(
                 messages,
                 source="pre_context_compaction",
             )
-        except Exception as exc:
-            self.events.memory_extraction_error(
-                session_key,
-                turn_id,
-                "pre_context",
-                exc,
-            )
+        except Exception:
             return
-        self.events.memory_candidates_saved(
-            session_key,
-            turn_id,
-            "pre_context",
-            memory_ids,
-        )
 
     def _prune_summarized_history(self, history: list[Message], count: int) -> int:
         pruned_count = min(max(count, 0), len(history))
@@ -240,23 +164,6 @@ class AgentSessionHistory:
                 token_limit=budget.summary_token_limit,
                 max_rounds=budget.max_compression_rounds,
             )
-        except Exception as exc:
-            self.events.record(
-                session_key,
-                turn_id,
-                "conversation_summary_compression_failed",
-                {"type": type(exc).__name__, "message": str(exc)},
-            )
+        except Exception:
             return state
-        if compressed.content != state.content:
-            self.events.record(
-                session_key,
-                turn_id,
-                "conversation_summary_compressed",
-                {
-                    "tokens_before": state.estimated_tokens,
-                    "tokens_after": compressed.estimated_tokens,
-                    "revision": compressed.revision,
-                },
-            )
         return compressed

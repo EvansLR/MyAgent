@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 import shutil
 
@@ -14,7 +13,6 @@ from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.skills import SkillRegistry
 from myagent.tools import ToolRegistry, create_default_registry
 from myagent.tools.base import Tool
-from myagent.tracing import JsonlTraceStore
 
 
 def make_workspace(name: str) -> Path:
@@ -203,7 +201,6 @@ async def test_agent_loop_registers_and_executes_delegate_task() -> None:
         bus,
         provider=provider,
         tool_registry=create_default_registry(workspace),
-        trace_store=JsonlTraceStore(root / "traces"),
     )
 
     await bus.publish_inbound(make_message("delegate reading note"))
@@ -218,29 +215,6 @@ async def test_agent_loop_registers_and_executes_delegate_task() -> None:
     child_tool_names = [tool["function"]["name"] for tool in provider.seen_tools[1]]
     assert "delegate_task" in main_tool_names
     assert child_tool_names == ["list_dir", "read_file", "web_search", "web_fetch"]
-
-    events = [
-        json.loads(line)
-        for line in (root / "traces" / "cli_default.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ]
-    event_names = [event["event"] for event in events]
-    assert "subagent_tool_call" in event_names
-    assert "subagent_tool_result" in event_names
-
-    subagent_start = next(event for event in events if event["event"] == "subagent_start")
-    child_tool_call = next(event for event in events if event["event"] == "subagent_tool_call")
-    child_tool_result = next(event for event in events if event["event"] == "subagent_tool_result")
-    assert child_tool_call["data"]["subagent_task_id"] == subagent_start["data"]["subagent_task_id"]
-    assert child_tool_result["data"]["subagent_task_id"] == subagent_start["data"]["subagent_task_id"]
-    assert child_tool_call["data"]["parent_turn_id"] == subagent_start["turn_id"]
-    assert child_tool_result["data"]["parent_tool_call_id"] == "main-call-1"
-    assert subagent_start["data"]["delegation_reason"] == "Need isolated file reading."
-    assert subagent_start["data"]["delegation_mode"] == "explicit"
-    assert child_tool_result["data"]["delegation_reason"] == "Need isolated file reading."
-    assert child_tool_call["data"]["tool_name"] == "read_file"
-    assert "hello from agent loop" in child_tool_result["data"]["result_preview"]
 
 
 async def test_delegate_task_receives_compact_parent_active_skill_context() -> None:
@@ -270,7 +244,6 @@ async def test_delegate_task_receives_compact_parent_active_skill_context() -> N
         provider=provider,
         tool_registry=create_default_registry(workspace),
         skill_registry=SkillRegistry.from_directory(skills_root),
-        trace_store=JsonlTraceStore(root / "traces"),
     )
 
     await bus.publish_inbound(make_message("use the frontend skill, then delegate review"))
@@ -281,15 +254,6 @@ async def test_delegate_task_receives_compact_parent_active_skill_context() -> N
     assert "# Parent Active Skills" in child_messages[1]["content"]
     assert "frontend-design" in child_messages[1]["content"]
     assert "loaded_by_skill_get" in child_messages[1]["content"]
-
-    events = [
-        json.loads(line)
-        for line in (root / "traces" / "cli_default.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()
-    ]
-    subagent_start = next(event for event in events if event["event"] == "subagent_start")
-    assert subagent_start["data"]["inherited_active_skills"] == ["frontend-design"]
 
 
 def test_create_subagent_registry_allows_read_only_file_and_web_tools() -> None:

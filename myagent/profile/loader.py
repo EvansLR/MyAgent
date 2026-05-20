@@ -1,7 +1,6 @@
 """Load persistent agent profile instruction files."""
 
 from pathlib import Path
-from typing import Any
 
 
 DEFAULT_PROFILE_SUBPATH = Path(".myagent") / "profile"
@@ -49,8 +48,8 @@ class ProfileLoader:
             if not self.exists(filename)
         ]
 
-    def to_trace_data(self) -> dict[str, Any]:
-        """Return summary data for trace events."""
+    def to_summary_data(self) -> dict[str, object]:
+        """Return a compact summary of profile file state."""
         return {
             "profile_root": str(self.root),
             "files_present": self.present_files(),

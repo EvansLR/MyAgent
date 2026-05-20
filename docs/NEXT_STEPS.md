@@ -206,6 +206,33 @@ b884876 docs: clarify temporary memory proposals
 b992e5f feat: clarify memory proposal workflow
 ```
 
+## 2026-05-20 Observability Removal and Runtime Assembly Refactor
+
+Recently completed:
+
+- Removed runtime trace/report plumbing from the agent path.
+- Removed the `myagent.tracing` package, trace CLI commands, and trace-focused tests.
+- Simplified `ContextBuilder` back to assembling messages and sections; context report data classes and `build_messages_with_report` are gone.
+- Replaced trace-oriented skill callbacks with a small active-skill callback used only for current-turn context.
+- Added `AgentMemoryServices` so memory store, extractor, consolidator, compressor, and memory tool registration are owned by the memory layer.
+- Added `AgentContextRuntime` so ContextBuilder, conversation summary, session history, profile, skills, and active skill state are assembled inside the context layer instead of inside `AgentLoop`.
+- Moved shared compression helpers to `myagent.text.compression` so Memory no longer depends on Context for generic text utilities.
+- Changed memory proposal consolidation and visible memory compression to use a small `save_memory` tool-call contract and canonical MEMORY.md validation before writing.
+- `AgentLoop` now stays closer to orchestration: bus, provider, module runtimes, tool loop, cron bridge, and turn processor wiring.
+
+Verification:
+
+```text
+python -m compileall -q myagent
+python -m pytest
+242 passed
+```
+
+Next recommended step:
+
+- Review whether `AgentLoop` should also delegate default non-memory tool registration (`delegate_task`, `cron`, `message`) to a small tool-runtime assembly helper.
+- If the current diff looks good, commit it as one focused refactor.
+
 ## Profile / Memory / Runtime 杈圭晫鏀舵暃
 
 褰撳墠鎸夋垚鐔?coding-agent 宸ュ叿鐨勫仛娉曪紝鎶娾€滀汉鍐欑殑绋冲畾鎸囦护鈥濆拰鈥淎gent 鑷繁璁颁綇鐨勫唴瀹光€濆垎寮€锛?

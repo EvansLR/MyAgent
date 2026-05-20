@@ -5,36 +5,22 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from myagent.agent.context import ContextBuilder
+from myagent.agent.context.runtime import AgentContextRuntime
+from myagent.agent.delegation.subagent import DelegateTaskTool
+from myagent.agent.context.summary import ConversationSummaryConfig
 from myagent.agent.runtime.cron_bridge import AgentCronBridge
-from myagent.agent.runtime.env import format_runtime_environment
-from myagent.agent.runtime.skill_state import AgentSkillState
-from myagent.agent.context.summary import (
-    ConversationSummarizer,
-    ConversationSummaryConfig,
-)
 from myagent.agent.runtime.tool_loop import AgentToolLoop
 from myagent.agent.runtime.turn_processor import AgentTurnProcessor
-from myagent.agent.runtime.run_events import AgentRunEvents
-from myagent.agent.runtime.session_history import AgentSessionHistory
-from myagent.agent.delegation.subagent import DelegateTaskTool
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
-from myagent.memory import MarkdownMemoryStore, MemoryConsolidator, VisibleMemoryCompressor
+from myagent.memory import AgentMemoryServices, MarkdownMemoryStore
 from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
+from myagent.profile import ProfileLoader
 from myagent.skills import SkillRegistry
 from myagent.tools import (
-    MemoryArchiveTool,
-    MemoryForgetTool,
-    MemoryGetTool,
-    MemoryProposeTool,
-    MemoryRememberTool,
-    MemorySearchTool,
-    SkillGetTool,
     ToolRegistry,
     create_default_registry,
 )
-from myagent.tracing import JsonlTraceStore, TraceStore
-from myagent.profile import ProfileLoader
 
 if TYPE_CHECKING:
     from myagent.cron.service import CronService
@@ -51,7 +37,6 @@ class AgentLoop:
         provider: BaseProvider | None = None,
         context_builder: ContextBuilder | None = None,
         tool_registry: ToolRegistry | None = None,
-        trace_store: TraceStore | None = None,
         markdown_memory_store: MarkdownMemoryStore | None = None,
         memory_extractor: MemoryExtractor | None = None,
         skill_registry: SkillRegistry | None = None,
@@ -64,69 +49,34 @@ class AgentLoop:
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
-        self.markdown_memory_store = markdown_memory_store or MarkdownMemoryStore()
-        self.memory_extractor = memory_extractor or MemoryExtractor(
+        self.memory_services = AgentMemoryServices.create(
             self.provider,
-            self.markdown_memory_store,
+            store=markdown_memory_store,
+            extractor=memory_extractor,
         )
-        self.memory_consolidator = MemoryConsolidator(
-            self.provider,
-            self.markdown_memory_store,
-        )
+        self.markdown_memory_store = self.memory_services.store
+        self.memory_extractor = self.memory_services.extractor
+        self.memory_consolidator = self.memory_services.consolidator
+        self.memory_compressor = self.memory_services.compressor
         self.cron_bridge = AgentCronBridge(self.bus, self.memory_consolidator)
-        self.skill_registry = skill_registry or SkillRegistry.from_directory()
-        self.profile_loader = profile_loader or ProfileLoader()
-        self.conversation_summary_config = (
-            conversation_summary_config or ConversationSummaryConfig()
-        )
-        self.conversation_summarizer = ConversationSummarizer(
+        self.context_runtime = AgentContextRuntime.create(
             self.provider,
-            self.conversation_summary_config,
+            memory=self.memory_services,
+            builder=context_builder,
+            skill_registry=skill_registry,
+            workspace_root=workspace_root,
+            profile_loader=profile_loader,
+            summary_config=conversation_summary_config,
         )
-        self.trace_store = trace_store or JsonlTraceStore()
-        self.events = AgentRunEvents(self.trace_store)
-        self.skill_state = AgentSkillState(self.events)
-        self.session_history = AgentSessionHistory(
-            self.conversation_summarizer,
-            self.conversation_summary_config,
-            self.memory_extractor,
-            self.events,
-        )
-        self.context_builder = context_builder or ContextBuilder(
-            runtime_environment_provider=lambda: format_runtime_environment(workspace_root),
-            always_memory_provider=self.markdown_memory_store.read_always_memory,
-            now_memory_provider=self.markdown_memory_store.read_now_memory,
-            conversation_summary_provider=self.session_history.current_summary_context,
-            active_skills_provider=self.skill_state.current_active_skills_context,
-            skill_registry=self.skill_registry,
-            profile_provider=self.profile_loader,
-        )
-        if self.context_builder.always_memory_provider is None:
-            self.context_builder.always_memory_provider = (
-                self.markdown_memory_store.read_always_memory
-            )
-        if self.context_builder.now_memory_provider is None:
-            self.context_builder.now_memory_provider = (
-                self.markdown_memory_store.read_now_memory
-            )
-        if self.context_builder.conversation_summary_provider is None:
-            self.context_builder.conversation_summary_provider = (
-                self.session_history.current_summary_context
-            )
-        if self.context_builder.active_skills_provider is None:
-            self.context_builder.active_skills_provider = (
-                self.skill_state.current_active_skills_context
-            )
-        self.conversation_summarizer.chars_per_token = (
-            self.context_builder.budget.chars_per_token
-        )
-        self.memory_compressor = VisibleMemoryCompressor(
-            self.provider,
-            self.markdown_memory_store,
-            chars_per_token=self.context_builder.budget.chars_per_token,
-        )
+        self.skill_registry = self.context_runtime.skill_registry
+        self.profile_loader = self.context_runtime.profile_loader
+        self.conversation_summary_config = self.context_runtime.summary_config
+        self.conversation_summarizer = self.context_runtime.summarizer
+        self.skill_state = self.context_runtime.skill_state
+        self.session_history = self.context_runtime.session_history
+        self.context_builder = self.context_runtime.builder
         self.tool_registry = tool_registry or create_default_registry()
-        self._register_memory_tools()
+        self._register_runtime_tools()
         if not self.tool_registry.has("delegate_task"):
             self.tool_registry.register(DelegateTaskTool(self.provider, self.tool_registry))
         self.cron_service = cron_service or self._create_default_cron_service()
@@ -144,7 +94,6 @@ class AgentLoop:
             self.provider,
             self.tool_registry,
             self.bus,
-            self.events,
             self.skill_state,
             self.max_tool_iterations,
         )
@@ -153,11 +102,9 @@ class AgentLoop:
             context_builder=self.context_builder,
             session_history=self.session_history,
             memory_compressor=self.memory_compressor,
-            events=self.events,
             skill_state=self.skill_state,
             tool_registry=self.tool_registry,
             tool_loop=self.tool_loop,
-            profile_loader=self.profile_loader,
             max_tool_iterations=self.max_tool_iterations,
         )
         self._lock = asyncio.Lock()
@@ -208,21 +155,8 @@ class AgentLoop:
             on_job=self.cron_bridge.on_job,
         )
 
-    def _register_memory_tools(self) -> None:
-        """Expose local personal memory tools to the main agent."""
-        tools = (
-            MemoryRememberTool(self.markdown_memory_store),
-            MemoryProposeTool(self.markdown_memory_store),
-            MemoryArchiveTool(self.markdown_memory_store),
-            MemorySearchTool(self.markdown_memory_store),
-            MemoryGetTool(self.markdown_memory_store),
-            MemoryForgetTool(self.markdown_memory_store),
-        )
-        for tool in tools:
-            if not self.tool_registry.has(tool.name):
-                self.tool_registry.register(tool)
-        if self.skill_registry.list_skills() and not self.tool_registry.has("skill_get"):
-            self.tool_registry.register(
-                SkillGetTool(self.skill_registry, trace_hook=self.skill_state.trace_event)
-            )
+    def _register_runtime_tools(self) -> None:
+        """Expose module-owned tools to the main agent."""
+        self.memory_services.register_tools(self.tool_registry)
+        self.context_runtime.register_skill_tools(self.tool_registry)
 

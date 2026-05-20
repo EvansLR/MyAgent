@@ -3,15 +3,17 @@ import shutil
 
 from myagent.memory import MemoryConsolidator, MarkdownMemoryStore
 from myagent.memory.markdown import MEMORY_HEADER, PROPOSALS_HEADER
-from myagent.providers.base import ProviderResponse
+from myagent.providers.base import ProviderResponse, ToolCall
 
 
 class FakeProvider:
-    """A test provider that returns a fixed response."""
+    """A test provider that returns a fixed consolidation response."""
 
-    def __init__(self, response: str) -> None:
+    def __init__(self, response: str, *, use_tool: bool = True) -> None:
         self.response = response
+        self.use_tool = use_tool
         self.messages: list[list[dict]] = []
+        self.tools: list[list[dict] | None] = []
 
     async def generate(self, messages: list[dict]) -> str:
         self.messages.append(messages)
@@ -22,7 +24,19 @@ class FakeProvider:
         messages: list[dict],
         tools: list[dict] | None = None,
     ) -> ProviderResponse:
-        return ProviderResponse(content=self.response)
+        self.messages.append(messages)
+        self.tools.append(tools)
+        if not self.use_tool:
+            return ProviderResponse(content=self.response)
+        return ProviderResponse(
+            tool_calls=[
+                ToolCall(
+                    id="save-memory-1",
+                    name="save_memory",
+                    arguments={"memory_markdown": self.response},
+                )
+            ]
+        )
 
 
 def make_workspace(name: str) -> Path:
@@ -139,7 +153,7 @@ async def test_consolidator_returns_false_on_bad_llm_output() -> None:
         importance=3,
     )
 
-    provider = FakeProvider("I don't know what to do.")
+    provider = FakeProvider("I don't know what to do.", use_tool=False)
     consolidator = MemoryConsolidator(provider, store)
 
     result = await consolidator.consolidate()
@@ -171,3 +185,61 @@ async def test_consolidator_prompt_uses_budgets_instead_of_hard_counts() -> None
     assert "Do not delete an item merely because it is old." in system_prompt
     assert "Maximum 10 bullets" not in system_prompt
     assert "Maximum 20 bullets" not in system_prompt
+
+
+async def test_consolidator_returns_false_when_tool_payload_has_bad_markdown() -> None:
+    root = make_workspace("bad-tool-markdown")
+    store = MarkdownMemoryStore(root)
+    store.ensure_layout()
+    store.propose_memory(
+        content="User prefers Python.",
+        section_hint="Always",
+        tags=["tech"],
+        importance=3,
+    )
+
+    provider = FakeProvider("# Memory\n\n## Something Else\n\n- bad")
+    consolidator = MemoryConsolidator(provider, store)
+
+    result = await consolidator.consolidate()
+
+    assert result is False
+    proposals_text = store.proposals_path.read_text(encoding="utf-8")
+    assert "User prefers Python." in proposals_text
+
+
+async def test_consolidator_normalizes_memory_markdown_shape() -> None:
+    root = make_workspace("normalize")
+    store = MarkdownMemoryStore(root)
+    store.ensure_layout()
+    store.propose_memory(
+        content="User prefers Python.",
+        section_hint="Always",
+        tags=["tech"],
+        importance=3,
+    )
+
+    provider = FakeProvider(
+        "# Memory\n\n"
+        "extra ignored text\n\n"
+        "## Always\n\n"
+        "- User prefers Python.\n\n"
+        "## Now\n\n"
+        "- Current project is MyAgent.\n\n"
+        "## Extra\n\n"
+        "- should not survive"
+    )
+    consolidator = MemoryConsolidator(provider, store)
+
+    result = await consolidator.consolidate()
+
+    assert result is True
+    memory = store.memory_path.read_text(encoding="utf-8")
+    assert memory == (
+        "# Memory\n\n"
+        "## Always\n\n"
+        "- User prefers Python.\n\n"
+        "## Now\n\n"
+        "- Current project is MyAgent.\n"
+    )
+    assert "Extra" not in memory

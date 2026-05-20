@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from myagent.agent.context.compression import compress_until_within_limit
 from myagent.agent.context.types import Message
 from myagent.providers.base import BaseProvider
+from myagent.text.compression import compress_until_within_limit
 
 
 SUMMARY_SYSTEM_PROMPT = """You update a compact conversation summary for MyAgent.

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from myagent.agent.context.compression import compress_until_within_limit, estimate_tokens
-from myagent.memory.markdown import MEMORY_HEADER, MarkdownMemoryStore
+from myagent.memory.consolidator import SAVE_MEMORY_TOOL, memory_markdown_from_tool_calls
+from myagent.memory.markdown import MarkdownMemoryStore
 from myagent.providers.base import BaseProvider
+from myagent.text.compression import estimate_tokens
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,22 +46,29 @@ class VisibleMemoryCompressor:
         if tokens <= token_limit:
             return MemoryCompressionResult(False, tokens, 0, False)
 
-        result = await compress_until_within_limit(
-            text,
-            token_limit=token_limit,
-            chars_per_token=self.chars_per_token,
-            max_rounds=max_rounds,
-            compress_once=self._compress_once,
-        )
-        new_text = result.text.strip()
-        if MEMORY_HEADER not in new_text:
-            new_text = _fallback_memory_text(new_text)
+        new_text = ""
+        rounds = 0
+        estimated_tokens = tokens
+        current = text
+        for _ in range(max(max_rounds, 0)):
+            rounds += 1
+            compressed = (await self._compress_once(current, token_limit)).strip()
+            if not compressed:
+                break
+            new_text = compressed
+            estimated_tokens = estimate_tokens(new_text, self.chars_per_token)
+            if estimated_tokens <= token_limit:
+                break
+            current = new_text
+
+        if not new_text:
+            return MemoryCompressionResult(False, tokens, rounds, False)
         self.store.memory_path.write_text(new_text.rstrip() + "\n", encoding="utf-8")
         return MemoryCompressionResult(
             changed=True,
-            estimated_tokens=result.estimated_tokens,
-            rounds=result.rounds,
-            truncated=result.truncated,
+            estimated_tokens=estimated_tokens,
+            rounds=rounds,
+            truncated=False,
         )
 
     async def _compress_once(self, text: str, token_limit: int) -> str:
@@ -70,16 +78,17 @@ class VisibleMemoryCompressor:
             "Keep the same markdown structure with # Memory, ## Always, and ## Now. "
             "Preserve stable user preferences, standing collaboration rules, current "
             "project state, and open loops. Merge duplicates and remove stale or "
-            "low-value details. Output only the complete rewritten MEMORY.md.\n\n"
+            "low-value details. Call save_memory with the complete rewritten MEMORY.md.\n\n"
             f"{text}"
         )
-        return await self.provider.generate(
+        response = await self.provider.generate_response(
             [
-                {"role": "system", "content": "You compress visible agent memory."},
+                {
+                    "role": "system",
+                    "content": "You compress visible agent memory. Use the save_memory tool.",
+                },
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            tools=SAVE_MEMORY_TOOL,
         )
-
-
-def _fallback_memory_text(content: str) -> str:
-    return f"# Memory\n\n## Always\n\n## Now\n\n{content.strip()}"
+        return memory_markdown_from_tool_calls(response.tool_calls)

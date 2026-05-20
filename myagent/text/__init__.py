@@ -1,4 +1,4 @@
-"""Compatibility imports for generic text compression helpers."""
+"""Generic text processing helpers."""
 
 from myagent.text.compression import (
     CompressionResult,

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from uuid import uuid4
 
 from myagent.approval import (
     ApprovalRoute,
@@ -13,7 +12,6 @@ from myagent.approval import (
 )
 from myagent.agent.context.types import Message
 from myagent.agent.runtime.messages import assistant_tool_call_message, tool_result_message
-from myagent.agent.runtime.run_events import AgentRunEvents
 from myagent.agent.runtime.skill_state import AgentSkillState
 from myagent.agent.delegation.subagent import DelegateTaskTool
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
@@ -48,7 +46,7 @@ class AgentTurnState:
             self.warnings.append(f"repeated_tool_call:{tool_call.name}")
 
     def to_completion_data(self) -> dict[str, object]:
-        """Return trace data for the end of the turn."""
+        """Return compact completion data for internal diagnostics."""
         return {
             "stop_reason": self.stop_reason or "unknown",
             "iterations": self.iteration,
@@ -68,14 +66,12 @@ class AgentToolLoop:
         provider: BaseProvider,
         tool_registry: ToolRegistry,
         bus: MessageBus,
-        events: AgentRunEvents,
         skill_state: AgentSkillState,
         max_iterations: int,
     ) -> None:
         self.provider = provider
         self.tool_registry = tool_registry
         self.bus = bus
-        self.events = events
         self.skill_state = skill_state
         self.max_iterations = max_iterations
 
@@ -89,45 +85,18 @@ class AgentToolLoop:
         if not hasattr(self.provider, "generate_response"):
             turn_state.iteration = 1
             turn_state.stop_reason = "final_output"
-            self.events.llm_request(
-                inbound.session_key,
-                turn_state.turn_id,
-                1,
-                len(messages),
-                0,
-            )
             return await self.provider.generate(messages)
 
         tools = self.tool_registry.get_definitions()
         if not tools:
             turn_state.iteration = 1
             turn_state.stop_reason = "final_output"
-            self.events.llm_request(
-                inbound.session_key,
-                turn_state.turn_id,
-                1,
-                len(messages),
-                0,
-            )
             return await self.provider.generate(messages)
 
         working_messages = list(messages)
         for iteration in range(1, self.max_iterations + 1):
             turn_state.iteration = iteration
-            self.events.llm_request(
-                inbound.session_key,
-                turn_state.turn_id,
-                iteration,
-                len(working_messages),
-                len(tools),
-            )
             response = await self.provider.generate_response(working_messages, tools=tools)
-            self.events.llm_response(
-                inbound.session_key,
-                turn_state.turn_id,
-                iteration,
-                response,
-            )
             if not response.tool_calls:
                 turn_state.stop_reason = "final_output"
                 return response.content
@@ -162,30 +131,13 @@ class AgentToolLoop:
         chat_id: str = "",
     ) -> str:
         """Run one requested tool call through the registry."""
-        self.events.tool_call(session_key, turn_id, tool_call)
-        subagent_task_id = ""
-        if tool_call.name == "delegate_task":
-            subagent_task_id = uuid4().hex[:8]
-            inherited_active_skills = self.skill_state.active_skill_ids_for_turn(
-                session_key,
-                turn_id,
-            )
-            self.events.subagent_start(
-                session_key,
-                turn_id,
-                tool_call,
-                subagent_task_id,
-                user_content,
-                inherited_active_skills,
-            )
         try:
             route_token = set_current_approval_route(ApprovalRoute(channel, chat_id))
             try:
-                result = await self._execute_delegate_task_with_trace(
+                result = await self._execute_tool_with_context(
                     tool_call,
                     session_key,
                     turn_id,
-                    subagent_task_id,
                     channel,
                     chat_id,
                 )
@@ -193,27 +145,17 @@ class AgentToolLoop:
                 reset_current_approval_route(route_token)
         except Exception as exc:
             result = f"Error executing tool {tool_call.name}: {exc}"
-        if tool_call.name == "delegate_task":
-            self.events.subagent_result(
-                session_key,
-                turn_id,
-                tool_call,
-                subagent_task_id,
-                result,
-            )
-        self.events.tool_result(session_key, turn_id, tool_call, result)
         return result
 
-    async def _execute_delegate_task_with_trace(
+    async def _execute_tool_with_context(
         self,
         tool_call: ToolCall,
         session_key: str,
         turn_id: str,
-        subagent_task_id: str,
         channel: str = "",
         chat_id: str = "",
     ) -> str:
-        """Run delegate_task with child trace events when possible."""
+        """Run one tool, adding runtime context for special tools when needed."""
         if tool_call.name != "delegate_task":
             arguments = dict(tool_call.arguments)
             if tool_call.name == "cron" and channel:
@@ -230,20 +172,9 @@ class AgentToolLoop:
         if errors:
             return f"Error: Invalid parameters for tool '{tool_call.name}': " + "; ".join(errors)
 
-        def trace_child(event: str, data: dict[str, object]) -> None:
-            child_data = {
-                "parent_turn_id": turn_id,
-                "parent_tool_call_id": tool_call.id,
-                "delegation_reason": casted.get("reason", ""),
-                **data,
-            }
-            self.events.record(session_key, turn_id, event, child_data)
-
-        return await tool.execute_with_trace(
+        return await tool.execute(
             **casted,
             active_skill_context=self.skill_state.format_active_skill_context(session_key, turn_id),
-            trace_hook=trace_child,
-            subagent_task_id=subagent_task_id,
         )
 
     async def _publish_tool_status(self, inbound: InboundMessage, tool_call: ToolCall) -> None:

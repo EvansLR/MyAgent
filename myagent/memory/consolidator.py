@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+from typing import Any
 
 from myagent.memory.markdown import (
     ALWAYS_MEMORY_CHAR_BUDGET,
@@ -29,7 +31,7 @@ RULES:
 4. RESOLVE CONFLICTS: when proposals contradict each other, keep the most accurate/recent one. Discard outdated or wrong information.
 5. DISCARD low-quality proposals (importance < 2, vague, or irrelevant).
 6. Keep Always and Now within their prompt budgets. Bullet points are preferred.
-7. Output ONLY the complete new MEMORY.md content. No extra commentary.
+7. Call the save_memory tool with the complete new MEMORY.md content. No free-text reply.
 
 WHEN A VISIBLE SECTION IS TOO LARGE:
 1. Merge duplicates and near-duplicates.
@@ -58,6 +60,26 @@ Do not add any commentary outside the markdown.
     now_budget=NOW_MEMORY_CHAR_BUDGET,
 )
 
+SAVE_MEMORY_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "save_memory",
+            "description": "Save the validated long-term memory consolidation result.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "memory_markdown": {
+                        "type": "string",
+                        "description": "The complete updated MEMORY.md markdown with # Memory, ## Always, and ## Now.",
+                    },
+                },
+                "required": ["memory_markdown"],
+            },
+        },
+    }
+]
+
 
 class MemoryConsolidator:
     """Periodically merge MEMORY_PROPOSALS.md proposals into MEMORY.md using an LLM."""
@@ -82,18 +104,21 @@ class MemoryConsolidator:
         prompt = self._build_prompt(memory_text, proposals_text)
 
         try:
-            response = await self.provider.generate([
-                {"role": "system", "content": _CONSOLIDATION_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ])
+            response = await self.provider.generate_response(
+                [
+                    {"role": "system", "content": _CONSOLIDATION_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                tools=SAVE_MEMORY_TOOL,
+            )
         except Exception:
             return False
 
-        new_memory = response.strip()
-        if not new_memory or MEMORY_HEADER not in new_memory:
+        new_memory = memory_markdown_from_tool_calls(response.tool_calls)
+        if not new_memory:
             return False
 
-        self.store.memory_path.write_text(new_memory + "\n", encoding="utf-8")
+        self.store.memory_path.write_text(new_memory.rstrip() + "\n", encoding="utf-8")
 
         archive_dir = self.store.root / "archive" / "proposals"
         archive_dir.mkdir(parents=True, exist_ok=True)
@@ -113,6 +138,70 @@ class MemoryConsolidator:
             "## Pending Proposals",
             proposals_text,
             "",
-            "Please output the complete new MEMORY.md content.",
+            "Please call save_memory with the complete new MEMORY.md content.",
         ]
         return "\n".join(parts)
+
+
+def memory_markdown_from_tool_calls(tool_calls: list[Any]) -> str:
+    """Extract and normalize MEMORY.md content from a save_memory tool call."""
+    if not tool_calls:
+        return ""
+    call = tool_calls[0]
+    if getattr(call, "name", "") != "save_memory":
+        return ""
+    arguments = _normalize_arguments(getattr(call, "arguments", {}))
+    if arguments is None:
+        return ""
+    markdown = arguments.get("memory_markdown")
+    if markdown is None:
+        return ""
+    return _normalize_memory_markdown(_ensure_text(markdown))
+
+
+def _normalize_arguments(arguments: object) -> dict[str, object] | None:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(arguments, list):
+        return arguments[0] if arguments and isinstance(arguments[0], dict) else None
+    return arguments if isinstance(arguments, dict) else None
+
+
+def _ensure_text(value: object) -> str:
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+def _normalize_memory_markdown(markdown: str) -> str:
+    """Keep MEMORY.md in the small canonical shape this project expects."""
+    sections = _parse_visible_sections(markdown)
+    if not sections:
+        return ""
+    always = sections.get("Always")
+    now = sections.get("Now")
+    if always is None or now is None:
+        return ""
+    return (
+        f"{MEMORY_HEADER}\n\n"
+        f"## Always\n\n{always.strip()}\n\n"
+        f"## Now\n\n{now.strip()}"
+    ).rstrip()
+
+
+def _parse_visible_sections(markdown: str) -> dict[str, str] | None:
+    lines = markdown.strip().splitlines()
+    if not lines or lines[0].strip() != MEMORY_HEADER:
+        return None
+    sections: dict[str, list[str]] = {}
+    current: str | None = None
+    for line in lines[1:]:
+        clean = line.strip()
+        if clean.startswith("## "):
+            current = clean.removeprefix("## ").strip()
+            sections.setdefault(current, [])
+            continue
+        if current in {"Always", "Now"}:
+            sections[current].append(line)
+    return {name: "\n".join(section_lines).strip() for name, section_lines in sections.items()}

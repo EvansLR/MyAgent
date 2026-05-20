@@ -47,8 +47,8 @@ async def test_skill_get_tool_loads_full_skill_content() -> None:
     assert "Use a review-first output shape." in result
 
 
-async def test_skill_get_tool_traces_loaded_skill() -> None:
-    root = make_workspace("trace")
+async def test_skill_get_tool_notifies_active_skill_callback() -> None:
+    root = make_workspace("active-skill")
     write_skill(
         root,
         "code-review",
@@ -64,33 +64,21 @@ async def test_skill_get_tool_traces_loaded_skill() -> None:
         ),
     )
     registry = SkillRegistry.from_directory(root)
-    events: list[tuple[str, dict[str, object]]] = []
+    active_skills: list[dict[str, object]] = []
 
-    result = await SkillGetTool(registry, trace_hook=lambda event, data: events.append((event, data))).execute(
-        "code-review"
-    )
+    result = await SkillGetTool(
+        registry,
+        active_skill_callback=active_skills.append,
+    ).execute("code-review")
 
     assert "Skill: code-review" in result
-    assert events == [
-        (
-            "skill_loaded",
-            {
-                "skill_id": "code-review",
-                "name": "code-review",
-                "description": "Review code changes.",
-                "path": (root / "code-review" / "SKILL.md").as_posix(),
-                "content_length": len((root / "code-review" / "SKILL.md").read_text(encoding="utf-8")),
-            },
-        ),
-        (
-            "active_skill_set",
-            {
-                "skill_id": "code-review",
-                "name": "code-review",
-                "scope": "turn",
-                "reason": "loaded_by_skill_get",
-            },
-        ),
+    assert active_skills == [
+        {
+            "skill_id": "code-review",
+            "name": "code-review",
+            "scope": "turn",
+            "reason": "loaded_by_skill_get",
+        },
     ]
 
 

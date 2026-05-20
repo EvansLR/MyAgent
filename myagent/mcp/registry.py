@@ -20,7 +20,7 @@ class McpRegistrationSummary:
     skipped_tool_names: list[str]
 
     def to_dict(self) -> dict[str, object]:
-        """Return trace- and CLI-friendly data."""
+        """Return CLI-friendly registration data."""
         return {
             "server_name": self.server_name,
             "transport": self.transport,
@@ -57,7 +57,7 @@ def register_mcp_tools_with_summary(
     include_tools: tuple[str, ...] = (),
     exclude_tools: tuple[str, ...] = (),
 ) -> McpRegistrationSummary:
-    """Register MCP tools and return an observable registration summary."""
+    """Register MCP tools and return a registration summary."""
     selected_tools, skipped_tool_names = filter_mcp_tools(
         server_name=server_name,
         tools=tools,

@@ -79,12 +79,12 @@ def test_profile_present_and_missing_files() -> None:
     assert "USER.md" in loader.missing_files()
 
 
-def test_profile_trace_data() -> None:
-    root = make_profile("trace")
+def test_profile_summary_data() -> None:
+    root = make_profile("summary")
     (root / "AGENT.md").write_text("x", encoding="utf-8")
     loader = ProfileLoader(root)
 
-    data = loader.to_trace_data()
+    data = loader.to_summary_data()
     assert data["profile_root"] == str(root)
     assert "legacy_profile_root" not in data
     assert "AGENT.md" in data["files_present"]

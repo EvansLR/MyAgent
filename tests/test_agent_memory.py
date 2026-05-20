@@ -1,12 +1,11 @@
-import json
 from pathlib import Path
+import json
 import shutil
 
 from myagent.agent import AgentLoop, ContextBudget, ContextBuilder, ConversationSummaryConfig
 from myagent.bus import InboundMessage, MessageBus
 from myagent.memory import MarkdownMemoryStore
 from myagent.providers.base import ProviderResponse, ToolCall
-from myagent.tracing import JsonlTraceStore
 
 
 def make_message(content: str = "hello") -> InboundMessage:
@@ -24,10 +23,6 @@ def make_workspace(name: str) -> Path:
         shutil.rmtree(root)
     root.mkdir(parents=True)
     return root
-
-
-def read_events(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 class CapturingProvider:
@@ -66,22 +61,14 @@ async def test_agent_loop_exposes_memory_remember_tool() -> None:
         bus,
         provider=provider,
         markdown_memory_store=MarkdownMemoryStore(root / "memory"),
-        trace_store=JsonlTraceStore(root / "traces"),
     )
 
     await bus.publish_inbound(make_message("Remember that I prefer documentation-first changes."))
     await agent.process_next()
 
     memory_text = (root / "memory" / "MEMORY.md").read_text(encoding="utf-8")
-    events = read_events(root / "traces" / "cli_default.jsonl")
-    event_names = [event["event"] for event in events]
 
     assert "User prefers documentation-first changes." in memory_text
-    assert "tool_call" in event_names
-    assert "tool_result" in event_names
-    assert events[[event["event"] for event in events].index("tool_call")]["data"]["tool_name"] == (
-        "memory_remember"
-    )
 
 
 class PreContextExtractingProvider:
@@ -131,7 +118,6 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
         provider=provider,
         context_builder=context_builder,
         markdown_memory_store=MarkdownMemoryStore(root / "memory"),
-        trace_store=JsonlTraceStore(root / "traces"),
         conversation_summary_config=ConversationSummaryConfig(
             keep_recent_messages=2,
         ),
@@ -149,8 +135,6 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
 
     archive_files = list((root / "memory" / "archive").glob("*.md"))
     archive_text = archive_files[0].read_text(encoding="utf-8")
-    events = read_events(root / "traces" / "cli_default.jsonl")
-    event_names = [event["event"] for event in events]
     state = agent.session_history.summaries.get("cli:default")
     final_history = provider.response_messages[-1][1:-1]
 
@@ -166,8 +150,6 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
     assert {"role": "user", "content": "recent question"} in final_history
     assert {"role": "assistant", "content": "recent answer"} in final_history
     assert not any("old preference" in str(message.get("content", "")) for message in final_history)
-    assert "memory_candidates_saved" in event_names
-    assert "conversation_summary_updated" in event_names
 
 
 class NoExtractionProvider:
@@ -185,7 +167,6 @@ async def test_agent_loop_does_not_run_post_turn_memory_extractor() -> None:
         bus,
         provider=NoExtractionProvider(),
         markdown_memory_store=MarkdownMemoryStore(root / "memory"),
-        trace_store=JsonlTraceStore(root / "traces"),
         start_cron=False,
     )
 
@@ -193,23 +174,37 @@ async def test_agent_loop_does_not_run_post_turn_memory_extractor() -> None:
     await agent.process_next()
 
     archive_files = list((root / "memory" / "archive").glob("*.md"))
-    events = read_events(root / "traces" / "cli_default.jsonl")
 
     assert archive_files == []
-    assert "memory_candidates_saved" not in [event["event"] for event in events]
 
 
 class MemoryCompressionProvider:
     def __init__(self) -> None:
-        self.generate_calls = []
         self.response_messages = []
 
     async def generate(self, messages):
-        self.generate_calls.append(messages)
         return "# Memory\n\n## Always\n\n- Compact preference.\n\n## Now\n\n- Compact project state."
 
     async def generate_response(self, messages, tools=None) -> ProviderResponse:
         self.response_messages.append(messages)
+        if tools and tools[0]["function"]["name"] == "save_memory":
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="save-memory-1",
+                        name="save_memory",
+                        arguments={
+                            "memory_markdown": (
+                                "# Memory\n\n"
+                                "## Always\n\n"
+                                "- Compact preference.\n\n"
+                                "## Now\n\n"
+                                "- Compact project state."
+                            )
+                        },
+                    )
+                ]
+            )
         return ProviderResponse(content="ok")
 
 
@@ -242,7 +237,6 @@ async def test_agent_loop_compresses_visible_memory_before_context() -> None:
         provider=provider,
         context_builder=context_builder,
         markdown_memory_store=store,
-        trace_store=JsonlTraceStore(root / "traces"),
         start_cron=False,
     )
 
@@ -250,11 +244,8 @@ async def test_agent_loop_compresses_visible_memory_before_context() -> None:
     await agent.process_next()
 
     memory_text = store.memory_path.read_text(encoding="utf-8")
-    events = read_events(root / "traces" / "cli_default.jsonl")
-    event_names = [event["event"] for event in events]
 
     assert "Compact preference." in memory_text
     assert "very large stable preference" not in memory_text
-    assert "memory_compressed" in event_names
-    assert "# Always Memory" in provider.response_messages[0][0]["content"]
-    assert "Compact preference." in provider.response_messages[0][0]["content"]
+    assert "# Always Memory" in provider.response_messages[-1][0]["content"]
+    assert "Compact preference." in provider.response_messages[-1][0]["content"]

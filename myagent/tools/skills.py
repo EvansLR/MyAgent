@@ -5,7 +5,7 @@ from typing import Any, Callable
 from myagent.skills import SkillRegistry
 from myagent.tools.base import Tool
 
-SkillTraceHook = Callable[[str, dict[str, object]], None]
+ActiveSkillCallback = Callable[[dict[str, object]], None]
 
 
 class SkillGetTool(Tool):
@@ -14,10 +14,10 @@ class SkillGetTool(Tool):
     def __init__(
         self,
         registry: SkillRegistry,
-        trace_hook: SkillTraceHook | None = None,
+        active_skill_callback: ActiveSkillCallback | None = None,
     ) -> None:
         self.registry = registry
-        self.trace_hook = trace_hook
+        self.active_skill_callback = active_skill_callback
 
     @property
     def name(self) -> str:
@@ -51,25 +51,14 @@ class SkillGetTool(Tool):
         content = self.registry.read_skill(skill.id)
         if content is None:
             return f"Skill '{skill_id}' not found."
-        if self.trace_hook is not None:
-            self.trace_hook(
-                "skill_loaded",
-                {
-                    "skill_id": skill.id,
-                    "name": skill.name,
-                    "description": skill.description,
-                    "path": skill.path.as_posix(),
-                    "content_length": len(content),
-                },
-            )
-            self.trace_hook(
-                "active_skill_set",
+        if self.active_skill_callback is not None:
+            self.active_skill_callback(
                 {
                     "skill_id": skill.id,
                     "name": skill.name,
                     "scope": "turn",
                     "reason": "loaded_by_skill_get",
-                },
+                }
             )
         allowed = ", ".join(skill.allowed_tools) if skill.allowed_tools else "not specified"
         return (

@@ -1,12 +1,10 @@
 from pathlib import Path
-import json
 import shutil
 
 from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.skills import SkillRegistry
-from myagent.tracing import JsonlTraceStore
 
 
 def make_message(content: str = "hello") -> InboundMessage:
@@ -155,43 +153,22 @@ async def test_agent_loop_injects_available_skills_into_context() -> None:
     assert "skill_get" in tool_names
 
 
-async def test_agent_loop_traces_skill_get_usage() -> None:
-    root = make_workspace("trace")
+async def test_agent_loop_executes_skill_get_usage() -> None:
+    root = make_workspace("skill-get")
     write_skill(root, "code-review", "Review code changes.")
     provider = SkillGetProvider()
     bus = MessageBus()
-    trace_store = JsonlTraceStore(root / "traces")
     agent = AgentLoop(
         bus,
         provider=provider,
         skill_registry=SkillRegistry.from_directory(root),
-        trace_store=trace_store,
     )
 
     await bus.publish_inbound(make_message("Use code-review skill."))
-    await agent.process_next()
+    outbound = await agent.process_next()
 
-    lines = (root / "traces" / "runtime_skills.jsonl").read_text(encoding="utf-8").splitlines()
-    load_events = [
-        line
-        for line in lines
-        if "skill_loaded" in line
-    ]
-    active_events = [
-        line
-        for line in lines
-        if "active_skill_set" in line
-    ]
-    assert load_events
-    assert active_events
-    assert "code-review" in load_events[0]
-    assert "code-review" in active_events[0]
-    assert "loaded_by_skill_get" in active_events[0]
-    # Verify turn_id is a real UUID, not the legacy hardcoded "skills"
-    for event_line in load_events + active_events:
-        event = json.loads(event_line)
-        assert event["turn_id"] != "skills"
-        assert len(event["turn_id"]) == 32
+    assert provider.calls == 2
+    assert outbound.content == "loaded"
 
 
 async def test_agent_loop_does_not_refresh_active_skill_section_mid_turn() -> None:

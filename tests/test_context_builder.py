@@ -1,6 +1,6 @@
-﻿from pathlib import Path
-import shutil
 from datetime import datetime, timezone
+from pathlib import Path
+import shutil
 
 from myagent.agent import ContextBudget, ContextBuilder, format_runtime_environment
 from myagent.bus import InboundMessage
@@ -28,7 +28,7 @@ def make_workspace(name: str) -> Path:
 def test_context_builder_builds_system_message() -> None:
     builder = ContextBuilder()
 
-    messages, _ = builder.build_messages_with_report(make_message("hello"))
+    messages = builder.build_messages(make_message("hello"))
     prompt = messages[0]["content"]
 
     assert "# Identity" in prompt
@@ -42,7 +42,7 @@ def test_context_builder_builds_messages_with_history() -> None:
         {"role": "assistant", "content": "second"},
     ]
 
-    messages, _ = builder.build_messages_with_report(make_message("third"), history)
+    messages = builder.build_messages(make_message("third"), history)
 
     assert messages == [
         {"role": "system", "content": "# Identity\n\nTest identity."},
@@ -62,16 +62,13 @@ def test_context_builder_includes_runtime_environment() -> None:
         ),
     )
 
-    messages, report = builder.build_messages_with_report(make_message("hello"))
+    messages = builder.build_messages(make_message("hello"))
 
     assert "# Runtime Environment" in messages[0]["content"]
     assert str(workspace.resolve()) in messages[0]["content"]
     assert "Current date: 2026-05-09" in messages[0]["content"]
     assert "Resolve relative dates" in messages[0]["content"]
     assert "Do not invent absolute paths." in messages[0]["content"]
-    sections = {section.name: section for section in report.sections}
-    assert sections["Runtime Environment"].retention == "required"
-    assert sections["Runtime Environment"].source == "runtime:environment"
 
 
 def test_context_builder_refreshes_runtime_environment_provider_each_build() -> None:
@@ -81,8 +78,8 @@ def test_context_builder_refreshes_runtime_environment_provider_each_build() -> 
         runtime_environment_provider=lambda: next(values),
     )
 
-    first, _ = builder.build_messages_with_report(make_message("hello"))
-    second, _ = builder.build_messages_with_report(make_message("hello again"))
+    first = builder.build_messages(make_message("hello"))
+    second = builder.build_messages(make_message("hello again"))
 
     assert "time one" in first[0]["content"]
     assert "time two" in second[0]["content"]
@@ -95,37 +92,14 @@ def test_context_builder_splits_always_and_now_memory() -> None:
         now_memory_provider=lambda: "- Current project state.",
     )
 
-    messages, report = builder.build_messages_with_report(make_message("hello"))
-
+    messages = builder.build_messages(make_message("hello"))
     system_prompt = messages[0]["content"]
+
     assert "# Always Memory" in system_prompt
     assert "Stable preference." in system_prompt
     assert "# Now Memory" in system_prompt
     assert "Current project state." in system_prompt
     assert "# Long-term Memory" not in system_prompt
-    sections = {section.name: section for section in report.sections}
-    assert sections["Always Memory"].source == "memory:always"
-    assert sections["Always Memory"].retention == "core"
-    assert sections["Now Memory"].source == "memory:now"
-    assert sections["Now Memory"].retention == "context"
-
-
-def test_context_builder_reports_sections_and_always_memory_retention() -> None:
-    builder = ContextBuilder(
-        identity="Test identity.",
-        always_memory_provider=lambda: "- User name is Lin.",
-    )
-
-    messages, report = builder.build_messages_with_report(make_message("hello"))
-
-    assert messages[0]["role"] == "system"
-    sections = {section.name: section for section in report.sections}
-    assert sections["Identity"].retention == "required"
-    assert sections["Identity"].source == "identity"
-    assert sections["Always Memory"].retention == "core"
-    assert sections["Always Memory"].source == "memory:always"
-    assert report.total_chars > 0
-    assert report.estimated_tokens > 0
 
 
 def test_context_builder_includes_conversation_summary_section() -> None:
@@ -134,14 +108,10 @@ def test_context_builder_includes_conversation_summary_section() -> None:
         conversation_summary_provider=lambda: "- Earlier decision: keep summary lightweight.",
     )
 
-    messages, report = builder.build_messages_with_report(make_message("hello"))
+    messages = builder.build_messages(make_message("hello"))
 
     assert "# Conversation Summary" in messages[0]["content"]
     assert "Earlier decision" in messages[0]["content"]
-    sections = {section.name: section for section in report.sections}
-    assert sections["Conversation Summary"].kind == "session_summary"
-    assert sections["Conversation Summary"].source == "session:summary"
-    assert sections["Conversation Summary"].retention == "context"
 
 
 def test_context_builder_omits_empty_conversation_summary() -> None:
@@ -150,38 +120,9 @@ def test_context_builder_omits_empty_conversation_summary() -> None:
         conversation_summary_provider=lambda: "   ",
     )
 
-    messages, _ = builder.build_messages_with_report(make_message("hello"))
+    messages = builder.build_messages(make_message("hello"))
 
     assert "# Conversation Summary" not in messages[0]["content"]
-
-
-def test_context_builder_keeps_history_when_token_budget_allows() -> None:
-    builder = ContextBuilder(
-        identity="Test identity.",
-        delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=200, chars_per_token=4),
-    )
-    history = [
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "second"},
-        {"role": "user", "content": "third"},
-        {"role": "assistant", "content": "fourth"},
-    ]
-
-    messages, report = builder.build_messages_with_report(make_message("fifth"), history)
-
-    assert messages == [
-        {"role": "system", "content": "# Identity\n\nTest identity."},
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "second"},
-        {"role": "user", "content": "third"},
-        {"role": "assistant", "content": "fourth"},
-        {"role": "user", "content": "fifth"},
-    ]
-    assert report.history.total_messages == 4
-    assert report.history.included_messages == 4
-    assert report.history.dropped_messages == 0
-    assert report.warnings == []
 
 
 def test_context_builder_can_apply_optional_history_message_cap() -> None:
@@ -197,7 +138,7 @@ def test_context_builder_can_apply_optional_history_message_cap() -> None:
         {"role": "assistant", "content": "fourth"},
     ]
 
-    messages, report = builder.build_messages_with_report(make_message("fifth"), history)
+    messages = builder.build_messages(make_message("fifth"), history)
 
     assert messages == [
         {"role": "system", "content": "# Identity\n\nTest identity."},
@@ -205,12 +146,6 @@ def test_context_builder_can_apply_optional_history_message_cap() -> None:
         {"role": "assistant", "content": "fourth"},
         {"role": "user", "content": "fifth"},
     ]
-    assert report.history.total_messages == 4
-    assert report.history.included_messages == 2
-    assert report.history.dropped_messages == 2
-    assert report.history.dropped_by_message_limit == 2
-    assert report.history.dropped_by_token_budget == 0
-    assert report.warnings == ["history_trimmed"]
 
 
 def test_context_builder_includes_available_skills() -> None:
@@ -229,7 +164,7 @@ def test_context_builder_includes_available_skills() -> None:
         skill_registry=skill_registry,
     )
 
-    messages, _ = builder.build_messages_with_report(make_message("what skills are available?"))
+    messages = builder.build_messages(make_message("what skills are available?"))
 
     assert "# Available Skills" in messages[0]["content"]
     assert "code-review" in messages[0]["content"]
@@ -239,7 +174,7 @@ def test_context_builder_includes_available_skills() -> None:
 def test_context_builder_omits_active_skills_when_none_active() -> None:
     builder = ContextBuilder(identity="Test identity.", active_skills_provider=lambda: "")
 
-    messages, _ = builder.build_messages_with_report(make_message("hello"))
+    messages = builder.build_messages(make_message("hello"))
 
     assert "# Active Skills" not in messages[0]["content"]
 
@@ -250,60 +185,21 @@ def test_context_builder_includes_compact_active_skills_section() -> None:
         active_skills_provider=lambda: "- frontend-design: Frontend Design\n  reason: loaded_by_skill_get",
     )
 
-    messages, report = builder.build_messages_with_report(make_message("hello"))
+    messages = builder.build_messages(make_message("hello"))
 
     assert "# Active Skills" in messages[0]["content"]
     assert "frontend-design: Frontend Design" in messages[0]["content"]
     assert "reason: loaded_by_skill_get" in messages[0]["content"]
-    sections = {section.name: section for section in report.sections}
-    assert sections["Active Skills"].retention == "optional"
-    assert sections["Active Skills"].source == "skills:active"
 
 
 def test_context_builder_includes_delegation_policy_as_required_section() -> None:
     builder = ContextBuilder(identity="Test identity.")
 
-    messages, report = builder.build_messages_with_report(make_message("research this"))
+    messages = builder.build_messages(make_message("research this"))
 
     assert "# Delegation Policy" in messages[0]["content"]
     assert "Use delegate_task proactively" in messages[0]["content"]
     assert "Do not require the user to explicitly ask for a subagent" in messages[0]["content"]
-    sections = {section.name: section for section in report.sections}
-    assert sections["Delegation Policy"].retention == "required"
-    assert sections["Delegation Policy"].source == "agent:delegation_policy"
-
-
-def test_context_builder_reports_over_budget_without_dropping_sections() -> None:
-    skill_registry = SkillRegistry(
-        [
-            SkillEntry(
-                id="large-skill",
-                name="large-skill",
-                description="Use this skill when " + ("the task is large. " * 80),
-                path=Path("skills/large-skill/SKILL.md"),
-            )
-        ]
-    )
-    builder = ContextBuilder(
-        identity="ID",
-        delegation_policy=None,
-        skill_registry=skill_registry,
-        budget=ContextBudget(max_prompt_tokens=20, chars_per_token=4),
-    )
-
-    messages, report = builder.build_messages_with_report(make_message("hello"))
-
-    assert "# Identity" in messages[0]["content"]
-    assert "# Available Skills" in messages[0]["content"]
-    sections = {section.name: section for section in report.sections}
-    assert sections["Identity"].included is True
-    assert sections["Identity"].retention == "required"
-    assert sections["Available Skills"].included is True
-    assert sections["Available Skills"].reason == "included"
-    assert "context_budget_exceeded" in report.warnings
-    assert "section_dropped" not in report.warnings
-    assert report.max_prompt_tokens == 20
-    assert report.estimated_tokens_before_budget == report.estimated_tokens
 
 
 def test_context_builder_keeps_history_when_over_budget() -> None:
@@ -323,45 +219,9 @@ def test_context_builder_keeps_history_when_over_budget() -> None:
         {"role": "assistant", "content": "reply"},
     ]
 
-    messages, report = builder.build_messages_with_report(make_message("now"), history)
+    messages = builder.build_messages(make_message("now"), history)
 
     assert {"role": "user", "content": "old old old old"} in messages
     assert {"role": "assistant", "content": "old reply old reply"} in messages
     assert {"role": "user", "content": "recent"} in messages
     assert {"role": "assistant", "content": "reply"} in messages
-    assert report.history.total_messages == 4
-    assert report.history.included_messages == 4
-    assert report.history.dropped_messages == 0
-    assert report.history.dropped_by_message_limit == 0
-    assert report.history.dropped_by_token_budget == 0
-    assert "history_token_trimmed" not in report.warnings
-    assert "context_budget_exceeded" in report.warnings
-
-
-def test_context_builder_does_not_reserve_ratio_budget_for_history() -> None:
-    builder = ContextBuilder(
-        identity="ID",
-        delegation_policy=None,
-        active_skills_provider=lambda: "x" * 50,
-        budget=ContextBudget(
-            max_prompt_tokens=80,
-            max_history_messages=10,
-            chars_per_token=1,
-        ),
-    )
-    history = [
-        {"role": "user", "content": "recent question"},
-        {"role": "assistant", "content": "recent answer"},
-    ]
-
-    messages, report = builder.build_messages_with_report(make_message("now"), history)
-
-    assert "# Active Skills" in messages[0]["content"]
-    assert {"role": "user", "content": "recent question"} in messages
-    assert {"role": "assistant", "content": "recent answer"} in messages
-    assert report.history.reserved_tokens == 0
-    assert report.history.included_messages == 2
-    sections = {section.name: section for section in report.sections}
-    assert sections["Active Skills"].included is True
-    assert sections["Active Skills"].reason == "included"
-
