@@ -13,12 +13,15 @@ from myagent.approval import (
     set_current_approval_route,
 )
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
-from myagent.agent.context import ContextBuilder, Message, format_runtime_environment
+from myagent.agent.context import ContextBuilder
+from myagent.agent.context_types import Message
+from myagent.agent.runtime_env import format_runtime_environment
 from myagent.agent.summary import (
     ConversationSummarizer,
     ConversationSummaryConfig,
     ConversationSummaryState,
 )
+from myagent.agent.run_events import AgentRunEvents
 from myagent.agent.subagent import DelegateTaskTool
 from myagent.cron.types import CronJob
 from myagent.memory import MarkdownMemoryStore, MemoryConsolidator
@@ -154,6 +157,7 @@ class AgentLoop:
             from myagent.tools.message import MessageTool
             self.tool_registry.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.trace_store = trace_store or JsonlTraceStore()
+        self.events = AgentRunEvents(self.trace_store)
         self.max_tool_iterations = max_tool_iterations
         self._history: dict[str, list[Message]] = {}
         self._active_skills_by_turn: dict[tuple[str, str], list[dict[str, object]]] = {}
@@ -189,20 +193,10 @@ class AgentLoop:
         if (mt := self.tool_registry.get("message")) and hasattr(mt, "set_context"):
             mt.set_context(inbound.channel, inbound.chat_id)
             mt.start_turn()
-        self._trace(
+        self.events.user_message(inbound, turn_id)
+        self.events.profile_loaded(
             inbound.session_key,
             turn_id,
-            "user_message",
-            {
-                "channel": inbound.channel,
-                "chat_id": inbound.chat_id,
-                "content": inbound.content,
-            },
-        )
-        self._trace(
-            inbound.session_key,
-            turn_id,
-            "profile_loaded",
             self.profile_loader.to_trace_data(),
         )
         history = self._history_for(inbound.session_key)
@@ -218,61 +212,22 @@ class AgentLoop:
             visible_history,
         )
         self.context_builder.last_report = context_report
-        self._trace(
+        self.events.context_built(
             inbound.session_key,
             turn_id,
-            "context_built",
-            {
-                "message_count": len(messages),
-                "roles": [message.get("role") for message in messages],
-                "full_history_messages": len(history),
-                "visible_history_messages": len(visible_history),
-                "context": context_report.to_dict(),
-            },
+            messages,
+            len(history),
+            len(visible_history),
+            context_report,
         )
-        if context_report.dropped_sections or context_report.history.dropped_by_token_budget:
-            self._trace(
-                inbound.session_key,
-                turn_id,
-                "context_dropped",
-                {
-                    "dropped_sections": [
-                        {
-                            "name": section.name,
-                            "kind": section.kind,
-                            "retention": section.retention,
-                            "source": section.source,
-                            "reason": section.reason,
-                            "estimated_tokens": section.estimated_tokens,
-                        }
-                        for section in context_report.dropped_sections
-                    ],
-                    "dropped_history_messages": context_report.history.dropped_messages,
-                    "dropped_history_by_token_budget": (
-                        context_report.history.dropped_by_token_budget
-                    ),
-                    "estimated_tokens_before": (
-                        context_report.estimated_tokens_before_budget
-                    ),
-                    "estimated_tokens_after": context_report.estimated_tokens,
-                    "max_prompt_tokens": context_report.max_prompt_tokens,
-                },
-            )
+        self.events.context_dropped(inbound.session_key, turn_id, context_report)
         self._current_turn_key = (inbound.session_key, turn_id)
         try:
             content = await self._generate_with_tools(messages, inbound, turn_state)
         except Exception as exc:
             turn_state.stop_reason = "provider_error"
             content = f"Error: {exc}"
-            self._trace(
-                inbound.session_key,
-                turn_id,
-                "error",
-                {
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                },
-            )
+            self.events.error(inbound.session_key, turn_id, exc)
         # Check if message tool already sent a reply this turn
         message_sent = False
         if (mt := self.tool_registry.get("message")) and hasattr(mt, "_sent_in_turn"):
@@ -286,19 +241,10 @@ class AgentLoop:
                 chat_id=inbound.chat_id,
                 content=content,
             )
-            self._trace(
+            self.events.final_answer(inbound.session_key, turn_id, content)
+            self.events.turn_completed(
                 inbound.session_key,
                 turn_id,
-                "final_answer",
-                {
-                    "content_preview": _preview(content),
-                    "content_length": len(content),
-                },
-            )
-            self._trace(
-                inbound.session_key,
-                turn_id,
-                "turn_completed",
                 turn_state.to_completion_data(),
             )
             await self.bus.publish_outbound(outbound)
@@ -309,10 +255,9 @@ class AgentLoop:
                 chat_id=inbound.chat_id,
                 content="",
             )
-            self._trace(
+            self.events.turn_completed(
                 inbound.session_key,
                 turn_id,
-                "turn_completed",
                 {**turn_state.to_completion_data(), "suppressed_final_reply": True},
             )
         history.extend(
@@ -336,20 +281,32 @@ class AgentLoop:
         if not hasattr(self.provider, "generate_response"):
             turn_state.iteration = 1
             turn_state.stop_reason = "final_output"
-            self._trace_llm_request(inbound.session_key, turn_state.turn_id, 1, len(messages), 0)
+            self.events.llm_request(
+                inbound.session_key,
+                turn_state.turn_id,
+                1,
+                len(messages),
+                0,
+            )
             return await self.provider.generate(messages)
 
         tools = self.tool_registry.get_definitions()
         if not tools:
             turn_state.iteration = 1
             turn_state.stop_reason = "final_output"
-            self._trace_llm_request(inbound.session_key, turn_state.turn_id, 1, len(messages), 0)
+            self.events.llm_request(
+                inbound.session_key,
+                turn_state.turn_id,
+                1,
+                len(messages),
+                0,
+            )
             return await self.provider.generate(messages)
 
         working_messages = list(messages)
         for iteration in range(1, self.max_tool_iterations + 1):
             turn_state.iteration = iteration
-            self._trace_llm_request(
+            self.events.llm_request(
                 inbound.session_key,
                 turn_state.turn_id,
                 iteration,
@@ -357,16 +314,11 @@ class AgentLoop:
                 len(tools),
             )
             response = await self.provider.generate_response(working_messages, tools=tools)
-            self._trace(
+            self.events.llm_response(
                 inbound.session_key,
                 turn_state.turn_id,
-                "llm_response",
-                {
-                    "iteration": iteration,
-                    "content_preview": _preview(response.content),
-                    "tool_call_count": len(response.tool_calls),
-                    "tool_names": [tool_call.name for tool_call in response.tool_calls],
-                },
+                iteration,
+                response,
             )
             if not response.tool_calls:
                 turn_state.stop_reason = "final_output"
@@ -403,33 +355,18 @@ class AgentLoop:
         chat_id: str = "",
     ) -> str:
         """Run one requested tool call through the registry."""
-        self._trace(
-            session_key,
-            turn_id,
-            "tool_call",
-            {
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "arguments": tool_call.arguments,
-            },
-        )
+        self.events.tool_call(session_key, turn_id, tool_call)
         subagent_task_id = ""
         if tool_call.name == "delegate_task":
             subagent_task_id = uuid4().hex[:8]
             inherited_active_skills = self._active_skill_ids_for_turn(session_key, turn_id)
-            self._trace(
+            self.events.subagent_start(
                 session_key,
                 turn_id,
-                "subagent_start",
-                {
-                    "tool_call_id": tool_call.id,
-                    "subagent_task_id": subagent_task_id,
-                    "agent_type": tool_call.arguments.get("agent_type", "researcher"),
-                    "delegation_reason": tool_call.arguments.get("reason", ""),
-                    "delegation_mode": _delegation_mode(tool_call.arguments, user_content),
-                    "inherited_active_skills": inherited_active_skills,
-                    "task_preview": _preview(str(tool_call.arguments.get("task", ""))),
-                },
+                tool_call,
+                subagent_task_id,
+                user_content,
+                inherited_active_skills,
             )
         try:
             route_token = set_current_approval_route(ApprovalRoute(channel, chat_id))
@@ -447,29 +384,14 @@ class AgentLoop:
         except Exception as exc:
             result = f"Error executing tool {tool_call.name}: {exc}"
         if tool_call.name == "delegate_task":
-            self._trace(
+            self.events.subagent_result(
                 session_key,
                 turn_id,
-                "subagent_result",
-                {
-                    "tool_call_id": tool_call.id,
-                    "subagent_task_id": subagent_task_id,
-                    "delegation_reason": tool_call.arguments.get("reason", ""),
-                    "result_preview": _preview(result),
-                    "result_length": len(result),
-                },
+                tool_call,
+                subagent_task_id,
+                result,
             )
-        self._trace(
-            session_key,
-            turn_id,
-            "tool_result",
-            {
-                "tool_call_id": tool_call.id,
-                "tool_name": tool_call.name,
-                "result_preview": _preview(result),
-                "result_length": len(result),
-            },
-        )
+        self.events.tool_result(session_key, turn_id, tool_call, result)
         return result
 
     async def _execute_delegate_task_with_trace(
@@ -505,7 +427,7 @@ class AgentLoop:
                 "delegation_reason": casted.get("reason", ""),
                 **data,
             }
-            self._trace(session_key, turn_id, event, child_data)
+            self.events.record(session_key, turn_id, event, child_data)
 
         return await tool.execute_with_trace(
             **casted,
@@ -630,7 +552,7 @@ class AgentLoop:
     def _trace_skill_event(self, event: str, data: dict[str, object]) -> None:
         """Record skill tool events without coupling SkillGetTool to AgentLoop state."""
         turn_id = self._current_turn_key[1] if self._current_turn_key else "skills"
-        self._trace("runtime:skills", turn_id, event, data)
+        self.events.record("runtime:skills", turn_id, event, data)
         if event != "active_skill_set" or self._current_turn_key is None:
             return
         active_skills = self._active_skills_by_turn.setdefault(self._current_turn_key, [])
@@ -722,14 +644,14 @@ class AgentLoop:
             target_history_tokens=target_tokens,
         )
         if not decision.should_update:
-            self._trace(
+            self.events.conversation_summary_checked(
                 session_key,
                 turn_id,
-                "conversation_summary_checked",
-                self._conversation_summary_trace_data(
+                self.events.conversation_summary_data(
                     history,
                     state,
                     decision,
+                    keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
                     reason=f"pre_context_{decision.reason}",
                     budget_data={
                         "history_budget_tokens": history_budget,
@@ -743,14 +665,14 @@ class AgentLoop:
         start = state.summarized_message_count if state else 0
         chunk = history[start:decision.eligible_end]
         await self._flush_memory_before_summary(session_key, turn_id, chunk)
-        self._trace(
+        self.events.conversation_summary_checked(
             session_key,
             turn_id,
-            "conversation_summary_checked",
-            self._conversation_summary_trace_data(
+            self.events.conversation_summary_data(
                 history,
                 state,
                 decision,
+                keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
                 reason="pre_context_budget_pressure",
                 budget_data={
                     "history_budget_tokens": history_budget,
@@ -767,37 +689,34 @@ class AgentLoop:
                 decision,
             )
         except Exception as exc:
-            self._trace(
+            self.events.conversation_summary_failed(
                 session_key,
                 turn_id,
-                "conversation_summary_failed",
-                {
-                    **self._conversation_summary_trace_data(
-                        history,
-                        state,
-                        decision,
-                        reason="pre_context_failed",
-                        budget_data={
-                            "history_budget_tokens": history_budget,
-                            "target_history_tokens": target_tokens,
-                            "visible_history_tokens": visible_tokens,
-                        },
-                    ),
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                },
+                self.events.conversation_summary_data(
+                    history,
+                    state,
+                    decision,
+                    keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
+                    reason="pre_context_failed",
+                    budget_data={
+                        "history_budget_tokens": history_budget,
+                        "target_history_tokens": target_tokens,
+                        "visible_history_tokens": visible_tokens,
+                    },
+                ),
+                exc,
             )
             return False
 
         self._conversation_summaries[session_key] = updated
-        self._trace(
+        self.events.conversation_summary_updated(
             session_key,
             turn_id,
-            "conversation_summary_updated",
-            self._conversation_summary_trace_data(
+            self.events.conversation_summary_data(
                 history,
                 updated,
                 decision,
+                keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
                 previous_state=state,
                 reason="pre_context_updated",
                 budget_data={
@@ -835,91 +754,18 @@ class AgentLoop:
                 source="pre_context_compaction",
             )
         except Exception as exc:
-            self._trace(
+            self.events.memory_extraction_error(
                 session_key,
                 turn_id,
-                "memory_extraction_error",
-                {
-                    "phase": "pre_context",
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                },
+                "pre_context",
+                exc,
             )
             return
-        if memory_ids:
-            self._trace(
-                session_key,
-                turn_id,
-                "memory_candidates_saved",
-                {
-                    "phase": "pre_context",
-                    "memory_ids": memory_ids,
-                    "count": len(memory_ids),
-                },
-            )
-
-    def _conversation_summary_trace_data(
-        self,
-        history: list[Message],
-        state: ConversationSummaryState | None,
-        decision,
-        *,
-        reason: str,
-        previous_state: ConversationSummaryState | None = None,
-        budget_data: dict[str, object] | None = None,
-    ) -> dict[str, object]:
-        """Build trace data for conversation summary decisions."""
-        before = previous_state if previous_state is not None else state
-        data: dict[str, object] = {
-            "history_messages": len(history),
-            "summarized_message_count_before": (
-                before.summarized_message_count if before else 0
-            ),
-            "summarized_message_count_after": (
-                state.summarized_message_count if state else 0
-            ),
-            "new_messages_considered": decision.new_message_count,
-            "kept_recent_messages": self.conversation_summary_config.keep_recent_messages,
-            "summary_chars_before": len(before.content) if before else 0,
-            "summary_chars_after": len(state.content) if state else 0,
-            "revision": state.revision if state else 0,
-            "reason": reason,
-        }
-        if budget_data:
-            data.update(budget_data)
-        return data
-
-    def _trace(
-        self,
-        session_key: str,
-        turn_id: str,
-        event: str,
-        data: dict[str, object] | None = None,
-    ) -> None:
-        """Record a trace event without letting trace failures affect chat."""
-        try:
-            self.trace_store.record(session_key, turn_id, event, data)
-        except Exception:
-            pass
-
-    def _trace_llm_request(
-        self,
-        session_key: str,
-        turn_id: str,
-        iteration: int,
-        message_count: int,
-        tool_count: int,
-    ) -> None:
-        """Record a compact provider request event."""
-        self._trace(
+        self.events.memory_candidates_saved(
             session_key,
             turn_id,
-            "llm_request",
-            {
-                "iteration": iteration,
-                "message_count": message_count,
-                "tool_count": tool_count,
-            },
+            "pre_context",
+            memory_ids,
         )
 
 
@@ -971,33 +817,8 @@ def _format_tool_arguments(arguments: dict[str, object]) -> str:
     return " ".join(parts)
 
 
-def _delegation_mode(arguments: dict[str, object], user_content: str) -> str:
-    """Return a lightweight hint for whether delegation was user-forced."""
-    marker_text = " ".join(
-        [
-            user_content.lower(),
-            *[
-                str(value).lower()
-                for key, value in arguments.items()
-                if key in {"task", "context", "reason"}
-            ],
-        ]
-    )
-    explicit_markers = ("subagent", "sub-agent", "delegate", "researcher", "reviewer", "委托", "子 agent")
-    if any(marker in marker_text for marker in explicit_markers):
-        return "explicit"
-    return "automatic"
-
 
 def _tool_call_signature(tool_call: ToolCall) -> str:
     """Return a stable signature for repeated tool-call diagnostics."""
     arguments = json.dumps(tool_call.arguments, sort_keys=True, ensure_ascii=False)
     return f"{tool_call.name}:{arguments}"
-
-
-def _preview(text: str, limit: int = 300) -> str:
-    """Return a compact single-line preview for trace files."""
-    compact = " ".join(text.split())
-    if len(compact) <= limit:
-        return compact
-    return f"{compact[: limit - 3]}..."

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from uuid import uuid4
 
-from myagent.agent.context import Message
+from myagent.agent.context_types import Message
 from myagent.providers.base import BaseProvider, ProviderResponse, ToolCall
 from myagent.tools.base import Tool
 from myagent.tools.registry import ToolRegistry

@@ -1,17 +1,22 @@
 """Context assembly for model calls."""
 
-from dataclasses import dataclass
-from datetime import datetime
-from enum import StrEnum
-import os
-from pathlib import Path
-import platform
 from typing import Any, Callable
 
 from myagent.bus import InboundMessage
 from myagent.skills import SkillRegistry
+from myagent.agent.context_types import (
+    ContextAssemblyReport,
+    ContextBudget,
+    ContextHistoryReport,
+    ContextItem,
+    ContextItemKind,
+    ContextRetention,
+    ContextSection,
+    ContextSectionReport,
+    Message,
+)
+from myagent.agent.runtime_env import format_runtime_environment
 
-Message = dict[str, Any]
 DEFAULT_DELEGATION_POLICY = (
     "Use delegate_task proactively when a user request benefits from isolated "
     "research, codebase exploration, review, or large intermediate analysis. "
@@ -23,144 +28,6 @@ DEFAULT_DELEGATION_POLICY = (
     "simple direct answers or tasks where the main assistant can answer clearly "
     "without extra exploration."
 )
-
-
-class ContextRetention(StrEnum):
-    """How strongly a system context section should survive final budgeting."""
-
-    REQUIRED = "required"
-    CORE = "core"
-    CONTEXT = "context"
-    OPTIONAL = "optional"
-
-
-class ContextItemKind(StrEnum):
-    """Source category for a piece of model-visible context."""
-
-    INSTRUCTION = "instruction"
-    MEMORY_CORE = "memory_core"
-    SKILL_SUMMARY = "skill_summary"
-    ACTIVE_SKILL = "active_skill"
-    SESSION_SUMMARY = "session_summary"
-    SESSION_HISTORY = "session_history"
-    CURRENT_INPUT = "current_input"
-    PROFILE = "profile"
-
-
-@dataclass(frozen=True, slots=True)
-class ContextSection:
-    """One section of the system prompt."""
-
-    name: str
-    content: str
-    source: str = "runtime"
-    kind: ContextItemKind = ContextItemKind.INSTRUCTION
-    retention: ContextRetention = ContextRetention.CONTEXT
-
-
-@dataclass(frozen=True, slots=True)
-class ContextBudget:
-    """Budget knobs for first-stage context selection."""
-
-    max_prompt_tokens: int | None = 6000
-    max_history_messages: int | None = None
-    chars_per_token: int = 4
-    history_token_ratio: float = 0.35
-
-
-@dataclass(frozen=True, slots=True)
-class ContextItem:
-    """Internal budgetable context unit."""
-
-    id: str
-    name: str
-    kind: ContextItemKind
-    retention: ContextRetention
-    order: int
-    source: str
-    content: str
-    estimated_tokens: int
-
-
-@dataclass(frozen=True, slots=True)
-class ContextSectionReport:
-    """Observable size and inclusion data for one section."""
-
-    name: str
-    kind: str
-    retention: str
-    source: str
-    chars: int
-    estimated_tokens: int
-    included: bool
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class ContextHistoryReport:
-    """Observable history selection data."""
-
-    total_messages: int
-    included_messages: int
-    dropped_messages: int
-    max_history_messages: int
-    reserved_tokens: int = 0
-    estimated_tokens: int = 0
-    dropped_by_message_limit: int = 0
-    dropped_by_token_budget: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class ContextAssemblyReport:
-    """Report describing what ContextBuilder assembled for one model call."""
-
-    total_chars: int
-    estimated_tokens: int
-    estimated_tokens_before_budget: int
-    max_prompt_tokens: int | None
-    message_count: int
-    sections: list[ContextSectionReport]
-    history: ContextHistoryReport
-    warnings: list[str]
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a trace-friendly dictionary."""
-        return {
-            "total_chars": self.total_chars,
-            "estimated_tokens": self.estimated_tokens,
-            "estimated_tokens_before_budget": self.estimated_tokens_before_budget,
-            "max_prompt_tokens": self.max_prompt_tokens,
-            "message_count": self.message_count,
-            "sections": [
-                {
-                    "name": section.name,
-                    "kind": section.kind,
-                    "retention": section.retention,
-                    "source": section.source,
-                    "chars": section.chars,
-                    "estimated_tokens": section.estimated_tokens,
-                    "included": section.included,
-                    "reason": section.reason,
-                }
-                for section in self.sections
-            ],
-            "history": {
-                "total_messages": self.history.total_messages,
-                "included_messages": self.history.included_messages,
-                "dropped_messages": self.history.dropped_messages,
-                "max_history_messages": self.history.max_history_messages,
-                "reserved_tokens": self.history.reserved_tokens,
-                "estimated_tokens": self.history.estimated_tokens,
-                "dropped_by_message_limit": self.history.dropped_by_message_limit,
-                "dropped_by_token_budget": self.history.dropped_by_token_budget,
-            },
-            "warnings": list(self.warnings),
-        }
-
-    @property
-    def dropped_sections(self) -> list[ContextSectionReport]:
-        """Return sections that were omitted after budgeting."""
-        return [section for section in self.sections if not section.included]
 
 
 class ContextBuilder:
@@ -666,42 +533,3 @@ def _drop_invalid_leading_history(history: list[Message]) -> list[Message]:
     while selected and selected[0].get("role") != "user":
         selected.pop(0)
     return selected
-
-
-def format_runtime_environment(
-    workspace_root: Path | str | None = None,
-    now: datetime | None = None,
-) -> str:
-    """Return stable runtime facts that help the model call local tools correctly."""
-    root = Path(workspace_root or ".").resolve()
-    current = now or datetime.now().astimezone()
-    os_name = platform.system() or "Unknown"
-    shell = _detect_shell(os_name)
-    path_style = "Windows paths" if os_name == "Windows" else "POSIX paths"
-    timezone = current.tzname() or "local timezone"
-    return "\n".join(
-        [
-            f"- Current date: {current.date().isoformat()}",
-            f"- Current time: {current.strftime('%H:%M:%S')} {timezone}",
-            f"- OS: {os_name}",
-            f"- Shell: {shell}",
-            f"- Workspace root: {root}",
-            f"- Path style: {path_style}",
-            "- Resolve relative dates such as today, tomorrow, and yesterday to absolute dates before searching.",
-            "- Filesystem tools resolve relative paths inside the workspace root.",
-            "- Common personal folder aliases such as Desktop, Downloads, Documents, and 桌面 are recognized.",
-            "- Read-only filesystem operations do not require approval.",
-            "- Mutating filesystem operations outside the workspace require explicit user approval from the current channel.",
-            "- Prefer relative paths such as '.' unless the user asks for a specific external location.",
-            "- Do not invent absolute paths.",
-        ]
-    )
-
-
-def _detect_shell(os_name: str) -> str:
-    if os_name == "Windows":
-        parent = (os.environ.get("PSModulePath") or "").lower()
-        if "powershell" in parent:
-            return "PowerShell"
-        return "Windows shell"
-    return os.environ.get("SHELL") or "Unknown shell"

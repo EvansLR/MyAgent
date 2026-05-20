@@ -793,3 +793,20 @@ Verification:
 python -m pytest tests/test_trace_store.py tests/test_cli_channel.py
 21 passed
 ```
+
+## Implementation Note: AgentRunEvents
+
+Trace is still a lightweight JSONL mechanism, but the runtime no longer formats
+trace payloads directly inside `AgentLoop`.
+
+Current ownership:
+
+- `myagent/tracing/events.py`: trace event data structure.
+- `myagent/tracing/store.py`: append-only JSONL storage.
+- `myagent/agent/run_events.py`: semantic event facade used by the agent loop.
+- `myagent/agent/loop.py`: orchestration only; it calls methods such as
+  `events.context_built(...)`, `events.tool_result(...)`, and
+  `events.conversation_summary_updated(...)`.
+
+This keeps trace available for debugging while preventing observability details
+from making the main ReAct loop hard to read.

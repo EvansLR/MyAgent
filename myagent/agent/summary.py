@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from myagent.agent.context import Message
+from myagent.agent.context_types import Message
 from myagent.providers.base import BaseProvider
 
 

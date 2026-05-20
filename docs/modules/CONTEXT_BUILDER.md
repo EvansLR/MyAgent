@@ -2309,3 +2309,17 @@ Tradeoff:
 
 This is intentional for the learning version: one turn is expected to be short,
 and a single prompt assembly path is easier to explain and debug.
+
+## 2026-05-19 Update: Smaller Source Boundaries
+
+The context module was split by responsibility without changing runtime
+behavior:
+
+- `myagent/agent/context.py`: context assembly, budget selection, and history
+  selection.
+- `myagent/agent/context_types.py`: shared dataclasses and report types.
+- `myagent/agent/runtime_env.py`: model-visible runtime facts such as current
+  date/time, OS, shell, workspace root, and path guidance.
+
+This keeps `ContextBuilder` focused on one job: turning memory, skills, summary,
+history, and the current user message into provider-ready messages.

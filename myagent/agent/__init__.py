@@ -1,17 +1,17 @@
 """Agent runtime components."""
 
-from myagent.agent.context import (
+from myagent.agent.context import ContextBuilder
+from myagent.agent.context_types import (
     ContextAssemblyReport,
     ContextBudget,
-    ContextBuilder,
     ContextHistoryReport,
     ContextItem,
     ContextItemKind,
     ContextRetention,
     ContextSection,
     ContextSectionReport,
-    format_runtime_environment,
 )
+from myagent.agent.runtime_env import format_runtime_environment
 from myagent.agent.loop import AgentLoop
 from myagent.agent.summary import (
     ConversationSummarizer,
