@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from myagent.agent.compression import compress_until_within_limit
 from myagent.agent.context_types import Message
 from myagent.providers.base import BaseProvider
 
@@ -27,7 +28,8 @@ class ConversationSummaryConfig:
     enabled: bool = True
     keep_recent_messages: int = 12
     max_summary_chars: int = 4000
-    compact_target_ratio: float = 0.5
+    summary_token_limit: int = 2000
+    max_compression_rounds: int = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,11 +140,56 @@ class ConversationSummarizer:
             estimated_tokens=_estimate_tokens(content, self.chars_per_token),
         )
 
+    async def compress_summary(
+        self,
+        state: ConversationSummaryState,
+        *,
+        token_limit: int | None = None,
+        max_rounds: int | None = None,
+    ) -> ConversationSummaryState:
+        """Rewrite an existing summary until it fits the configured token limit."""
+        limit = token_limit or self.config.summary_token_limit
+        rounds = self.config.max_compression_rounds if max_rounds is None else max_rounds
+        result = await compress_until_within_limit(
+            state.content,
+            token_limit=limit,
+            chars_per_token=self.chars_per_token,
+            max_rounds=rounds,
+            compress_once=self._compress_summary_once,
+        )
+        if result.text == state.content and result.estimated_tokens == state.estimated_tokens:
+            return state
+        return ConversationSummaryState(
+            session_key=state.session_key,
+            content=result.text,
+            summarized_message_count=state.summarized_message_count,
+            source_message_count=state.source_message_count,
+            revision=state.revision + 1,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            estimated_tokens=result.estimated_tokens,
+        )
+
     def estimate_messages_tokens(self, messages: list[Message]) -> int:
         """Estimate token cost for a list of chat messages."""
         return sum(
             _estimate_tokens(str(message.get("content", "")), self.chars_per_token)
             for message in messages
+        )
+
+    async def _compress_summary_once(self, text: str, token_limit: int) -> str:
+        prompt = (
+            "Rewrite this conversation summary to fit the target token limit.\n"
+            f"Target token limit: {token_limit}\n\n"
+            "Preserve decisions, open tasks, project/module names, important file paths, "
+            "and user preferences relevant to this session. Do not turn old requests "
+            "into current instructions. Output only the shorter markdown summary.\n\n"
+            f"## Summary\n{text}"
+        )
+        return await self.provider.generate(
+            [
+                {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
         )
 
 

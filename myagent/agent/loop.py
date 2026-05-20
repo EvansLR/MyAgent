@@ -26,7 +26,7 @@ from myagent.agent.run_events import AgentRunEvents
 from myagent.agent.session_history import AgentSessionHistory
 from myagent.agent.subagent import DelegateTaskTool
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
-from myagent.memory import MarkdownMemoryStore, MemoryConsolidator
+from myagent.memory import MarkdownMemoryStore, MemoryConsolidator, VisibleMemoryCompressor
 from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
 from myagent.providers.base import ToolCall
@@ -147,12 +147,29 @@ class AgentLoop:
             skill_registry=self.skill_registry,
             profile_provider=self.profile_loader,
         )
+        if self.context_builder.always_memory_provider is None:
+            self.context_builder.always_memory_provider = (
+                self.markdown_memory_store.read_always_memory
+            )
+        if self.context_builder.now_memory_provider is None:
+            self.context_builder.now_memory_provider = (
+                self.markdown_memory_store.read_now_memory
+            )
         if self.context_builder.conversation_summary_provider is None:
             self.context_builder.conversation_summary_provider = (
                 self.session_history.current_summary_context
             )
+        if self.context_builder.active_skills_provider is None:
+            self.context_builder.active_skills_provider = (
+                self.skill_state.current_active_skills_context
+            )
         self.conversation_summarizer.chars_per_token = (
             self.context_builder.budget.chars_per_token
+        )
+        self.memory_compressor = VisibleMemoryCompressor(
+            self.provider,
+            self.markdown_memory_store,
+            chars_per_token=self.context_builder.budget.chars_per_token,
         )
         self.tool_registry = tool_registry or create_default_registry()
         self._register_memory_tools()
@@ -208,6 +225,7 @@ class AgentLoop:
         )
         history = self.session_history.history_for(inbound.session_key)
         self.session_history.set_current_summary_session(inbound.session_key)
+        await self._compress_visible_memory_before_context(inbound.session_key, turn_id)
         await self.session_history.compact_before_context(
             inbound.session_key,
             turn_id,
@@ -487,6 +505,39 @@ class AgentLoop:
         return CronService(
             store_path=store_path,
             on_job=self.cron_bridge.on_job,
+        )
+
+    async def _compress_visible_memory_before_context(
+        self,
+        session_key: str,
+        turn_id: str,
+    ) -> None:
+        """Keep visible memory within its prompt-time token limit."""
+        budget = self.context_builder.budget
+        try:
+            result = await self.memory_compressor.compress_if_needed(
+                token_limit=budget.memory_token_limit,
+                max_rounds=budget.max_compression_rounds,
+            )
+        except Exception as exc:
+            self.events.record(
+                session_key,
+                turn_id,
+                "memory_compression_failed",
+                {"type": type(exc).__name__, "message": str(exc)},
+            )
+            return
+        if not result.changed:
+            return
+        self.events.record(
+            session_key,
+            turn_id,
+            "memory_compressed",
+            {
+                "estimated_tokens": result.estimated_tokens,
+                "rounds": result.rounds,
+                "truncated": result.truncated,
+            },
         )
 
 

@@ -196,7 +196,7 @@ async def test_agent_loop_records_max_iteration_stop_and_repeated_tool_warning()
     assert "repeated_tool_call:read_file" in completed["data"]["warnings"]
 
 
-async def test_agent_loop_records_context_dropped_trace_event() -> None:
+async def test_agent_loop_does_not_drop_context_sections_for_budget() -> None:
     root = make_workspace("context-dropped")
     bus = MessageBus()
     skill_registry = SkillRegistry(
@@ -227,11 +227,13 @@ async def test_agent_loop_records_context_dropped_trace_event() -> None:
     await agent.process_next()
 
     events = read_events(root / "cli_default.jsonl")
-    dropped = next(event for event in events if event["event"] == "context_dropped")
-    assert dropped["data"]["max_prompt_tokens"] == 20
-    assert dropped["data"]["estimated_tokens_before"] > dropped["data"]["estimated_tokens_after"]
-    assert dropped["data"]["dropped_sections"][0]["name"] == "Available Skills"
-    assert dropped["data"]["dropped_sections"][0]["reason"] == "budget_exceeded"
+    assert not [event for event in events if event["event"] == "context_dropped"]
+    context = next(event for event in events if event["event"] == "context_built")
+    sections = {
+        section["name"]: section for section in context["data"]["context"]["sections"]
+    }
+    assert sections["Available Skills"]["included"] is True
+    assert "context_budget_exceeded" in context["data"]["context"]["warnings"]
 
 
 class LargeTraceToolProvider:
@@ -304,7 +306,12 @@ async def test_agent_loop_records_conversation_summary_trace_events() -> None:
         identity="You are MyAgent.",
         runtime_environment="",
         delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=100, chars_per_token=1),
+        budget=ContextBudget(
+            max_prompt_tokens=100,
+            chars_per_token=1,
+            raw_history_token_limit=80,
+            raw_history_target_tokens=40,
+        ),
     )
     agent = AgentLoop(
         bus,
@@ -316,7 +323,7 @@ async def test_agent_loop_records_conversation_summary_trace_events() -> None:
         ),
         start_cron=False,
     )
-    agent.memory_extractor = None
+    agent.session_history.memory_extractor = None
     agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 12)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 12)},
@@ -332,12 +339,13 @@ async def test_agent_loop_records_conversation_summary_trace_events() -> None:
     updated = next(event for event in events if event["event"] == "conversation_summary_updated")
     assert checked["data"]["reason"] == "pre_context_budget_pressure"
     assert checked["data"]["new_messages_considered"] == 2
-    assert updated["data"]["summarized_message_count_after"] == 2
+    assert updated["data"]["summarized_message_count_after"] == 0
+    assert updated["data"]["pruned_raw_history_messages"] == 2
     assert updated["data"]["summary_chars_after"] > 0
 
     events = read_events(root / "cli_default.jsonl")
     context_events = [event for event in events if event["event"] == "context_built"]
-    assert context_events[-1]["data"]["full_history_messages"] == 4
+    assert context_events[-1]["data"]["full_history_messages"] == 2
     assert context_events[-1]["data"]["visible_history_messages"] == 2
 
 
@@ -348,7 +356,12 @@ async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
         identity="You are MyAgent.",
         runtime_environment="",
         delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=100, chars_per_token=1),
+        budget=ContextBudget(
+            max_prompt_tokens=100,
+            chars_per_token=1,
+            raw_history_token_limit=80,
+            raw_history_target_tokens=40,
+        ),
     )
     agent = AgentLoop(
         bus,
@@ -360,7 +373,7 @@ async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
         ),
         start_cron=False,
     )
-    agent.memory_extractor = None
+    agent.session_history.memory_extractor = None
     agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 12)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 12)},

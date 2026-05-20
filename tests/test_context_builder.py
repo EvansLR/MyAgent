@@ -273,7 +273,7 @@ def test_context_builder_includes_delegation_policy_as_required_section() -> Non
     assert sections["Delegation Policy"].source == "agent:delegation_policy"
 
 
-def test_context_builder_drops_optional_sections_when_over_budget() -> None:
+def test_context_builder_reports_over_budget_without_dropping_sections() -> None:
     skill_registry = SkillRegistry(
         [
             SkillEntry(
@@ -294,19 +294,19 @@ def test_context_builder_drops_optional_sections_when_over_budget() -> None:
     messages, report = builder.build_messages_with_report(make_message("hello"))
 
     assert "# Identity" in messages[0]["content"]
-    assert "# Available Skills" not in messages[0]["content"]
+    assert "# Available Skills" in messages[0]["content"]
     sections = {section.name: section for section in report.sections}
     assert sections["Identity"].included is True
     assert sections["Identity"].retention == "required"
-    assert sections["Available Skills"].included is False
-    assert sections["Available Skills"].reason == "budget_exceeded"
+    assert sections["Available Skills"].included is True
+    assert sections["Available Skills"].reason == "included"
     assert "context_budget_exceeded" in report.warnings
-    assert "section_dropped" in report.warnings
+    assert "section_dropped" not in report.warnings
     assert report.max_prompt_tokens == 20
-    assert report.estimated_tokens_before_budget > report.estimated_tokens
+    assert report.estimated_tokens_before_budget == report.estimated_tokens
 
 
-def test_context_builder_trims_history_by_token_budget() -> None:
+def test_context_builder_keeps_history_when_over_budget() -> None:
     builder = ContextBuilder(
         identity="ID",
         delegation_policy=None,
@@ -325,21 +325,20 @@ def test_context_builder_trims_history_by_token_budget() -> None:
 
     messages, report = builder.build_messages_with_report(make_message("now"), history)
 
-    assert messages == [
-        {"role": "system", "content": "# Identity\n\nID"},
-        {"role": "user", "content": "recent"},
-        {"role": "assistant", "content": "reply"},
-        {"role": "user", "content": "now"},
-    ]
+    assert {"role": "user", "content": "old old old old"} in messages
+    assert {"role": "assistant", "content": "old reply old reply"} in messages
+    assert {"role": "user", "content": "recent"} in messages
+    assert {"role": "assistant", "content": "reply"} in messages
     assert report.history.total_messages == 4
-    assert report.history.included_messages == 2
-    assert report.history.dropped_messages == 2
+    assert report.history.included_messages == 4
+    assert report.history.dropped_messages == 0
     assert report.history.dropped_by_message_limit == 0
-    assert report.history.dropped_by_token_budget == 2
-    assert "history_token_trimmed" in report.warnings
+    assert report.history.dropped_by_token_budget == 0
+    assert "history_token_trimmed" not in report.warnings
+    assert "context_budget_exceeded" in report.warnings
 
 
-def test_context_builder_reserves_budget_for_history() -> None:
+def test_context_builder_does_not_reserve_ratio_budget_for_history() -> None:
     builder = ContextBuilder(
         identity="ID",
         delegation_policy=None,
@@ -348,7 +347,6 @@ def test_context_builder_reserves_budget_for_history() -> None:
             max_prompt_tokens=80,
             max_history_messages=10,
             chars_per_token=1,
-            history_token_ratio=0.5,
         ),
     )
     history = [
@@ -358,12 +356,12 @@ def test_context_builder_reserves_budget_for_history() -> None:
 
     messages, report = builder.build_messages_with_report(make_message("now"), history)
 
-    assert "# Active Skills" not in messages[0]["content"]
+    assert "# Active Skills" in messages[0]["content"]
     assert {"role": "user", "content": "recent question"} in messages
     assert {"role": "assistant", "content": "recent answer"} in messages
-    assert report.history.reserved_tokens == 40
+    assert report.history.reserved_tokens == 0
     assert report.history.included_messages == 2
     sections = {section.name: section for section in report.sections}
-    assert sections["Active Skills"].included is False
-    assert sections["Active Skills"].reason == "budget_exceeded"
+    assert sections["Active Skills"].included is True
+    assert sections["Active Skills"].reason == "included"
 

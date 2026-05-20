@@ -175,23 +175,15 @@ class ContextBuilder:
             )
             + current_tokens
         )
-        history_reserved_tokens = self._history_reserved_tokens(raw_history)
         selected_items, section_reports, section_warnings = self._select_system_items(
             system_items,
-            reserved_tokens=current_tokens + history_reserved_tokens,
+            reserved_tokens=0,
         )
         system_prompt = self._render_system_prompt(selected_items)
-        system_tokens = _estimate_tokens(system_prompt, self.budget.chars_per_token)
-        remaining_history_tokens = None
-        if self.budget.max_prompt_tokens is not None:
-            remaining_history_tokens = max(
-                self.budget.max_prompt_tokens - system_tokens - current_tokens,
-                0,
-            )
         selected_history, history_report, history_warnings = self.select_history(
             raw_history,
-            max_history_tokens=remaining_history_tokens,
-            reserved_history_tokens=history_reserved_tokens,
+            max_history_tokens=None,
+            reserved_history_tokens=0,
         )
         warnings = self._combine_warnings(
             estimated_tokens_before_budget=estimated_tokens_before_budget,
@@ -278,40 +270,13 @@ class ContextBuilder:
         items: list[ContextItem],
         reserved_tokens: int,
     ) -> tuple[list[ContextItem], list[ContextSectionReport], list[str]]:
-        """Select system context items under the configured prompt budget."""
+        """Return non-empty system context items without prompt-time competition."""
         non_empty = [item for item in items if item.content.strip()]
-        max_prompt_tokens = self.budget.max_prompt_tokens
-        if max_prompt_tokens is None:
-            selected_ids = {item.id for item in non_empty}
-            return (
-                sorted(non_empty, key=lambda item: item.order),
-                self._section_reports(items, selected_ids, {}),
-                [],
-            )
-
-        required = [item for item in non_empty if item.retention == ContextRetention.REQUIRED]
-        selected: list[ContextItem] = list(required)
-        used_tokens = sum(item.estimated_tokens for item in selected) + reserved_tokens
-        dropped_reasons: dict[str, str] = {}
-        warnings: list[str] = []
-
-        candidates = [item for item in non_empty if item.retention != ContextRetention.REQUIRED]
-        for item in sorted(candidates, key=_retention_sort_key):
-            if used_tokens + item.estimated_tokens <= max_prompt_tokens:
-                selected.append(item)
-                used_tokens += item.estimated_tokens
-            else:
-                dropped_reasons[item.id] = "budget_exceeded"
-
-        if used_tokens > max_prompt_tokens:
-            warnings.append("required_context_over_budget")
-        if dropped_reasons:
-            warnings.append("section_dropped")
-        selected_ids = {item.id for item in selected}
+        selected_ids = {item.id for item in non_empty}
         return (
-            sorted(selected, key=lambda item: item.order),
-            self._section_reports(items, selected_ids, dropped_reasons),
-            warnings,
+            sorted(non_empty, key=lambda item: item.order),
+            self._section_reports(items, selected_ids, {}),
+            [],
         )
 
     def _section_reports(
@@ -356,13 +321,6 @@ class ContextBuilder:
         dropped = max(len(history) - max_messages, 0)
         selected = history[-max_messages:] if max_messages else []
         return list(selected), dropped
-
-    def _history_reserved_tokens(self, history: list[Message]) -> int:
-        """Return the prompt budget reserved for session history."""
-        if self.budget.max_prompt_tokens is None or not history:
-            return 0
-        ratio = min(max(self.budget.history_token_ratio, 0.0), 1.0)
-        return int(self.budget.max_prompt_tokens * ratio)
 
     def _limit_history_by_token_count(
         self,
@@ -515,16 +473,6 @@ class ContextBuilder:
 def _estimate_tokens(text: str, chars_per_token: int) -> int:
     divisor = max(chars_per_token, 1)
     return max((len(text) + divisor - 1) // divisor, 0)
-
-
-def _retention_sort_key(item: ContextItem) -> tuple[int, int, str]:
-    """Sort candidates by survival strength, then model-facing order."""
-    retention_rank = {
-        ContextRetention.CORE: 0,
-        ContextRetention.CONTEXT: 1,
-        ContextRetention.OPTIONAL: 2,
-    }
-    return (retention_rank.get(item.retention, 99), item.order, item.name)
 
 
 def _drop_invalid_leading_history(history: list[Message]) -> list[Message]:

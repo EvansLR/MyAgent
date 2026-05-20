@@ -119,7 +119,12 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
         identity="You are MyAgent.",
         runtime_environment="",
         delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=120, chars_per_token=1),
+        budget=ContextBudget(
+            max_prompt_tokens=120,
+            chars_per_token=1,
+            raw_history_token_limit=80,
+            raw_history_target_tokens=40,
+        ),
     )
     agent = AgentLoop(
         bus,
@@ -151,7 +156,13 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
 
     assert "User prefers documentation-first implementation." in archive_text
     assert state is not None
-    assert state.summarized_message_count == 2
+    assert state.summarized_message_count == 0
+    assert agent.session_history.raw["cli:default"] == [
+        {"role": "user", "content": "recent question"},
+        {"role": "assistant", "content": "recent answer"},
+        {"role": "user", "content": "continue"},
+        {"role": "assistant", "content": "ok"},
+    ]
     assert {"role": "user", "content": "recent question"} in final_history
     assert {"role": "assistant", "content": "recent answer"} in final_history
     assert not any("old preference" in str(message.get("content", "")) for message in final_history)
@@ -186,3 +197,64 @@ async def test_agent_loop_does_not_run_post_turn_memory_extractor() -> None:
 
     assert archive_files == []
     assert "memory_candidates_saved" not in [event["event"] for event in events]
+
+
+class MemoryCompressionProvider:
+    def __init__(self) -> None:
+        self.generate_calls = []
+        self.response_messages = []
+
+    async def generate(self, messages):
+        self.generate_calls.append(messages)
+        return "# Memory\n\n## Always\n\n- Compact preference.\n\n## Now\n\n- Compact project state."
+
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.response_messages.append(messages)
+        return ProviderResponse(content="ok")
+
+
+async def test_agent_loop_compresses_visible_memory_before_context() -> None:
+    root = make_workspace("visible-memory-compression")
+    store = MarkdownMemoryStore(root / "memory")
+    store.ensure_layout()
+    store.memory_path.write_text(
+        "# Memory\n\n## Always\n\n"
+        + "- very large stable preference " * 20
+        + "\n\n## Now\n\n"
+        + "- very large project state " * 20
+        + "\n",
+        encoding="utf-8",
+    )
+    bus = MessageBus()
+    provider = MemoryCompressionProvider()
+    context_builder = ContextBuilder(
+        identity="You are MyAgent.",
+        runtime_environment="",
+        delegation_policy=None,
+        budget=ContextBudget(
+            chars_per_token=1,
+            memory_token_limit=120,
+            max_compression_rounds=2,
+        ),
+    )
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        context_builder=context_builder,
+        markdown_memory_store=store,
+        trace_store=JsonlTraceStore(root / "traces"),
+        start_cron=False,
+    )
+
+    await bus.publish_inbound(make_message("hello"))
+    await agent.process_next()
+
+    memory_text = store.memory_path.read_text(encoding="utf-8")
+    events = read_events(root / "traces" / "cli_default.jsonl")
+    event_names = [event["event"] for event in events]
+
+    assert "Compact preference." in memory_text
+    assert "very large stable preference" not in memory_text
+    assert "memory_compressed" in event_names
+    assert "# Always Memory" in provider.response_messages[0][0]["content"]
+    assert "Compact preference." in provider.response_messages[0][0]["content"]

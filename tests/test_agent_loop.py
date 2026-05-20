@@ -234,6 +234,15 @@ class ConversationSummaryProvider:
         return ProviderResponse(content=f"answer {self.calls}")
 
 
+class LongThenCompressedSummaryProvider(ConversationSummaryProvider):
+    async def generate(self, messages):
+        self.summary_prompts.append(messages)
+        user_prompt = messages[-1]["content"]
+        if "Rewrite this conversation summary" in user_prompt:
+            return "- Compact summary."
+        return "- Long summary " + ("details " * 20)
+
+
 async def test_agent_loop_updates_summary_before_context_when_history_would_trim() -> None:
     bus = MessageBus()
     provider = ConversationSummaryProvider()
@@ -241,7 +250,12 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
         identity="You are MyAgent.",
         runtime_environment="",
         delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=400, chars_per_token=1, history_token_ratio=0.0),
+        budget=ContextBudget(
+            max_prompt_tokens=400,
+            chars_per_token=1,
+            raw_history_token_limit=120,
+            raw_history_target_tokens=40,
+        ),
     )
     agent = AgentLoop(
         bus,
@@ -252,7 +266,7 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
         ),
         start_cron=False,
     )
-    agent.memory_extractor = None
+    agent.session_history.memory_extractor = None
     agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 40)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
@@ -265,8 +279,14 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
 
     state = agent.session_history.summaries.get("cli:default")
     assert state is not None
-    assert state.summarized_message_count == 2
+    assert state.summarized_message_count == 0
     assert provider.summary_prompts
+    assert agent.session_history.raw["cli:default"] == [
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer 2"},
+        {"role": "user", "content": "third"},
+        {"role": "assistant", "content": "answer 1"},
+    ]
     assert provider.seen_messages[0][1:-1] == [
         {"role": "user", "content": "second"},
         {"role": "assistant", "content": "answer 2"},
@@ -277,14 +297,19 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
     assert "lightweight summaries" in call_system
 
 
-async def test_agent_loop_compacts_history_to_half_history_budget() -> None:
+async def test_agent_loop_compacts_history_to_target_tokens() -> None:
     bus = MessageBus()
     provider = ConversationSummaryProvider()
     context_builder = ContextBuilder(
         identity="You are MyAgent.",
         runtime_environment="",
         delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=400, chars_per_token=1, history_token_ratio=0.5),
+        budget=ContextBudget(
+            max_prompt_tokens=400,
+            chars_per_token=1,
+            raw_history_token_limit=200,
+            raw_history_target_tokens=100,
+        ),
     )
     agent = AgentLoop(
         bus,
@@ -292,11 +317,10 @@ async def test_agent_loop_compacts_history_to_half_history_budget() -> None:
         context_builder=context_builder,
         conversation_summary_config=ConversationSummaryConfig(
             keep_recent_messages=2,
-            compact_target_ratio=0.5,
         ),
         start_cron=False,
     )
-    agent.memory_extractor = None
+    agent.session_history.memory_extractor = None
     agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 40)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
@@ -309,11 +333,53 @@ async def test_agent_loop_compacts_history_to_half_history_budget() -> None:
 
     state = agent.session_history.summaries.get("cli:default")
     assert state is not None
-    assert state.summarized_message_count == 2
+    assert state.summarized_message_count == 0
     assert provider.summary_prompts
     raw_history = provider.seen_messages[0][1:-1]
     raw_history_tokens = sum(len(message["content"]) for message in raw_history)
     assert raw_history_tokens <= 100
+
+
+async def test_agent_loop_compresses_summary_when_it_exceeds_limit() -> None:
+    bus = MessageBus()
+    provider = LongThenCompressedSummaryProvider()
+    context_builder = ContextBuilder(
+        identity="You are MyAgent.",
+        runtime_environment="",
+        delegation_policy=None,
+        budget=ContextBudget(
+            chars_per_token=1,
+            raw_history_token_limit=120,
+            raw_history_target_tokens=40,
+            summary_token_limit=40,
+            max_compression_rounds=2,
+        ),
+    )
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        context_builder=context_builder,
+        conversation_summary_config=ConversationSummaryConfig(
+            keep_recent_messages=2,
+        ),
+        start_cron=False,
+    )
+    agent.session_history.memory_extractor = None
+    agent.session_history.raw["cli:default"] = [
+        {"role": "user", "content": "first " + ("large " * 20)},
+        {"role": "assistant", "content": "answer 1 " + ("large " * 20)},
+        {"role": "user", "content": "second"},
+        {"role": "assistant", "content": "answer 2"},
+    ]
+
+    await bus.publish_inbound(make_message("third"))
+    await agent.process_next()
+
+    state = agent.session_history.summaries.get("cli:default")
+    assert state is not None
+    assert state.content == "- Compact summary."
+    assert state.estimated_tokens <= 40
+    assert len(provider.summary_prompts) == 2
 
 
 def test_agent_loop_exposes_lock_state() -> None:

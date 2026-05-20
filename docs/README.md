@@ -37,6 +37,7 @@
 - `CLI_CHANNEL.md`
 - `CONFIG.md`
 - `CONTEXT_BUILDER.md`
+- `CONTEXT_COMPACTION_DESIGN.md`
 - `LLM_PROVIDER.md`
 - `MCP.md`
 - `MEMORY.md`

@@ -75,27 +75,23 @@ class AgentSessionHistory:
     ) -> bool:
         """Flush and summarize older history before building model context."""
         visible_history = self.visible_history_for_context(session_key, history)
-        history_budget = self._history_compaction_budget(visible_history, budget)
-        if history_budget is None:
+        history_limit = budget.raw_history_token_limit
+        if history_limit <= 0 or not visible_history:
             return False
 
         visible_tokens = self.summarizer.estimate_messages_tokens(visible_history)
-        if visible_tokens <= history_budget:
+        if visible_tokens <= history_limit:
             return False
 
         state = self.summaries.get(session_key)
-        target_tokens = int(
-            history_budget
-            * min(max(self.config.compact_target_ratio, 0.0), 1.0)
-        )
         decision = self.summarizer.decide_for_budget(
             history,
             state,
-            target_history_tokens=target_tokens,
+            target_history_tokens=budget.raw_history_target_tokens,
         )
         budget_data = {
-            "history_budget_tokens": history_budget,
-            "target_history_tokens": target_tokens,
+            "raw_history_token_limit": history_limit,
+            "target_history_tokens": budget.raw_history_target_tokens,
             "visible_history_tokens": visible_tokens,
         }
         if not decision.should_update:
@@ -155,6 +151,25 @@ class AgentSessionHistory:
             return False
 
         self.summaries[session_key] = updated
+        pruned_count = self._prune_summarized_history(history, updated.summarized_message_count)
+        if pruned_count:
+            updated = ConversationSummaryState(
+                session_key=updated.session_key,
+                content=updated.content,
+                summarized_message_count=0,
+                source_message_count=updated.source_message_count,
+                revision=updated.revision,
+                updated_at=updated.updated_at,
+                estimated_tokens=updated.estimated_tokens,
+            )
+            self.summaries[session_key] = updated
+        updated = await self._compress_summary_if_needed(
+            session_key,
+            turn_id,
+            updated,
+            budget,
+        )
+        self.summaries[session_key] = updated
         self.events.conversation_summary_updated(
             session_key,
             turn_id,
@@ -167,6 +182,7 @@ class AgentSessionHistory:
                 reason="pre_context_updated",
                 budget_data={
                     **budget_data,
+                    "pruned_raw_history_messages": pruned_count,
                     "raw_history_tokens_after": self.summarizer.estimate_messages_tokens(
                         self.visible_history_for_context(session_key, history)
                     ),
@@ -174,16 +190,6 @@ class AgentSessionHistory:
             ),
         )
         return True
-
-    def _history_compaction_budget(
-        self,
-        history: list[Message],
-        budget: ContextBudget,
-    ) -> int | None:
-        if budget.max_prompt_tokens is None or not history:
-            return None
-        ratio = min(max(budget.history_token_ratio, 0.0), 1.0)
-        return int(budget.max_prompt_tokens * ratio)
 
     async def _flush_memory_before_summary(
         self,
@@ -212,3 +218,45 @@ class AgentSessionHistory:
             "pre_context",
             memory_ids,
         )
+
+    def _prune_summarized_history(self, history: list[Message], count: int) -> int:
+        pruned_count = min(max(count, 0), len(history))
+        if pruned_count:
+            del history[:pruned_count]
+        return pruned_count
+
+    async def _compress_summary_if_needed(
+        self,
+        session_key: str,
+        turn_id: str,
+        state: ConversationSummaryState,
+        budget: ContextBudget,
+    ) -> ConversationSummaryState:
+        if state.estimated_tokens <= budget.summary_token_limit:
+            return state
+        try:
+            compressed = await self.summarizer.compress_summary(
+                state,
+                token_limit=budget.summary_token_limit,
+                max_rounds=budget.max_compression_rounds,
+            )
+        except Exception as exc:
+            self.events.record(
+                session_key,
+                turn_id,
+                "conversation_summary_compression_failed",
+                {"type": type(exc).__name__, "message": str(exc)},
+            )
+            return state
+        if compressed.content != state.content:
+            self.events.record(
+                session_key,
+                turn_id,
+                "conversation_summary_compressed",
+                {
+                    "tokens_before": state.estimated_tokens,
+                    "tokens_after": compressed.estimated_tokens,
+                    "revision": compressed.revision,
+                },
+            )
+        return compressed
