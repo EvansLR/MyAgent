@@ -358,3 +358,37 @@ b992e5f feat: clarify memory proposal workflow
 - 旧 memory 文件需要手动移动到 `~/.myagent/memory/`。
 - 旧 cron 文件需要手动移动到 `~/.myagent/runtime/cron/jobs.json`。
 - 代码层删除 `myagent.workspace.WorkspaceLoader`，改为 `myagent.profile.ProfileLoader`。
+
+## 2026-05-20 Refactor Status
+
+Recently completed:
+
+- Committed the prior session-history extraction as `157ca5e refactor: extract agent session history`.
+- Added `docs/REFACTOR_ROADMAP_2026-05-20.md`.
+- Applied the roadmap as a behavior-preserving complexity/redundancy cleanup.
+
+Current refactor shape:
+
+- `myagent/agent/messages.py` owns shared tool-call chat message helpers.
+- `myagent/agent/skill_state.py` owns turn-scoped active skill state.
+- `myagent/agent/cron_bridge.py` owns cron-to-agent message routing and memory consolidation job handling.
+- `myagent/cli/runtime.py` owns shared CLI/gateway runtime assembly.
+- `myagent/tools/filesystem.py` now shares copy/move validation logic.
+
+Verification run in this session:
+
+```text
+python -m pytest tests/test_agent_loop.py tests/test_subagent.py tests/test_agent_trace.py
+python -m pytest tests/test_agent_skills.py tests/test_subagent.py tests/test_context_builder.py
+python -m pytest tests/test_cron_service.py tests/test_cron_tool.py tests/test_agent_memory.py
+python -m pytest tests/test_filesystem_tools.py
+python -m pytest tests/test_cli_channel.py tests/test_channels_manager.py tests/test_channels_feishu.py
+python -m pytest
+
+266 passed
+```
+
+Next recommended step:
+
+- Review the cron scheduled-task prompt wording change caused by moving the old mojibake text into a new module.
+- If tests pass and the diff looks good, commit this cleanup as one focused refactor commit.

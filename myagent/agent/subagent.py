@@ -1,12 +1,12 @@
 """Task-oriented subagent runner exposed through a delegation tool."""
 
-import json
 from dataclasses import dataclass
 from typing import Any, Callable
 from uuid import uuid4
 
 from myagent.agent.context_types import Message
-from myagent.providers.base import BaseProvider, ProviderResponse, ToolCall
+from myagent.agent.messages import assistant_tool_call_message, tool_result_message
+from myagent.providers.base import BaseProvider, ToolCall
 from myagent.tools.base import Tool
 from myagent.tools.registry import ToolRegistry
 
@@ -100,12 +100,12 @@ class SubAgentRunner:
             if not response.tool_calls:
                 return response.content
 
-            working_messages.append(_assistant_tool_call_message(response))
+            working_messages.append(assistant_tool_call_message(response))
             for tool_call in response.tool_calls:
                 self._trace_tool_call(tool_call)
                 result = await self.tool_registry.execute(tool_call.name, tool_call.arguments)
                 self._trace_tool_result(tool_call, result)
-                working_messages.append(_tool_result_message(tool_call, result))
+                working_messages.append(tool_result_message(tool_call, result))
 
         self._trace(
             "subagent_iteration_limit",
@@ -273,34 +273,6 @@ def _build_subagent_messages(profile: SubAgentProfile, task: str, context: str) 
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
     ]
-
-
-def _assistant_tool_call_message(response: ProviderResponse) -> Message:
-    message: Message = {
-        "role": "assistant",
-        "content": response.content,
-        "tool_calls": [
-            {
-                "id": tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_call.name,
-                    "arguments": json.dumps(tool_call.arguments, ensure_ascii=False),
-                },
-            }
-            for tool_call in response.tool_calls
-        ],
-    }
-    message.update(response.extra_message_fields)
-    return message
-
-
-def _tool_result_message(tool_call: ToolCall, result: str) -> Message:
-    return {
-        "role": "tool",
-        "tool_call_id": tool_call.id,
-        "content": result,
-    }
 
 
 def _format_subagent_result(

@@ -12,10 +12,12 @@ from myagent.approval import (
     reset_current_approval_route,
     set_current_approval_route,
 )
-from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.agent.context import ContextBuilder
 from myagent.agent.context_types import Message
+from myagent.agent.cron_bridge import AgentCronBridge
+from myagent.agent.messages import assistant_tool_call_message, tool_result_message
 from myagent.agent.runtime_env import format_runtime_environment
+from myagent.agent.skill_state import AgentSkillState
 from myagent.agent.summary import (
     ConversationSummarizer,
     ConversationSummaryConfig,
@@ -23,11 +25,11 @@ from myagent.agent.summary import (
 from myagent.agent.run_events import AgentRunEvents
 from myagent.agent.session_history import AgentSessionHistory
 from myagent.agent.subagent import DelegateTaskTool
-from myagent.cron.types import CronJob
+from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.memory import MarkdownMemoryStore, MemoryConsolidator
 from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
-from myagent.providers.base import ProviderResponse, ToolCall
+from myagent.providers.base import ToolCall
 from myagent.skills import SkillRegistry
 from myagent.tools import (
     MemoryArchiveTool,
@@ -117,6 +119,7 @@ class AgentLoop:
             self.provider,
             self.markdown_memory_store,
         )
+        self.cron_bridge = AgentCronBridge(self.bus, self.memory_consolidator)
         self.skill_registry = skill_registry or SkillRegistry.from_directory()
         self.profile_loader = profile_loader or ProfileLoader()
         self.conversation_summary_config = (
@@ -128,6 +131,7 @@ class AgentLoop:
         )
         self.trace_store = trace_store or JsonlTraceStore()
         self.events = AgentRunEvents(self.trace_store)
+        self.skill_state = AgentSkillState(self.events)
         self.session_history = AgentSessionHistory(
             self.conversation_summarizer,
             self.conversation_summary_config,
@@ -139,7 +143,7 @@ class AgentLoop:
             always_memory_provider=self.markdown_memory_store.read_always_memory,
             now_memory_provider=self.markdown_memory_store.read_now_memory,
             conversation_summary_provider=self.session_history.current_summary_context,
-            active_skills_provider=self._current_active_skills_context,
+            active_skills_provider=self.skill_state.current_active_skills_context,
             skill_registry=self.skill_registry,
             profile_provider=self.profile_loader,
         )
@@ -155,6 +159,8 @@ class AgentLoop:
         if not self.tool_registry.has("delegate_task"):
             self.tool_registry.register(DelegateTaskTool(self.provider, self.tool_registry))
         self.cron_service = cron_service or self._create_default_cron_service()
+        if cron_service is not None:
+            self.cron_service.on_job = self.cron_bridge.on_job
         self._start_cron = start_cron
         if not self.tool_registry.has("cron"):
             from myagent.tools.cron import CronTool
@@ -163,8 +169,6 @@ class AgentLoop:
             from myagent.tools.message import MessageTool
             self.tool_registry.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.max_tool_iterations = max_tool_iterations
-        self._active_skills_by_turn: dict[tuple[str, str], list[dict[str, object]]] = {}
-        self._current_turn_key: tuple[str, str] | None = None
         self._lock = asyncio.Lock()
         self._running = False
 
@@ -228,7 +232,7 @@ class AgentLoop:
             context_report,
         )
         self.events.context_dropped(inbound.session_key, turn_id, context_report)
-        self._current_turn_key = (inbound.session_key, turn_id)
+        self.skill_state.start_turn(inbound.session_key, turn_id)
         try:
             content = await self._generate_with_tools(messages, inbound, turn_state)
         except Exception as exc:
@@ -273,8 +277,7 @@ class AgentLoop:
                 {"role": "assistant", "content": content},
             ]
         )
-        self._active_skills_by_turn.pop((inbound.session_key, turn_id), None)
-        self._current_turn_key = None
+        self.skill_state.end_turn(inbound.session_key, turn_id)
         self.session_history.clear_current_summary_session()
         return outbound
 
@@ -331,7 +334,7 @@ class AgentLoop:
                 turn_state.stop_reason = "final_output"
                 return response.content
 
-            working_messages.append(_assistant_tool_call_message(response))
+            working_messages.append(assistant_tool_call_message(response))
             for tool_call in response.tool_calls:
                 await self._publish_tool_status(inbound, tool_call)
                 result = await self._execute_tool_call(
@@ -343,7 +346,7 @@ class AgentLoop:
                     inbound.chat_id,
                 )
                 turn_state.record_tool_result(tool_call, result)
-                working_messages.append(_tool_result_message(tool_call, result))
+                working_messages.append(tool_result_message(tool_call, result))
 
         turn_state.stop_reason = "max_tool_iterations"
         return (
@@ -366,7 +369,10 @@ class AgentLoop:
         subagent_task_id = ""
         if tool_call.name == "delegate_task":
             subagent_task_id = uuid4().hex[:8]
-            inherited_active_skills = self._active_skill_ids_for_turn(session_key, turn_id)
+            inherited_active_skills = self.skill_state.active_skill_ids_for_turn(
+                session_key,
+                turn_id,
+            )
             self.events.subagent_start(
                 session_key,
                 turn_id,
@@ -463,7 +469,7 @@ class AgentLoop:
         self._running = True
         if self._start_cron:
             await self.cron_service.start()
-            self._register_memory_consolidation_job()
+            self.cron_bridge.register_memory_consolidation_job(self.cron_service)
         try:
             while self._running:
                 await self.process_next()
@@ -480,54 +486,9 @@ class AgentLoop:
         store_path = Path.home() / ".myagent" / "runtime" / "cron" / "jobs.json"
         return CronService(
             store_path=store_path,
-            on_job=self._on_cron_job,
+            on_job=self.cron_bridge.on_job,
         )
 
-    def _register_memory_consolidation_job(self) -> None:
-        """Register the periodic memory consolidation system job."""
-        from myagent.cron.types import CronSchedule
-        for job in self.cron_service.list_jobs(include_disabled=True):
-            if job.name == "memory_consolidation" and job.payload.job_type == "system":
-                return
-        self.cron_service.add_job(
-            name="memory_consolidation",
-            schedule=CronSchedule(kind="every", every=24 * 3600),
-            message="consolidate memory",
-            channel="",
-            chat_id="",
-            delete_after_run=False,
-            job_type="system",
-        )
-
-    async def _on_cron_job(self, job: CronJob) -> None:
-        if job.payload.job_type == "system":
-            if job.name == "memory_consolidation":
-                try:
-                    await self.memory_consolidator.consolidate()
-                except Exception:
-                    pass
-            return
-        # Route replies back to the channel/chat that created the job.
-        channel = job.payload.channel or "scheduler"
-        chat_id = job.payload.chat_id or job.id
-        # Wrap the payload so the LLM knows this is a scheduled trigger,
-        # not a new user question.
-        content = (
-            f"【定时任务触发】任务名称：{job.name}\n"
-            f"这是您之前设定的定时提醒，现在已到期。\n"
-            f"提醒内容：{job.payload.message}\n\n"
-            f"请直接执行上述提醒，生成一条消息发送给用户。"
-            f"不要询问用户设置问题，也不要再次创建定时任务。"
-        )
-        msg = InboundMessage(
-            channel=channel,
-            sender_id="cron",
-            chat_id=chat_id,
-            content=content,
-            metadata={"job_name": job.name, "source": "cron"},
-            session_key_override=f"cron:{job.id}",
-        )
-        await self.bus.publish_inbound(msg)
 
     def _register_memory_tools(self) -> None:
         """Expose local personal memory tools to the main agent."""
@@ -543,91 +504,12 @@ class AgentLoop:
             if not self.tool_registry.has(tool.name):
                 self.tool_registry.register(tool)
         if self.skill_registry.list_skills() and not self.tool_registry.has("skill_get"):
-            self.tool_registry.register(SkillGetTool(self.skill_registry, trace_hook=self._trace_skill_event))
-
-    def _trace_skill_event(self, event: str, data: dict[str, object]) -> None:
-        """Record skill tool events without coupling SkillGetTool to AgentLoop state."""
-        turn_id = self._current_turn_key[1] if self._current_turn_key else "skills"
-        self.events.record("runtime:skills", turn_id, event, data)
-        if event != "active_skill_set" or self._current_turn_key is None:
-            return
-        active_skills = self._active_skills_by_turn.setdefault(self._current_turn_key, [])
-        skill_id = str(data.get("skill_id") or "")
-        if skill_id and any(str(skill.get("skill_id") or "") == skill_id for skill in active_skills):
-            return
-        active_skills.append(dict(data))
-
-    def _active_skill_ids_for_turn(self, session_key: str, turn_id: str) -> list[str]:
-        """Return active skill ids recorded during this turn."""
-        return [
-            str(skill.get("skill_id") or "")
-            for skill in self._active_skills_by_turn.get((session_key, turn_id), [])
-            if skill.get("skill_id")
-        ]
-
-    def _current_active_skills_context(self) -> str:
-        """Return compact active skill context for the current main-agent turn."""
-        if self._current_turn_key is None:
-            return ""
-        session_key, turn_id = self._current_turn_key
-        active_skills = self._active_skills_by_turn.get((session_key, turn_id), [])
-        if not active_skills:
-            return ""
-        lines = []
-        for skill in active_skills:
-            skill_id = str(skill.get("skill_id") or "")
-            if not skill_id:
-                continue
-            name = str(skill.get("name") or skill_id)
-            reason = str(skill.get("reason") or "")
-            lines.append(f"- {skill_id}: {name}")
-            if reason:
-                lines.append(f"  reason: {reason}")
-        return "\n".join(lines)
+            self.tool_registry.register(
+                SkillGetTool(self.skill_registry, trace_hook=self.skill_state.trace_event)
+            )
 
     def _format_active_skill_context(self, session_key: str, turn_id: str) -> str:
-        """Format compact parent active skill context for delegated subagents."""
-        active_skills = self._active_skills_by_turn.get((session_key, turn_id), [])
-        if not active_skills:
-            return ""
-        lines = ["# Parent Active Skills"]
-        for skill in active_skills:
-            skill_id = str(skill.get("skill_id") or "")
-            name = str(skill.get("name") or skill_id)
-            scope = str(skill.get("scope") or "turn")
-            reason = str(skill.get("reason") or "")
-            lines.append(f"- {skill_id} ({name}): scope={scope}; reason={reason}")
-        return "\n".join(lines)
-
-def _assistant_tool_call_message(response: ProviderResponse) -> Message:
-    """Build an assistant message containing tool calls for chat completions."""
-    message: Message = {
-        "role": "assistant",
-        "content": response.content,
-        "tool_calls": [
-            {
-                "id": tool_call.id,
-                "type": "function",
-                "function": {
-                    "name": tool_call.name,
-                    "arguments": json.dumps(tool_call.arguments, ensure_ascii=False),
-                },
-            }
-            for tool_call in response.tool_calls
-        ],
-    }
-    message.update(response.extra_message_fields)
-    return message
-
-
-def _tool_result_message(tool_call: ToolCall, result: str) -> Message:
-    """Build a tool result message for chat completions."""
-    return {
-        "role": "tool",
-        "tool_call_id": tool_call.id,
-        "content": result,
-    }
-
+        return self.skill_state.format_active_skill_context(session_key, turn_id)
 
 def _format_tool_status(tool_call: ToolCall) -> str:
     """Build a short human-readable status line for a tool call."""

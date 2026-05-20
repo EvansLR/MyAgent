@@ -13,16 +13,11 @@ from rich.text import Text
 import typer
 
 from myagent.approval import current_approval_route
-from myagent.agent import AgentLoop
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.channels import ChannelManager, FeishuChannel
+from myagent.cli.runtime import create_agent_runtime, trace_startup as record_startup_trace
 from myagent.config import Settings
-from myagent.mcp import HttpMcpClient, StdioMcpClient
-from myagent.mcp.registry import register_mcp_tools_with_summary
-from myagent.providers import create_provider
-from myagent.tools import create_default_registry
 from myagent.tracing import (
-    JsonlTraceStore,
     TraceStore,
     format_context_summary,
     format_trace_events,
@@ -241,28 +236,24 @@ async def run_local_chat(settings: Settings | None = None, config_path: str | No
     settings = settings or Settings.from_sources(config_path)
     bus = MessageBus()
     workspace_root = Path.cwd()
-    registry = create_default_registry(workspace_root, approval_callback=_make_cli_approval_callback(bus))
-    trace_store = JsonlTraceStore()
-    mcp_clients = await _connect_mcp_servers(settings, registry, trace_store=trace_store)
-    agent = AgentLoop(
+    runtime = await create_agent_runtime(
+        settings,
         bus,
-        provider=create_provider(settings),
-        tool_registry=registry,
-        trace_store=trace_store,
         workspace_root=workspace_root,
+        approval_callback=_make_cli_approval_callback(bus),
         start_cron=False,
     )
-    agent_task = asyncio.create_task(agent.run_until_stopped())
+    agent_task = asyncio.create_task(runtime.agent.run_until_stopped())
     try:
         await run_chat(bus)
     finally:
-        agent.stop()
+        runtime.agent.stop()
         agent_task.cancel()
         try:
             await agent_task
         except asyncio.CancelledError:
             pass
-        for client in mcp_clients:
+        for client in runtime.mcp_clients:
             await client.close()
 
 
@@ -274,19 +265,11 @@ async def run_gateway(
     settings = settings or Settings.from_sources(config_path)
     bus = MessageBus()
     workspace_root = Path.cwd()
-    registry = create_default_registry(
-        workspace_root, approval_callback=_make_cli_approval_callback(bus)
-    )
-    trace_store = JsonlTraceStore()
-    mcp_clients = await _connect_mcp_servers(
-        settings, registry, trace_store=trace_store
-    )
-    agent = AgentLoop(
+    runtime = await create_agent_runtime(
+        settings,
         bus,
-        provider=create_provider(settings),
-        tool_registry=registry,
-        trace_store=trace_store,
         workspace_root=workspace_root,
+        approval_callback=_make_cli_approval_callback(bus),
         start_cron=True,
     )
 
@@ -298,7 +281,7 @@ async def run_gateway(
         if name == "feishu":
             channel_manager.register(FeishuChannel(cfg, bus))
 
-    agent_task = asyncio.create_task(agent.run_until_stopped())
+    agent_task = asyncio.create_task(runtime.agent.run_until_stopped())
     channel_task = asyncio.create_task(channel_manager.start_all())
 
     typer.echo("MyAgent gateway started.")
@@ -313,12 +296,12 @@ async def run_gateway(
         except asyncio.CancelledError:
             pass
         await channel_manager.stop_all()
-        agent.stop()
+        runtime.agent.stop()
         try:
             await agent_task
         except asyncio.CancelledError:
             pass
-        for client in mcp_clients:
+        for client in runtime.mcp_clients:
             await client.close()
 
 
@@ -345,63 +328,12 @@ def _make_cli_approval_callback(bus: MessageBus):
     return approve
 
 
-async def _connect_mcp_servers(
-    settings: Settings,
-    registry,
-    *,
-    trace_store: TraceStore | None = None,
-) -> list:
-    """Connect configured MCP servers and register their tools."""
-    clients: list[StdioMcpClient] = []
-    for config in settings.mcp_servers:
-        client = HttpMcpClient(config) if config.url else StdioMcpClient(config)
-        transport = "http" if config.url else "stdio"
-        try:
-            await client.connect()
-            tools = await client.list_tools()
-        except Exception as exc:
-            typer.echo(f"MyAgent: Failed to connect MCP server {config.name}: {exc}")
-            _trace_startup(
-                trace_store,
-                "mcp_server_connect_failed",
-                {
-                    "server_name": config.name,
-                    "transport": transport,
-                    "error": str(exc),
-                },
-            )
-            await client.close()
-            continue
-        summary = register_mcp_tools_with_summary(
-            registry,
-            server_name=config.name,
-            transport=transport,
-            client=client,
-            tools=tools,
-            include_tools=config.include_tools,
-            exclude_tools=config.exclude_tools,
-        )
-        typer.echo(
-            f"MyAgent: Connected MCP server {summary.server_name} "
-            f"({summary.transport}) with {summary.tool_count}/{summary.discovered_tool_count} tools. "
-            "Details saved to startup trace."
-        )
-        _trace_startup(trace_store, "mcp_server_registered", summary.to_dict())
-        clients.append(client)
-    return clients
-
-
 def _trace_startup(
     trace_store: TraceStore | None,
     event: str,
     data: dict[str, object],
 ) -> None:
-    if trace_store is None:
-        return
-    try:
-        trace_store.record("runtime:startup", "startup", event, data)
-    except Exception:
-        pass
+    record_startup_trace(trace_store, event, data)
 
 
 app = typer.Typer(

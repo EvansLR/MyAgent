@@ -109,6 +109,41 @@ class FilesystemTool(Tool):
             return None
         return f"Error: Destination directory does not exist: {path.parent}"
 
+    async def prepare_file_transfer(
+        self,
+        action: str,
+        source_path: str,
+        destination_path: str,
+        overwrite: bool,
+    ) -> tuple[Path | None, Path | None, str | None]:
+        """Resolve and validate shared copy/move source and destination rules."""
+        source = self.resolve_any_path(source_path)
+        destination = self.resolve_any_path(destination_path)
+
+        if not source.exists():
+            return None, None, f"Error: Source file not found: {source_path}"
+        if not source.is_file():
+            return None, None, f"Error: Source is not a file: {source_path}"
+        if destination.exists() and destination.is_dir():
+            destination = destination / source.name
+        if destination.exists() and not overwrite:
+            return (
+                None,
+                None,
+                f"Error: Destination already exists: {destination}. "
+                f"Call {action} with overwrite=true if replacing it is intended.",
+            )
+        error = await self.require_path_access(
+            action,
+            [("Source", source), ("Destination", destination)],
+        )
+        if error is not None:
+            return None, None, error
+        parent_error = self.ensure_external_parent_exists(destination)
+        if parent_error is not None:
+            return None, None, parent_error
+        return source, destination, None
+
 
 def _resolve_known_user_location(path: str) -> Path | None:
     text = path.strip().strip("\"'")
@@ -525,31 +560,18 @@ class CopyFileTool(FilesystemTool):
         overwrite: bool = False,
         **_: Any,
     ) -> str:
-        source = self.resolve_any_path(source_path)
-        destination = self.resolve_any_path(destination_path)
-
-        if not source.exists():
-            return f"Error: Source file not found: {source_path}"
-        if not source.is_file():
-            return f"Error: Source is not a file: {source_path}"
-        if destination.exists() and destination.is_dir():
-            destination = destination / source.name
-        if destination.exists() and not overwrite:
-            return (
-                f"Error: Destination already exists: {destination}. "
-                "Call copy_file with overwrite=true if replacing it is intended."
-            )
-        error = await self.require_path_access(
+        source, destination, error = await self.prepare_file_transfer(
             "copy_file",
-            [("Source", source), ("Destination", destination)],
+            source_path,
+            destination_path,
+            overwrite,
         )
         if error is not None:
             return error
-        parent_error = self.ensure_external_parent_exists(destination)
-        if parent_error is not None:
-            return parent_error
 
         try:
+            assert source is not None
+            assert destination is not None
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
             return f"Copied {source} to {destination}."
@@ -603,31 +625,18 @@ class MoveFileTool(FilesystemTool):
         overwrite: bool = False,
         **_: Any,
     ) -> str:
-        source = self.resolve_any_path(source_path)
-        destination = self.resolve_any_path(destination_path)
-
-        if not source.exists():
-            return f"Error: Source file not found: {source_path}"
-        if not source.is_file():
-            return f"Error: Source is not a file: {source_path}"
-        if destination.exists() and destination.is_dir():
-            destination = destination / source.name
-        if destination.exists() and not overwrite:
-            return (
-                f"Error: Destination already exists: {destination}. "
-                "Call move_file with overwrite=true if replacing it is intended."
-            )
-        error = await self.require_path_access(
+        source, destination, error = await self.prepare_file_transfer(
             "move_file",
-            [("Source", source), ("Destination", destination)],
+            source_path,
+            destination_path,
+            overwrite,
         )
         if error is not None:
             return error
-        parent_error = self.ensure_external_parent_exists(destination)
-        if parent_error is not None:
-            return parent_error
 
         try:
+            assert source is not None
+            assert destination is not None
             if destination.exists() and overwrite:
                 destination.unlink()
             destination.parent.mkdir(parents=True, exist_ok=True)

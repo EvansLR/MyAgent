@@ -833,3 +833,52 @@ Current ownership:
 The runtime behavior is unchanged: before each context build, old history can be
 flushed to memory and folded into `Conversation Summary`; recent unsummarized
 messages remain visible as raw chat history.
+
+## 2026-05-20 Update: Complexity Reduction Pass
+
+The refactor roadmap in `docs/REFACTOR_ROADMAP_2026-05-20.md` has been applied
+as a behavior-preserving cleanup.
+
+Current ownership after the pass:
+
+- `myagent/agent/messages.py`: shared chat-completions helper messages for tool
+  calls and tool results.
+- `myagent/agent/skill_state.py`: turn-scoped active skill tracking and compact
+  skill context formatting.
+- `myagent/agent/cron_bridge.py`: cron system-job handling and scheduled user
+  message injection.
+- `myagent/cli/runtime.py`: common runtime assembly for local CLI and gateway
+  startup.
+- `myagent/tools/filesystem.py`: copy and move still expose separate tools, but
+  now share source/destination validation and approval checks.
+
+`AgentLoop` remains the main orchestrator, but it now owns less state and less
+startup plumbing. The public tool names, trace event names, session history
+behavior, and channel routing are intended to remain unchanged.
+
+Verification:
+
+```text
+python -m pytest tests/test_agent_loop.py tests/test_subagent.py tests/test_agent_trace.py
+25 passed
+
+python -m pytest tests/test_agent_skills.py tests/test_subagent.py tests/test_context_builder.py
+26 passed
+
+python -m pytest tests/test_cron_service.py tests/test_cron_tool.py tests/test_agent_memory.py
+31 passed
+
+python -m pytest tests/test_filesystem_tools.py
+28 passed
+
+python -m pytest tests/test_cli_channel.py tests/test_channels_manager.py tests/test_channels_feishu.py
+47 passed
+
+python -m pytest
+266 passed
+```
+
+Note: while extracting cron routing, the scheduled-task prompt text was restored
+from mojibake into clear English because the copied mojibake produced an invalid
+f-string in the new module. Cron routing metadata and session behavior are
+unchanged.
