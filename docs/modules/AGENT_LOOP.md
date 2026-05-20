@@ -817,3 +817,19 @@ Small cleanup included:
 
 - The user-facing tool status prefix in `loop.py` was normalized from an older
   mojibake string to ASCII: `Calling tool: ...`.
+
+## 2026-05-20 Update: Session History Boundary
+
+`AgentLoop` no longer owns the detailed history-summary compaction algorithm.
+
+Current ownership:
+
+- `myagent/agent/loop.py`: turn orchestration, provider/tool loop, channel reply.
+- `myagent/agent/session_history.py`: per-session raw history, visible history,
+  conversation summary context, and pre-context history compaction.
+- `myagent/agent/summary.py`: LLM prompt and decision helpers for updating the
+  compact conversation summary.
+
+The runtime behavior is unchanged: before each context build, old history can be
+flushed to memory and folded into `Conversation Summary`; recent unsummarized
+messages remain visible as raw chat history.

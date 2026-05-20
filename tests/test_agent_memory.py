@@ -1,4 +1,4 @@
-﻿import json
+import json
 from pathlib import Path
 import shutil
 
@@ -132,7 +132,7 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
         ),
         start_cron=False,
     )
-    agent._history["cli:default"] = [
+    agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "old preference " + ("docs first " * 8)},
         {"role": "assistant", "content": "old answer " + ("implementation notes " * 8)},
         {"role": "user", "content": "recent question"},
@@ -146,7 +146,7 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
     archive_text = archive_files[0].read_text(encoding="utf-8")
     events = read_events(root / "traces" / "cli_default.jsonl")
     event_names = [event["event"] for event in events]
-    state = agent._conversation_summaries.get("cli:default")
+    state = agent.session_history.summaries.get("cli:default")
     final_history = provider.response_messages[-1][1:-1]
 
     assert "User prefers documentation-first implementation." in archive_text

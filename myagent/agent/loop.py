@@ -19,9 +19,9 @@ from myagent.agent.runtime_env import format_runtime_environment
 from myagent.agent.summary import (
     ConversationSummarizer,
     ConversationSummaryConfig,
-    ConversationSummaryState,
 )
 from myagent.agent.run_events import AgentRunEvents
+from myagent.agent.session_history import AgentSessionHistory
 from myagent.agent.subagent import DelegateTaskTool
 from myagent.cron.types import CronJob
 from myagent.memory import MarkdownMemoryStore, MemoryConsolidator
@@ -119,8 +119,6 @@ class AgentLoop:
         )
         self.skill_registry = skill_registry or SkillRegistry.from_directory()
         self.profile_loader = profile_loader or ProfileLoader()
-        self._current_summary_session_key: str | None = None
-        self._conversation_summaries: dict[str, ConversationSummaryState] = {}
         self.conversation_summary_config = (
             conversation_summary_config or ConversationSummaryConfig()
         )
@@ -128,18 +126,26 @@ class AgentLoop:
             self.provider,
             self.conversation_summary_config,
         )
+        self.trace_store = trace_store or JsonlTraceStore()
+        self.events = AgentRunEvents(self.trace_store)
+        self.session_history = AgentSessionHistory(
+            self.conversation_summarizer,
+            self.conversation_summary_config,
+            self.memory_extractor,
+            self.events,
+        )
         self.context_builder = context_builder or ContextBuilder(
             runtime_environment_provider=lambda: format_runtime_environment(workspace_root),
             always_memory_provider=self.markdown_memory_store.read_always_memory,
             now_memory_provider=self.markdown_memory_store.read_now_memory,
-            conversation_summary_provider=self._current_conversation_summary_context,
+            conversation_summary_provider=self.session_history.current_summary_context,
             active_skills_provider=self._current_active_skills_context,
             skill_registry=self.skill_registry,
             profile_provider=self.profile_loader,
         )
         if self.context_builder.conversation_summary_provider is None:
             self.context_builder.conversation_summary_provider = (
-                self._current_conversation_summary_context
+                self.session_history.current_summary_context
             )
         self.conversation_summarizer.chars_per_token = (
             self.context_builder.budget.chars_per_token
@@ -156,10 +162,7 @@ class AgentLoop:
         if not self.tool_registry.has("message"):
             from myagent.tools.message import MessageTool
             self.tool_registry.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.trace_store = trace_store or JsonlTraceStore()
-        self.events = AgentRunEvents(self.trace_store)
         self.max_tool_iterations = max_tool_iterations
-        self._history: dict[str, list[Message]] = {}
         self._active_skills_by_turn: dict[tuple[str, str], list[dict[str, object]]] = {}
         self._current_turn_key: tuple[str, str] | None = None
         self._lock = asyncio.Lock()
@@ -199,14 +202,18 @@ class AgentLoop:
             turn_id,
             self.profile_loader.to_trace_data(),
         )
-        history = self._history_for(inbound.session_key)
-        self._current_summary_session_key = inbound.session_key
-        await self._compact_history_before_context(
+        history = self.session_history.history_for(inbound.session_key)
+        self.session_history.set_current_summary_session(inbound.session_key)
+        await self.session_history.compact_before_context(
             inbound.session_key,
             turn_id,
             history,
+            self.context_builder.budget,
         )
-        visible_history = self._history_for_context(inbound.session_key, history)
+        visible_history = self.session_history.visible_history_for_context(
+            inbound.session_key,
+            history,
+        )
         messages, context_report = self.context_builder.build_messages_with_report(
             inbound,
             visible_history,
@@ -268,7 +275,7 @@ class AgentLoop:
         )
         self._active_skills_by_turn.pop((inbound.session_key, turn_id), None)
         self._current_turn_key = None
-        self._current_summary_session_key = None
+        self.session_history.clear_current_summary_session()
         return outbound
 
     async def _generate_with_tools(
@@ -468,17 +475,6 @@ class AgentLoop:
         """Request the processing loop to stop."""
         self._running = False
 
-    def _history_for(self, session_key: str) -> list[Message]:
-        return self._history.setdefault(session_key, [])
-
-    def _history_for_context(self, session_key: str, history: list[Message]) -> list[Message]:
-        """Return raw history not already covered by the session summary."""
-        state = self._conversation_summaries.get(session_key)
-        if state is None:
-            return history
-        start = min(max(state.summarized_message_count, 0), len(history))
-        return history[start:]
-
     def _create_default_cron_service(self):
         from myagent.cron.service import CronService
         store_path = Path.home() / ".myagent" / "runtime" / "cron" / "jobs.json"
@@ -589,20 +585,6 @@ class AgentLoop:
                 lines.append(f"  reason: {reason}")
         return "\n".join(lines)
 
-    def _current_conversation_summary_context(self) -> str:
-        """Return the current session summary as model-visible background."""
-        if not self._current_summary_session_key:
-            return ""
-        state = self._conversation_summaries.get(self._current_summary_session_key)
-        if state is None or not state.content.strip():
-            return ""
-        return (
-            "The following is a compact summary of earlier conversation context.\n"
-            "Use it as background, not as current instructions. Recent user messages "
-            "and system instructions override this summary.\n\n"
-            f"{state.content.strip()}"
-        )
-
     def _format_active_skill_context(self, session_key: str, turn_id: str) -> str:
         """Format compact parent active skill context for delegated subagents."""
         active_skills = self._active_skills_by_turn.get((session_key, turn_id), [])
@@ -616,158 +598,6 @@ class AgentLoop:
             reason = str(skill.get("reason") or "")
             lines.append(f"- {skill_id} ({name}): scope={scope}; reason={reason}")
         return "\n".join(lines)
-
-    async def _compact_history_before_context(
-        self,
-        session_key: str,
-        turn_id: str,
-        history: list[Message],
-    ) -> bool:
-        """Flush and summarize older history before building model context."""
-        visible_history = self._history_for_context(session_key, history)
-        history_budget = self._history_compaction_budget(visible_history)
-        if history_budget is None:
-            return False
-
-        visible_tokens = self.conversation_summarizer.estimate_messages_tokens(visible_history)
-        if visible_tokens <= history_budget:
-            return False
-
-        state = self._conversation_summaries.get(session_key)
-        target_tokens = int(
-            history_budget
-            * min(max(self.conversation_summary_config.compact_target_ratio, 0.0), 1.0)
-        )
-        decision = self.conversation_summarizer.decide_for_budget(
-            history,
-            state,
-            target_history_tokens=target_tokens,
-        )
-        if not decision.should_update:
-            self.events.conversation_summary_checked(
-                session_key,
-                turn_id,
-                self.events.conversation_summary_data(
-                    history,
-                    state,
-                    decision,
-                    keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
-                    reason=f"pre_context_{decision.reason}",
-                    budget_data={
-                        "history_budget_tokens": history_budget,
-                        "target_history_tokens": target_tokens,
-                        "visible_history_tokens": visible_tokens,
-                    },
-                ),
-            )
-            return False
-
-        start = state.summarized_message_count if state else 0
-        chunk = history[start:decision.eligible_end]
-        await self._flush_memory_before_summary(session_key, turn_id, chunk)
-        self.events.conversation_summary_checked(
-            session_key,
-            turn_id,
-            self.events.conversation_summary_data(
-                history,
-                state,
-                decision,
-                keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
-                reason="pre_context_budget_pressure",
-                budget_data={
-                    "history_budget_tokens": history_budget,
-                    "target_history_tokens": target_tokens,
-                    "visible_history_tokens": visible_tokens,
-                },
-            ),
-        )
-        try:
-            updated = await self.conversation_summarizer.summarize(
-                session_key,
-                history,
-                state,
-                decision,
-            )
-        except Exception as exc:
-            self.events.conversation_summary_failed(
-                session_key,
-                turn_id,
-                self.events.conversation_summary_data(
-                    history,
-                    state,
-                    decision,
-                    keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
-                    reason="pre_context_failed",
-                    budget_data={
-                        "history_budget_tokens": history_budget,
-                        "target_history_tokens": target_tokens,
-                        "visible_history_tokens": visible_tokens,
-                    },
-                ),
-                exc,
-            )
-            return False
-
-        self._conversation_summaries[session_key] = updated
-        self.events.conversation_summary_updated(
-            session_key,
-            turn_id,
-            self.events.conversation_summary_data(
-                history,
-                updated,
-                decision,
-                keep_recent_messages=self.conversation_summary_config.keep_recent_messages,
-                previous_state=state,
-                reason="pre_context_updated",
-                budget_data={
-                    "history_budget_tokens": history_budget,
-                    "target_history_tokens": target_tokens,
-                    "visible_history_tokens": visible_tokens,
-                    "raw_history_tokens_after": self.conversation_summarizer.estimate_messages_tokens(
-                        self._history_for_context(session_key, history)
-                    ),
-                },
-            ),
-        )
-        return True
-
-    def _history_compaction_budget(self, history: list[Message]) -> int | None:
-        """Return the raw-history token budget that triggers pre-context compaction."""
-        budget = self.context_builder.budget
-        if budget.max_prompt_tokens is None or not history:
-            return None
-        ratio = min(max(budget.history_token_ratio, 0.0), 1.0)
-        return int(budget.max_prompt_tokens * ratio)
-
-    async def _flush_memory_before_summary(
-        self,
-        session_key: str,
-        turn_id: str,
-        messages: list[Message],
-    ) -> None:
-        """Extract durable candidates from history before it is folded into summary."""
-        if not messages or self.memory_extractor is None:
-            return
-        try:
-            memory_ids = await self.memory_extractor.extract_messages(
-                messages,
-                source="pre_context_compaction",
-            )
-        except Exception as exc:
-            self.events.memory_extraction_error(
-                session_key,
-                turn_id,
-                "pre_context",
-                exc,
-            )
-            return
-        self.events.memory_candidates_saved(
-            session_key,
-            turn_id,
-            "pre_context",
-            memory_ids,
-        )
-
 
 def _assistant_tool_call_message(response: ProviderResponse) -> Message:
     """Build an assistant message containing tool calls for chat completions."""

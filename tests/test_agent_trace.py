@@ -317,7 +317,7 @@ async def test_agent_loop_records_conversation_summary_trace_events() -> None:
         start_cron=False,
     )
     agent.memory_extractor = None
-    agent._history["cli:default"] = [
+    agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 12)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 12)},
         {"role": "user", "content": "second"},
@@ -361,7 +361,7 @@ async def test_agent_loop_records_conversation_summary_failure_trace() -> None:
         start_cron=False,
     )
     agent.memory_extractor = None
-    agent._history["cli:default"] = [
+    agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 12)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 12)},
         {"role": "user", "content": "second"},

@@ -253,7 +253,7 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
         start_cron=False,
     )
     agent.memory_extractor = None
-    agent._history["cli:default"] = [
+    agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 40)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
         {"role": "user", "content": "second"},
@@ -263,7 +263,7 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
     await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
-    state = agent._conversation_summaries.get("cli:default")
+    state = agent.session_history.summaries.get("cli:default")
     assert state is not None
     assert state.summarized_message_count == 2
     assert provider.summary_prompts
@@ -297,7 +297,7 @@ async def test_agent_loop_compacts_history_to_half_history_budget() -> None:
         start_cron=False,
     )
     agent.memory_extractor = None
-    agent._history["cli:default"] = [
+    agent.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 40)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
         {"role": "user", "content": "second"},
@@ -307,7 +307,7 @@ async def test_agent_loop_compacts_history_to_half_history_budget() -> None:
     await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
-    state = agent._conversation_summaries.get("cli:default")
+    state = agent.session_history.summaries.get("cli:default")
     assert state is not None
     assert state.summarized_message_count == 2
     assert provider.summary_prompts
