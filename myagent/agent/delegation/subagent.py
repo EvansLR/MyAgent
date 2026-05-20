@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from typing import Any, Callable
 from uuid import uuid4
 
-from myagent.agent.context_types import Message
-from myagent.agent.messages import assistant_tool_call_message, tool_result_message
+from myagent.agent.context.types import Message
+from myagent.agent.runtime.messages import assistant_tool_call_message, tool_result_message
 from myagent.providers.base import BaseProvider, ToolCall
 from myagent.tools.base import Tool
 from myagent.tools.registry import ToolRegistry

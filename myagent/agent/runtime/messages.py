@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from myagent.agent.context_types import Message
+from myagent.agent.context.types import Message
 from myagent.providers.base import ProviderResponse, ToolCall
 
 

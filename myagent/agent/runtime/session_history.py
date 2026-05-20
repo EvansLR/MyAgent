@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from myagent.agent.context_types import ContextBudget, Message
-from myagent.agent.run_events import AgentRunEvents
-from myagent.agent.summary import (
+from myagent.agent.context.types import ContextBudget, Message
+from myagent.agent.runtime.run_events import AgentRunEvents
+from myagent.agent.context.summary import (
     ConversationSummarizer,
     ConversationSummaryConfig,
     ConversationSummaryState,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from myagent.agent.compression import compress_until_within_limit, estimate_tokens
+from myagent.agent.context.compression import compress_until_within_limit, estimate_tokens
 from myagent.memory.markdown import MEMORY_HEADER, MarkdownMemoryStore
 from myagent.providers.base import BaseProvider
 

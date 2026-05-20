@@ -1,7 +1,7 @@
 """Agent runtime components."""
 
 from myagent.agent.context import ContextBuilder
-from myagent.agent.context_types import (
+from myagent.agent.context.types import (
     ContextAssemblyReport,
     ContextBudget,
     ContextHistoryReport,
@@ -11,14 +11,14 @@ from myagent.agent.context_types import (
     ContextSection,
     ContextSectionReport,
 )
-from myagent.agent.runtime_env import format_runtime_environment
+from myagent.agent.runtime.env import format_runtime_environment
 from myagent.agent.loop import AgentLoop
-from myagent.agent.summary import (
+from myagent.agent.context.summary import (
     ConversationSummarizer,
     ConversationSummaryConfig,
     ConversationSummaryState,
 )
-from myagent.agent.subagent import DelegateTaskTool, SubAgentProfile, SubAgentRunner
+from myagent.agent.delegation.subagent import DelegateTaskTool, SubAgentProfile, SubAgentRunner
 
 __all__ = [
     "AgentLoop",

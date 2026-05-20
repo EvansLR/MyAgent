@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 from myagent.tracing.store import TraceStore
 
 if TYPE_CHECKING:
-    from myagent.agent.context_types import ContextAssemblyReport, Message
-    from myagent.agent.summary import ConversationSummaryState
+    from myagent.agent.context.types import ContextAssemblyReport, Message
+    from myagent.agent.context.summary import ConversationSummaryState
     from myagent.bus import InboundMessage
     from myagent.providers.base import ProviderResponse, ToolCall
 

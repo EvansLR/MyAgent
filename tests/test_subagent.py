@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 
 from myagent.agent import AgentLoop
-from myagent.agent.subagent import (
+from myagent.agent.delegation.subagent import (
     DelegateTaskTool,
     SubAgentRunner,
     create_subagent_registry,

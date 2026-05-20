@@ -151,10 +151,11 @@ Expected risk: medium. Startup code is integration-heavy.
 
 ## Deferred Work
 
-- Mojibake cleanup for docs and Chinese user-facing strings.
 - Larger `AgentLoop` turn-state-machine redesign.
 - Tool permission policy redesign.
 - Any production dependency injection framework.
+- Docs-only mojibake cleanup. The affected docs are user-maintained notes and
+  are intentionally out of scope for this engineering refactor.
 
 ## Implementation Notes
 
@@ -201,4 +202,159 @@ python -m pytest tests/test_cli_channel.py tests/test_channels_manager.py tests/
 python -m pytest
 
 266 passed
+```
+
+## Follow-up Refactor: Runtime Boundary Cleanup
+
+Planned after the first cleanup pass.
+
+Scope:
+
+- Keep public commands, tool names, trace event names, and provider interfaces
+  stable.
+- Do not edit user-maintained docs solely for encoding or mojibake cleanup.
+- Prefer small owner modules over a framework-style dependency container.
+
+Phases:
+
+1. Extract one-turn orchestration from `AgentLoop`, leaving `AgentLoop` focused
+   on queue consumption, locking, and lifecycle.
+2. Extract the bounded provider/tool iteration and delegate-task special case
+   into focused runtime helpers.
+3. Split Feishu rendering/card construction from the channel lifecycle.
+4. Make smaller cleanups in context assembly, filesystem helpers, and trace CLI
+   commands only after the higher-risk runtime split is verified.
+
+Checkpoints:
+
+- `python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py tests/test_agent_memory.py tests/test_agent_skills.py tests/test_subagent.py`
+- `python -m pytest tests/test_channels_feishu.py tests/test_channels_manager.py`
+- `python -m pytest tests/test_context_builder.py tests/test_filesystem_tools.py tests/test_cli_channel.py tests/test_trace_store.py`
+
+Implementation notes:
+
+- Added `myagent/agent/turn_processor.py` to own one-turn context preparation,
+  final reply publication, history updates, and visible-memory compression.
+- Added `myagent/agent/tool_loop.py` to own bounded provider/tool iteration,
+  tool status messages, repeated-tool diagnostics, and `delegate_task` trace
+  handling.
+- Reduced `AgentLoop` to lifecycle responsibilities: dependency assembly,
+  inbound queue consumption, locking, cron startup, and stop control.
+- Added `myagent/channels/feishu_rendering.py` for approval card and
+  Markdown-ish text rendering, leaving `FeishuChannel` focused on channel
+  lifecycle, token handling, transport, upload, and event routing.
+- Kept public tool names, trace event names, provider behavior, Feishu card
+  content, and test-visible helper imports stable.
+
+Verification:
+
+```text
+python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py tests/test_agent_memory.py tests/test_agent_skills.py tests/test_subagent.py
+33 passed
+
+python -m pytest tests/test_channels_feishu.py tests/test_channels_manager.py
+27 passed
+
+python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py tests/test_agent_memory.py tests/test_agent_skills.py tests/test_subagent.py tests/test_channels_feishu.py tests/test_channels_manager.py
+60 passed
+
+python -m pytest
+268 passed
+```
+
+## Follow-up Refactor: Agent Package Structure Cleanup
+
+Implemented after the context builder boundary cleanup.
+
+Goal:
+
+- Reduce top-level `myagent/agent` clutter without merging responsibilities back
+  into large files.
+- Keep `myagent.agent` as the public facade for common imports such as
+  `AgentLoop`, `ContextBuilder`, `ContextBudget`, and `DelegateTaskTool`.
+
+New package shape:
+
+```text
+myagent/agent/
+  __init__.py
+  loop.py
+  context/
+    builder.py
+    sections.py
+    selection.py
+    types.py
+    summary.py
+    compression.py
+  runtime/
+    turn_processor.py
+    tool_loop.py
+    session_history.py
+    cron_bridge.py
+    skill_state.py
+    run_events.py
+    messages.py
+    env.py
+  delegation/
+    subagent.py
+```
+
+Implementation notes:
+
+- Moved context assembly, summary, compression, and context data structures into
+  `myagent.agent.context`.
+- Moved one-turn processing, tool loop, trace events, session history, active
+  skill state, cron bridge, message helpers, and runtime environment formatting
+  into `myagent.agent.runtime`.
+- Moved subagent delegation into `myagent.agent.delegation`.
+- Updated internal imports and test imports to use the new package paths.
+- Kept the top-level `myagent.agent` exports intact for the common public API.
+
+Verification:
+
+```text
+python -m compileall -q myagent/agent
+
+python -m pytest tests/test_agent_loop.py tests/test_agent_trace.py tests/test_agent_memory.py tests/test_agent_skills.py tests/test_subagent.py tests/test_context_builder.py
+50 passed
+
+python -m pytest
+268 passed
+```
+
+## Follow-up Refactor: Context Builder Boundary Cleanup
+
+Implemented after the runtime boundary cleanup.
+
+Scope:
+
+- Preserve `ContextBuilder` public construction and `build_messages_with_report`
+  behavior.
+- Keep the current prompt-time budgeting behavior: sections and history are not
+  dropped solely because `max_prompt_tokens` is exceeded; the report records the
+  warning instead.
+- Do not alter Feishu or user-maintained docs in this phase.
+
+Implementation notes:
+
+- Added `myagent/agent/context_sections.py` to own ordered system section
+  assembly for identity, profile, runtime environment, delegation policy,
+  visible memory, conversation summary, active skills, and available skills.
+- Added `myagent/agent/context_selection.py` to own section item conversion,
+  system prompt rendering, history selection, token estimation, warning
+  aggregation, and report construction.
+- Kept compatibility methods on `ContextBuilder` as thin wrappers so existing
+  tests and nearby modules do not need to know about the extracted helpers.
+- Added a small sync step before section assembly because `AgentLoop` may attach
+  memory, summary, and active skill providers to an injected `ContextBuilder`
+  after construction.
+
+Verification:
+
+```text
+python -m pytest tests/test_context_builder.py tests/test_agent_loop.py tests/test_agent_trace.py tests/test_agent_memory.py tests/test_subagent.py
+47 passed
+
+python -m pytest
+268 passed
 ```
