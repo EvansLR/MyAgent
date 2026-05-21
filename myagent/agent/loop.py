@@ -1,4 +1,4 @@
-"""Minimal agent loop for processing messages from the bus."""
+﻿"""Minimal agent loop for processing messages from the bus."""
 
 import asyncio
 from pathlib import Path
@@ -115,7 +115,9 @@ class AgentLoop:
     def locked(self) -> bool:
         """Return whether a turn is currently being processed."""
         return self._lock.locked()
-
+    # the only place that model processing happens is in process_message, 
+    # which is protected by the lock, 
+    # so this indicates whether we're waiting for a provider response
     async def process_next(self) -> OutboundMessage:
         """Process one inbound message and publish one outbound message."""
         inbound = await self.bus.consume_inbound()
