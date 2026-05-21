@@ -83,16 +83,7 @@ class AgentToolLoop:
         turn_state: AgentTurnState,
     ) -> str:
         """Generate a response, allowing the provider to call registered tools."""
-        if not hasattr(self.provider, "generate_response"):
-            turn_state.iteration = 1
-            turn_state.stop_reason = "final_output"
-            return await self.provider.generate(messages)
-
         tools = self.tool_registry.get_definitions()
-        if not tools:
-            turn_state.iteration = 1
-            turn_state.stop_reason = "final_output"
-            return await self.provider.generate(messages)
 
         working_messages = list(messages)
         for iteration in range(1, self.max_iterations + 1):
@@ -109,7 +100,6 @@ class AgentToolLoop:
                     tool_call,
                     inbound.session_key,
                     turn_state.turn_id,
-                    inbound.content,
                     inbound.channel,
                     inbound.chat_id,
                     turn_state,
@@ -128,7 +118,6 @@ class AgentToolLoop:
         tool_call: ToolCall,
         session_key: str,
         turn_id: str,
-        user_content: str = "",
         channel: str = "",
         chat_id: str = "",
         turn_state: AgentTurnState | None = None,
@@ -137,7 +126,7 @@ class AgentToolLoop:
         try:
             route_token = set_current_approval_route(ApprovalRoute(channel, chat_id))
             try:
-                result = await self._execute_tool_with_context(
+                result = await self._execute_tool(
                     tool_call,
                     session_key,
                     turn_id,
@@ -151,7 +140,7 @@ class AgentToolLoop:
             result = f"Error executing tool {tool_call.name}: {exc}"
         return result
 
-    async def _execute_tool_with_context(
+    async def _execute_tool(
         self,
         tool_call: ToolCall,
         session_key: str,
@@ -161,28 +150,42 @@ class AgentToolLoop:
         turn_state: AgentTurnState | None = None,
     ) -> str:
         """Run one tool, adding runtime context for special tools when needed."""
-        if tool_call.name != "delegate_task":
-            arguments = dict(tool_call.arguments)
-            if tool_call.name == "cron" and channel:
-                arguments["_channel"] = channel
-                arguments["_chat_id"] = chat_id
-            if tool_call.name == "attach_file" and turn_state is not None:
-                arguments["_attachments"] = turn_state.attachments
-            return await self.tool_registry.execute(tool_call.name, arguments)
+        arguments = self._tool_arguments(tool_call, channel, chat_id, turn_state)
 
         tool = self.tool_registry.get(tool_call.name)
         if not isinstance(tool, DelegateTaskTool):
-            return await self.tool_registry.execute(tool_call.name, tool_call.arguments)
+            return await self.tool_registry.execute(tool_call.name, arguments)
 
-        casted = tool.cast_params(tool_call.arguments)
+        casted = tool.cast_params(arguments)
         errors = tool.validate_params(casted)
         if errors:
-            return f"Error: Invalid parameters for tool '{tool_call.name}': " + "; ".join(errors)
+            return (
+                f"Error: Invalid parameters for tool '{tool_call.name}': "
+                + "; ".join(errors)
+            )
 
         return await tool.execute(
             **casted,
-            active_skill_context=self.skill_state.format_active_skill_context(session_key, turn_id),
+            active_skill_context=self.skill_state.format_active_skill_context(
+                session_key,
+                turn_id,
+            ),
         )
+
+    def _tool_arguments(
+        self,
+        tool_call: ToolCall,
+        channel: str,
+        chat_id: str,
+        turn_state: AgentTurnState | None,
+    ) -> dict[str, object]:
+        arguments = dict(tool_call.arguments)
+        if tool_call.name == "cron" and channel:
+            arguments["_channel"] = channel
+            arguments["_chat_id"] = chat_id
+        if tool_call.name == "attach_file" and turn_state is not None:
+            arguments["_attachments"] = turn_state.attachments
+        return arguments
 
     async def _publish_tool_status(self, inbound: InboundMessage, tool_call: ToolCall) -> None:
         """Publish a user-visible status message before running a tool."""
