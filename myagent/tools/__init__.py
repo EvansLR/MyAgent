@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Awaitable, Callable
 
+from myagent.tools.attachments import AttachFileTool
 from myagent.tools.filesystem import (
     CopyFileTool,
     EditFileTool,
@@ -20,7 +21,6 @@ from myagent.tools.memory import (
     MemorySearchTool,
 )
 from myagent.tools.cron import CronTool
-from myagent.tools.message import MessageTool
 from myagent.tools.registry import ToolRegistry
 from myagent.tools.skills import SkillGetTool
 from myagent.tools.shell import ShellCommandTool
@@ -43,6 +43,7 @@ def create_default_registry(
     registry.register(EditFileTool(root, approval_callback=approval_callback))
     registry.register(CopyFileTool(root, approval_callback=approval_callback))
     registry.register(MoveFileTool(root, approval_callback=approval_callback))
+    registry.register(AttachFileTool(root))
     registry.register(WebSearchTool())
     registry.register(WebFetchTool())
     registry.register(ShellCommandTool(root, approval_callback=approval_callback))
@@ -50,11 +51,11 @@ def create_default_registry(
 
 
 __all__ = [
+    "AttachFileTool",
     "CopyFileTool",
     "CronTool",
     "EditFileTool",
     "ListDirTool",
-    "MessageTool",
     "MoveFileTool",
     "MemoryArchiveTool",
     "MemoryForgetTool",

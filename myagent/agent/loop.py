@@ -86,9 +86,6 @@ class AgentLoop:
         if not self.tool_registry.has("cron"):
             from myagent.tools.cron import CronTool
             self.tool_registry.register(CronTool(self.cron_service))
-        if not self.tool_registry.has("message"):
-            from myagent.tools.message import MessageTool
-            self.tool_registry.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.max_tool_iterations = max_tool_iterations
         self.tool_loop = AgentToolLoop(
             self.provider,
@@ -103,7 +100,6 @@ class AgentLoop:
             session_history=self.session_history,
             memory_compressor=self.memory_compressor,
             skill_state=self.skill_state,
-            tool_registry=self.tool_registry,
             tool_loop=self.tool_loop,
             max_tool_iterations=self.max_tool_iterations,
         )

@@ -230,8 +230,54 @@ python -m pytest
 
 Next recommended step:
 
-- Review whether `AgentLoop` should also delegate default non-memory tool registration (`delegate_task`, `cron`, `message`) to a small tool-runtime assembly helper.
+- Review whether `AgentLoop` should also delegate remaining default non-memory tool registration (`delegate_task`, `cron`) to a small tool-runtime assembly helper.
 - If the current diff looks good, commit it as one focused refactor.
+
+## 2026-05-21 MessageTool Removal
+
+Recently completed:
+
+- Removed the default model-facing `MessageTool`.
+- Removed duplicate reply suppression from `AgentTurnProcessor`; one turn now has one normal final reply path.
+- Kept channel-level media support intact through `OutboundMessage.media` and channel implementations.
+- Added `attach_file` as a small final-reply attachment tool. It records existing files on the turn state and does not send a separate message.
+
+Current routing model:
+
+- Cron and Gateway inputs carry `channel` and `chat_id` in `InboundMessage`.
+- Agent runtime publishes the final response as `OutboundMessage(channel, chat_id, content, media)`.
+- Feishu-specific formatting and media sending stay inside the Feishu channel layer.
+
+Verification:
+
+```text
+python -m compileall -q myagent
+python -m pytest tests/test_agent_loop.py tests/test_channels_feishu.py tests/test_cli_channel.py tests/test_tool_registry.py
+59 passed
+
+python -m pytest
+248 passed
+```
+
+## 2026-05-21 Shell Risk Classification
+
+Recently completed:
+
+- Extracted shell approval decisions into `myagent.tools.shell_risk`.
+- Added `ShellRisk.ALLOW / CONFIRM / DENY` as the small policy model.
+- Allowed common read-only queries, PowerShell read-only pipelines, version probes, read-only Git commands, and `python -m pytest` / `python -m compileall` without approval.
+- Kept mutating commands, redirection, command chaining, unknown commands, and inline Python code behind approval.
+
+Verification:
+
+```text
+python -m compileall -q myagent
+python -m pytest tests/test_shell_tool.py tests/test_agent_loop.py tests/test_tool_registry.py
+49 passed
+
+python -m pytest
+259 passed
+```
 
 ## Profile / Memory / Runtime 杈圭晫鏀舵暃
 

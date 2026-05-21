@@ -135,6 +135,24 @@ class ReasoningToolCallingProvider(ToolCallingProvider):
         return ProviderResponse(content="Done.")
 
 
+class AttachmentToolCallingProvider(ToolCallingProvider):
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        self.seen_tools = tools
+        self.seen_messages.append(messages)
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="attach_file",
+                        arguments={"file_path": "image.png"},
+                    )
+                ]
+            )
+        return ProviderResponse(content="I attached the image.")
+
+
 async def test_agent_loop_preserves_provider_specific_tool_call_fields() -> None:
     workspace = make_workspace("reasoning-tool-calls")
     (workspace / "note.txt").write_text("hello from tool", encoding="utf-8")
@@ -152,6 +170,29 @@ async def test_agent_loop_preserves_provider_specific_tool_call_fields() -> None
     assistant_message = provider.seen_messages[1][-2]
     assert assistant_message["role"] == "assistant"
     assert assistant_message["reasoning_content"] == "thinking text"
+
+
+async def test_agent_loop_attaches_files_to_final_reply() -> None:
+    workspace = make_workspace("attachments")
+    image = workspace / "image.png"
+    image.write_bytes(b"fake image")
+    bus = MessageBus()
+    provider = AttachmentToolCallingProvider()
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        tool_registry=create_default_registry(workspace),
+    )
+
+    await bus.publish_inbound(make_message("send me image.png"))
+    outbound = await agent.process_next()
+
+    status = await bus.consume_outbound()
+    final = await bus.consume_outbound()
+    assert status.metadata["kind"] == "status"
+    assert final == outbound
+    assert outbound.content == "I attached the image."
+    assert outbound.media == [str(image.resolve())]
 
 
 class LargeToolResultProvider(ToolCallingProvider):

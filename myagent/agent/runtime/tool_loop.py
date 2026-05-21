@@ -34,6 +34,7 @@ class AgentTurnState:
     tool_error_count: int = 0
     stop_reason: str = ""
     warnings: list[str] = field(default_factory=list)
+    attachments: list[str] = field(default_factory=list)
     _tool_call_counts: dict[str, int] = field(default_factory=dict)
 
     def record_tool_result(self, tool_call: ToolCall, result: str) -> None:
@@ -111,6 +112,7 @@ class AgentToolLoop:
                     inbound.content,
                     inbound.channel,
                     inbound.chat_id,
+                    turn_state,
                 )
                 turn_state.record_tool_result(tool_call, result)
                 working_messages.append(tool_result_message(tool_call, result))
@@ -129,6 +131,7 @@ class AgentToolLoop:
         user_content: str = "",
         channel: str = "",
         chat_id: str = "",
+        turn_state: AgentTurnState | None = None,
     ) -> str:
         """Run one requested tool call through the registry."""
         try:
@@ -140,6 +143,7 @@ class AgentToolLoop:
                     turn_id,
                     channel,
                     chat_id,
+                    turn_state,
                 )
             finally:
                 reset_current_approval_route(route_token)
@@ -154,6 +158,7 @@ class AgentToolLoop:
         turn_id: str,
         channel: str = "",
         chat_id: str = "",
+        turn_state: AgentTurnState | None = None,
     ) -> str:
         """Run one tool, adding runtime context for special tools when needed."""
         if tool_call.name != "delegate_task":
@@ -161,6 +166,8 @@ class AgentToolLoop:
             if tool_call.name == "cron" and channel:
                 arguments["_channel"] = channel
                 arguments["_chat_id"] = chat_id
+            if tool_call.name == "attach_file" and turn_state is not None:
+                arguments["_attachments"] = turn_state.attachments
             return await self.tool_registry.execute(tool_call.name, arguments)
 
         tool = self.tool_registry.get(tool_call.name)

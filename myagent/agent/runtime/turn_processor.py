@@ -10,7 +10,6 @@ from myagent.agent.runtime.skill_state import AgentSkillState
 from myagent.agent.runtime.tool_loop import AgentToolLoop, AgentTurnState
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.memory import VisibleMemoryCompressor
-from myagent.tools import ToolRegistry
 
 
 class AgentTurnProcessor:
@@ -24,7 +23,6 @@ class AgentTurnProcessor:
         session_history: AgentSessionHistory,
         memory_compressor: VisibleMemoryCompressor,
         skill_state: AgentSkillState,
-        tool_registry: ToolRegistry,
         tool_loop: AgentToolLoop,
         max_tool_iterations: int,
     ) -> None:
@@ -33,7 +31,6 @@ class AgentTurnProcessor:
         self.session_history = session_history
         self.memory_compressor = memory_compressor
         self.skill_state = skill_state
-        self.tool_registry = tool_registry
         self.tool_loop = tool_loop
         self.max_tool_iterations = max_tool_iterations
 
@@ -45,7 +42,6 @@ class AgentTurnProcessor:
             turn_id=turn_id,
             max_iterations=self.max_tool_iterations,
         )
-        self._start_message_tool_turn(inbound)
         history = self.session_history.history_for(inbound.session_key)
         self.session_history.set_current_summary_session(inbound.session_key)
         await self._compress_visible_memory_before_context()
@@ -70,7 +66,7 @@ class AgentTurnProcessor:
             turn_state.stop_reason = "provider_error"
             content = f"Error: {exc}"
 
-        outbound = await self._publish_final_reply_if_needed(inbound, turn_id, content, turn_state)
+        outbound = await self._publish_final_reply(inbound, content, turn_state)
         history.extend(
             [
                 {"role": "user", "content": inbound.content},
@@ -81,41 +77,21 @@ class AgentTurnProcessor:
         self.session_history.clear_current_summary_session()
         return outbound
 
-    def _start_message_tool_turn(self, inbound: InboundMessage) -> None:
-        message_tool = self.tool_registry.get("message")
-        if message_tool is None or not hasattr(message_tool, "set_context"):
-            return
-        message_tool.set_context(inbound.channel, inbound.chat_id)
-        message_tool.start_turn()
-
-    async def _publish_final_reply_if_needed(
+    async def _publish_final_reply(
         self,
         inbound: InboundMessage,
-        turn_id: str,
         content: str,
         turn_state: AgentTurnState,
     ) -> OutboundMessage:
-        message_sent = False
-        message_tool = self.tool_registry.get("message")
-        if message_tool is not None and hasattr(message_tool, "_sent_in_turn"):
-            message_sent = message_tool._sent_in_turn
-
-        if not message_sent:
-            if not turn_state.stop_reason:
-                turn_state.stop_reason = "final_output"
-            outbound = OutboundMessage(
-                channel=inbound.channel,
-                chat_id=inbound.chat_id,
-                content=content,
-            )
-            await self.bus.publish_outbound(outbound)
-            return outbound
-
+        if not turn_state.stop_reason:
+            turn_state.stop_reason = "final_output"
         outbound = OutboundMessage(
             channel=inbound.channel,
             chat_id=inbound.chat_id,
-            content="",
+            content=content,
+            media=list(turn_state.attachments),
         )
+        await self.bus.publish_outbound(outbound)
         return outbound
 
     async def _compress_visible_memory_before_context(self) -> None:

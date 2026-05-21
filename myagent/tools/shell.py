@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from myagent.tools.base import Tool
+from myagent.tools.shell_risk import ShellRisk, classify_shell_command
 
 
 ApprovalCallback = Callable[[str], Awaitable[bool]]
@@ -23,43 +24,6 @@ def _decode_bytes(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace")
-
-# Characters/operators that indicate command chaining or redirection.
-_DANGEROUS_OPERATORS = (";", "&&", "||", ">", "<", "`", "$(", "${")
-
-# Command prefixes that are inherently dangerous
-_DANGEROUS_PREFIXES = frozenset({
-    "rm", "del", "format", "mkfs", "dd", "chmod", "chown",
-    "sudo", "su",
-    "remove-item", "erase", "rmdir", "rd",
-    "set-content", "add-content", "out-file", "new-item",
-    "move-item", "copy-item", "rename-item", "clear-content",
-    "invoke-expression", "iex", "start-process",
-})
-
-# Command prefixes considered safe/readonly
-_SAFE_PREFIXES = frozenset({
-    "echo", "cat", "ls", "dir", "pwd", "cd", "whoami", "hostname",
-    "date", "uname", "df", "du", "ps", "top", "env", "which", "where",
-    "find", "grep", "head", "tail", "wc", "type",
-    # System info
-    "wmic", "powercfg", "systeminfo", "ver", "winver",
-    "get-process", "gps", "measure-object", "select-object",
-    "sort-object", "where-object", "format-table", "format-list", "out-string",
-    "get-ciminstance", "get-wmiobject", "get-computerinfo",
-    "pmset", "system_profiler", "sw_vers", "sysctl",
-    "acpi", "upower", "lshw", "lspci", "lsusb", "dmidecode",
-    # Version / readonly tools
-    "python", "python3", "node", "go", "rustc", "cargo",
-    "java", "javac", "dotnet", "gcc", "g++", "clang",
-    # Git readonly
-    "git",
-    # Package managers readonly
-    "pip", "pip3",
-    # Common network/read helpers. They may write files, but are routine terminal use.
-    "curl", "wget", "invoke-webrequest", "iwr",
-})
-
 
 class ShellCommandTool(Tool):
     """Execute a shell command with safety guardrails."""
@@ -85,7 +49,7 @@ class ShellCommandTool(Tool):
             "On Windows, commands run with PowerShell semantics; use "
             "Invoke-WebRequest -Uri <url> -OutFile <path> for downloads. "
             "The cd command changes this tool's working directory for later calls. "
-            "Readonly commands (ls, cat, echo, etc.) run automatically. "
+            "Readonly queries, version checks, and safe read-only pipelines run automatically. "
             "Destructive or complex commands require user approval."
         )
 
@@ -117,7 +81,10 @@ class ShellCommandTool(Tool):
         if cd_target is not None:
             return await self._change_directory(cd_target)
 
-        if self._needs_approval(command):
+        risk = classify_shell_command(command)
+        if risk == ShellRisk.DENY:
+            return "Error: Command denied by safety policy."
+        if risk == ShellRisk.CONFIRM:
             if self.approval_callback is None:
                 return (
                     "Error: This command requires user approval, "
@@ -130,15 +97,6 @@ class ShellCommandTool(Tool):
                 return "Error: User denied command execution."
 
         return await self._run(command, timeout)
-
-    def _needs_approval(self, command: str) -> bool:
-        lowered = command.lower().strip()
-        for op in _DANGEROUS_OPERATORS:
-            if op in lowered:
-                return True
-        if "|" in lowered:
-            return not _is_safe_pipeline(lowered)
-        return not _is_safe_command_segment(lowered)
 
     async def _run(self, command: str, timeout: int) -> str:
         is_windows = platform.system() == "Windows"
@@ -235,34 +193,6 @@ def _strip_quotes(text: str) -> str:
     if len(text) >= 2 and text[0] == text[-1] and text[0] in {"'", '"'}:
         return text[1:-1]
     return text
-
-
-def _is_safe_pipeline(command: str) -> bool:
-    segments = [segment.strip() for segment in command.split("|")]
-    return bool(segments) and all(_is_safe_command_segment(segment) for segment in segments)
-
-
-def _is_safe_command_segment(segment: str) -> bool:
-    first = _first_command_token(segment)
-    if not first:
-        return False
-    if first in _DANGEROUS_PREFIXES:
-        return False
-    return first in _SAFE_PREFIXES
-
-
-def _first_command_token(segment: str) -> str:
-    text = segment.strip()
-    if not text:
-        return ""
-    if text.startswith("("):
-        match = re.match(r"^\(\s*([a-zA-Z][\w.-]*)\b", text)
-        if match:
-            return match.group(1).lower()
-    match = re.match(r"^&?\s*([a-zA-Z][\w.-]*)\b", text)
-    if not match:
-        return ""
-    return match.group(1).lower()
 
 
 def _windows_shell_command(command: str) -> list[str]:

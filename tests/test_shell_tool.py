@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from myagent.tools.shell import ShellCommandTool
+from myagent.tools.shell_risk import ShellRisk, classify_shell_command
 
 
 @pytest.fixture
@@ -33,10 +34,9 @@ class TestShellCommandTool:
         assert "Exit code:" in result or "Error:" in result
 
     @pytest.mark.asyncio
-    async def test_unknown_command_requires_approval(self, tool):
-        tool.approval_callback = AsyncMock(return_value=True)
+    async def test_version_probe_executes_without_approval(self, tool):
         result = await tool.execute("cmake --version")
-        tool.approval_callback.assert_awaited_once()
+        assert "requires user approval" not in result
 
     @pytest.mark.asyncio
     async def test_operator_requires_approval(self, tool):
@@ -65,13 +65,13 @@ class TestShellCommandTool:
 
     @pytest.mark.asyncio
     async def test_no_callback_returns_error(self, tool):
-        result = await tool.execute("cmake --version")
+        result = await tool.execute("unknown-build-tool --list")
         assert "requires user approval" in result
 
     @pytest.mark.asyncio
     async def test_user_denied_returns_error(self, tool):
         tool.approval_callback = AsyncMock(return_value=False)
-        result = await tool.execute("cmake --version")
+        result = await tool.execute("unknown-build-tool --list")
         assert "User denied" in result
 
     @pytest.mark.asyncio
@@ -142,6 +142,25 @@ class TestShellCommandTool:
             pytest.skip("Windows-only shell command")
         result = await tool.execute("(Get-Process).Count")
         assert "requires user approval" not in result
+
+    @pytest.mark.parametrize(
+        ("command", "risk"),
+        [
+            ("git status --short", ShellRisk.ALLOW),
+            ("git log --oneline -5", ShellRisk.ALLOW),
+            ("git commit -m change", ShellRisk.CONFIRM),
+            ("python --version", ShellRisk.ALLOW),
+            ("python -m pytest tests/test_shell_tool.py", ShellRisk.ALLOW),
+            ("python -c \"print('hi')\"", ShellRisk.CONFIRM),
+            ("Get-ChildItem | Select-String note", ShellRisk.ALLOW),
+            ("Get-Process | Measure-Object | Select-Object Count", ShellRisk.ALLOW),
+            ("echo hello | Out-File result.txt", ShellRisk.CONFIRM),
+            ("echo hello && echo world", ShellRisk.CONFIRM),
+            ("unknown-build-tool --list", ShellRisk.CONFIRM),
+        ],
+    )
+    def test_shell_risk_classification(self, command, risk):
+        assert classify_shell_command(command) == risk
 
     @pytest.mark.asyncio
     async def test_parameters_schema(self, tool):
