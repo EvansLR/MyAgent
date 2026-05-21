@@ -12,7 +12,7 @@ from rich.panel import Panel
 from rich.text import Text
 import typer
 
-from myagent.approval import current_approval_route
+from myagent.approval import ApprovalRoute
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.channels import ChannelManager, FeishuChannel
 from myagent.cli.runtime import create_agent_runtime
@@ -292,10 +292,9 @@ async def run_gateway(
 
 
 def _make_cli_approval_callback(bus: MessageBus):
-    async def approve(prompt: str) -> bool:
+    async def approve(prompt: str, route: ApprovalRoute | None = None) -> bool:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[bool] = loop.create_future()
-        route = current_approval_route()
         channel = route.channel if route is not None else "cli"
         chat_id = route.chat_id if route is not None else DEFAULT_CHAT_ID
         await bus.publish_outbound(

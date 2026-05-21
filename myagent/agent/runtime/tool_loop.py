@@ -5,19 +5,13 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from myagent.approval import (
-    ApprovalRoute,
-    reset_current_approval_route,
-    set_current_approval_route,
-)
 from myagent.agent.context.types import Message
 from myagent.agent.runtime.messages import assistant_tool_call_message, tool_result_message
-from myagent.agent.runtime.skill_state import AgentSkillState
-from myagent.agent.delegation.subagent import DelegateTaskTool
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.providers import BaseProvider
 from myagent.providers.base import ToolCall
 from myagent.tools import ToolRegistry
+from myagent.tools.context import ToolExecutionContext
 
 MAX_REPEATED_TOOL_CALLS = 2
 
@@ -67,13 +61,11 @@ class AgentToolLoop:
         provider: BaseProvider,
         tool_registry: ToolRegistry,
         bus: MessageBus,
-        skill_state: AgentSkillState,
         max_iterations: int,
     ) -> None:
         self.provider = provider
         self.tool_registry = tool_registry
         self.bus = bus
-        self.skill_state = skill_state
         self.max_iterations = max_iterations
 
     async def generate(
@@ -123,19 +115,16 @@ class AgentToolLoop:
         turn_state: AgentTurnState | None = None,
     ) -> str:
         """Run one requested tool call through the registry."""
+        context = ToolExecutionContext(
+            session_key=session_key,
+            turn_id=turn_id,
+            channel=channel,
+            chat_id=chat_id,
+            approval_callback=self.tool_registry.approval_callback,
+            attachments=turn_state.attachments if turn_state is not None else [],
+        )
         try:
-            route_token = set_current_approval_route(ApprovalRoute(channel, chat_id))
-            try:
-                result = await self._execute_tool(
-                    tool_call,
-                    session_key,
-                    turn_id,
-                    channel,
-                    chat_id,
-                    turn_state,
-                )
-            finally:
-                reset_current_approval_route(route_token)
+            result = await self._execute_tool(tool_call, context)
         except Exception as exc:
             result = f"Error executing tool {tool_call.name}: {exc}"
         return result
@@ -143,48 +132,25 @@ class AgentToolLoop:
     async def _execute_tool(
         self,
         tool_call: ToolCall,
-        session_key: str,
-        turn_id: str,
-        channel: str = "",
-        chat_id: str = "",
-        turn_state: AgentTurnState | None = None,
+        context: ToolExecutionContext,
     ) -> str:
         """Run one tool, adding runtime context for special tools when needed."""
-        arguments = self._tool_arguments(tool_call, channel, chat_id, turn_state)
-
-        tool = self.tool_registry.get(tool_call.name)
-        if not isinstance(tool, DelegateTaskTool):
-            return await self.tool_registry.execute(tool_call.name, arguments)
-
-        casted = tool.cast_params(arguments)
-        errors = tool.validate_params(casted)
-        if errors:
-            return (
-                f"Error: Invalid parameters for tool '{tool_call.name}': "
-                + "; ".join(errors)
-            )
-
-        return await tool.execute(
-            **casted,
-            active_skill_context=self.skill_state.format_active_skill_context(
-                session_key,
-                turn_id,
-            ),
+        arguments = self._tool_arguments(tool_call, context)
+        return await self.tool_registry.execute(
+            tool_call.name,
+            arguments,
+            context=context,
         )
 
     def _tool_arguments(
         self,
         tool_call: ToolCall,
-        channel: str,
-        chat_id: str,
-        turn_state: AgentTurnState | None,
+        context: ToolExecutionContext,
     ) -> dict[str, object]:
         arguments = dict(tool_call.arguments)
-        if tool_call.name == "cron" and channel:
-            arguments["_channel"] = channel
-            arguments["_chat_id"] = chat_id
-        if tool_call.name == "attach_file" and turn_state is not None:
-            arguments["_attachments"] = turn_state.attachments
+        if tool_call.name == "cron" and context.channel:
+            arguments["_channel"] = context.channel
+            arguments["_chat_id"] = context.chat_id
         return arguments
 
     async def _publish_tool_status(self, inbound: InboundMessage, tool_call: ToolCall) -> None:

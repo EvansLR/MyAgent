@@ -279,6 +279,28 @@ python -m pytest
 259 passed
 ```
 
+## 2026-05-21 Explicit Tool Execution Context
+
+Recently completed:
+
+- Removed the turn-local approval `ContextVar`.
+- Added `ToolExecutionContext` for per-turn tool runtime services.
+- Approval routing is now explicit: tool loop builds a context with session, turn, channel, chat, attachments, and approval callback.
+- Shell and filesystem tools request approval through the explicit context when running inside AgentLoop.
+- Direct tool tests still support prompt-only approval callbacks for simple unit coverage.
+- `delegate_task` no longer inherits parent active-skill context automatically. If a subagent needs skill-specific guidance, the main agent should include it explicitly in `task` or `context`.
+
+Verification:
+
+```text
+python -m compileall -q myagent
+python -m pytest tests/test_cli_channel.py tests/test_shell_tool.py tests/test_filesystem_tools.py tests/test_agent_loop.py tests/test_cron_tool.py tests/test_tool_registry.py
+105 passed
+
+python -m pytest
+258 passed
+```
+
 ## Profile / Memory / Runtime 杈圭晫鏀舵暃
 
 褰撳墠鎸夋垚鐔?coding-agent 宸ュ叿鐨勫仛娉曪紝鎶娾€滀汉鍐欑殑绋冲畾鎸囦护鈥濆拰鈥淎gent 鑷繁璁颁綇鐨勫唴瀹光€濆垎寮€锛?

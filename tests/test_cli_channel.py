@@ -12,11 +12,7 @@ from myagent.cli.commands import (
     format_approval_prompt,
     _make_cli_approval_callback,
 )
-from myagent.approval import (
-    ApprovalRoute,
-    reset_current_approval_route,
-    set_current_approval_route,
-)
+from myagent.approval import ApprovalRoute
 from myagent.bus import MessageBus, OutboundMessage
 
 
@@ -219,16 +215,14 @@ async def test_run_chat_handles_approval_request_before_final_reply(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_approval_callback_uses_current_channel_route() -> None:
+async def test_approval_callback_uses_explicit_channel_route() -> None:
     bus = MessageBus()
     approve = _make_cli_approval_callback(bus)
-    token = set_current_approval_route(ApprovalRoute("feishu", "oc_123"))
-    try:
-        task = asyncio.create_task(approve("Allow command?"))
-        outbound = await bus.consume_outbound()
-        assert outbound.channel == "feishu"
-        assert outbound.chat_id == "oc_123"
-        outbound.metadata["future"].set_result(True)
-        assert await task is True
-    finally:
-        reset_current_approval_route(token)
+    task = asyncio.create_task(
+        approve("Allow command?", ApprovalRoute("feishu", "oc_123"))
+    )
+    outbound = await bus.consume_outbound()
+    assert outbound.channel == "feishu"
+    assert outbound.chat_id == "oc_123"
+    outbound.metadata["future"].set_result(True)
+    assert await task is True

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from myagent.tools.base import Tool
+from myagent.tools.context import ToolExecutionContext
 
 
 class AttachFileTool(Tool):
@@ -43,6 +44,7 @@ class AttachFileTool(Tool):
     async def execute(
         self,
         file_path: str,
+        _context: ToolExecutionContext | None = None,
         _attachments: list[str] | None = None,
         **_: Any,
     ) -> str:
@@ -53,8 +55,9 @@ class AttachFileTool(Tool):
             return f"Error: Attachment path is not a file: {file_path}"
 
         resolved = str(path)
-        if _attachments is not None and resolved not in _attachments:
-            _attachments.append(resolved)
+        attachments = _context.attachments if _context is not None else _attachments
+        if attachments is not None and resolved not in attachments:
+            attachments.append(resolved)
         return f"Attached file to final response: {resolved}"
 
     def _resolve_path(self, file_path: str) -> Path:

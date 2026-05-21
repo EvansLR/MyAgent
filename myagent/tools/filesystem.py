@@ -2,9 +2,14 @@
 
 from pathlib import Path
 import shutil
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from myagent.tools.base import Tool
+from myagent.tools.context import (
+    ApprovalCallback,
+    ToolExecutionContext,
+    call_approval_callback,
+)
 
 
 _IGNORE_DIRS = {
@@ -19,9 +24,6 @@ _IGNORE_DIRS = {
     "dist",
     "node_modules",
 }
-
-ApprovalCallback = Callable[[str], Awaitable[bool]]
-
 
 class FilesystemTool(Tool):
     """Shared path handling and approval for filesystem tools."""
@@ -59,22 +61,29 @@ class FilesystemTool(Tool):
         """Return whether a resolved path is inside an allowed root."""
         return any(_is_relative_to(path, root) for root in [self.workspace, *self.allowed_roots])
 
-    async def request_approval(self, prompt: str) -> bool:
+    async def request_approval(
+        self,
+        prompt: str,
+        context: ToolExecutionContext | None = None,
+    ) -> bool:
         """Ask the current channel to approve a higher-risk operation."""
+        if context is not None:
+            return await context.request_approval(prompt)
         if self.approval_callback is None:
             return False
-        return await self.approval_callback(prompt)
+        return await call_approval_callback(self.approval_callback, prompt, None)
 
     async def require_path_access(
         self,
         action: str,
         paths: list[tuple[str, Path]],
+        context: ToolExecutionContext | None = None,
     ) -> str | None:
         """Return an error message unless access to all paths is allowed."""
         disallowed_paths = [(label, path) for label, path in paths if not self.is_allowed_path(path)]
         if not disallowed_paths:
             return None
-        if self.approval_callback is None:
+        if context is None and self.approval_callback is None:
             return (
                 f"Error: {action} outside the workspace requires user approval, "
                 "but no approval callback is configured."
@@ -85,7 +94,7 @@ class FilesystemTool(Tool):
         ]
         lines.extend(f"{label}: {path}" for label, path in disallowed_paths)
         lines.append("Risk: this operation changes files outside the workspace.")
-        approved = await self.request_approval("\n".join(lines))
+        approved = await self.request_approval("\n".join(lines), context)
         if not approved:
             return f"Error: User denied {action} approval."
         return None
@@ -115,6 +124,7 @@ class FilesystemTool(Tool):
         source_path: str,
         destination_path: str,
         overwrite: bool,
+        context: ToolExecutionContext | None = None,
     ) -> tuple[Path | None, Path | None, str | None]:
         """Resolve and validate shared copy/move source and destination rules."""
         source = self.resolve_any_path(source_path)
@@ -136,6 +146,7 @@ class FilesystemTool(Tool):
         error = await self.require_path_access(
             action,
             [("Source", source), ("Destination", destination)],
+            context,
         )
         if error is not None:
             return None, None, error
@@ -402,6 +413,7 @@ class WriteFileTool(FilesystemTool):
         path: str,
         content: str,
         overwrite: bool = False,
+        _context: ToolExecutionContext | None = None,
         **_: Any,
     ) -> str:
         try:
@@ -413,7 +425,11 @@ class WriteFileTool(FilesystemTool):
                     f"Error: File already exists: {path}. "
                     "Call write_file with overwrite=true if replacing it is intended."
                 )
-            error = await self.require_path_access("write_file", [("Path", file_path)])
+            error = await self.require_path_access(
+                "write_file",
+                [("Path", file_path)],
+                _context,
+            )
             if error is not None:
                 return error
             parent_error = self.ensure_external_parent_exists(file_path)
@@ -476,6 +492,7 @@ class EditFileTool(FilesystemTool):
         old_text: str,
         new_text: str,
         replace_all: bool = False,
+        _context: ToolExecutionContext | None = None,
         **_: Any,
     ) -> str:
         try:
@@ -489,7 +506,11 @@ class EditFileTool(FilesystemTool):
                 return f"Error: Not a file: {path}"
             if old_text == "":
                 return "Error: old_text must not be empty."
-            error = await self.require_path_access("edit_file", [("Path", file_path)])
+            error = await self.require_path_access(
+                "edit_file",
+                [("Path", file_path)],
+                _context,
+            )
             if error is not None:
                 return error
 
@@ -558,6 +579,7 @@ class CopyFileTool(FilesystemTool):
         source_path: str,
         destination_path: str,
         overwrite: bool = False,
+        _context: ToolExecutionContext | None = None,
         **_: Any,
     ) -> str:
         source, destination, error = await self.prepare_file_transfer(
@@ -565,6 +587,7 @@ class CopyFileTool(FilesystemTool):
             source_path,
             destination_path,
             overwrite,
+            _context,
         )
         if error is not None:
             return error
@@ -623,6 +646,7 @@ class MoveFileTool(FilesystemTool):
         source_path: str,
         destination_path: str,
         overwrite: bool = False,
+        _context: ToolExecutionContext | None = None,
         **_: Any,
     ) -> str:
         source, destination, error = await self.prepare_file_transfer(
@@ -630,6 +654,7 @@ class MoveFileTool(FilesystemTool):
             source_path,
             destination_path,
             overwrite,
+            _context,
         )
         if error is not None:
             return error

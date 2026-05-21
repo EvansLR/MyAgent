@@ -7,13 +7,15 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from myagent.tools.base import Tool
+from myagent.tools.context import (
+    ApprovalCallback,
+    ToolExecutionContext,
+    call_approval_callback,
+)
 from myagent.tools.shell_risk import ShellRisk, classify_shell_command
-
-
-ApprovalCallback = Callable[[str], Awaitable[bool]]
 
 
 def _decode_bytes(data: bytes) -> str:
@@ -72,7 +74,13 @@ class ShellCommandTool(Tool):
             "required": ["command"],
         }
 
-    async def execute(self, command: str, timeout: int = 30, **_: Any) -> str:
+    async def execute(
+        self,
+        command: str,
+        timeout: int = 30,
+        _context: ToolExecutionContext | None = None,
+        **_: Any,
+    ) -> str:
         command = command.strip()
         if not command:
             return "Error: Empty command."
@@ -85,13 +93,16 @@ class ShellCommandTool(Tool):
         if risk == ShellRisk.DENY:
             return "Error: Command denied by safety policy."
         if risk == ShellRisk.CONFIRM:
-            if self.approval_callback is None:
+            if _context is None and self.approval_callback is None:
                 return (
                     "Error: This command requires user approval, "
                     "but no approval callback is configured."
                 )
-            approved = await self.approval_callback(
-                f"Execute shell command:\n{command}"
+            prompt = f"Execute shell command:\n{command}"
+            approved = (
+                await _context.request_approval(prompt)
+                if _context is not None
+                else await call_approval_callback(self.approval_callback, prompt, None)
             )
             if not approved:
                 return "Error: User denied command execution."

@@ -91,7 +91,6 @@ class AgentLoop:
             self.provider,
             self.tool_registry,
             self.bus,
-            self.skill_state,
             self.max_tool_iterations,
         )
         self.turn_processor = AgentTurnProcessor(

@@ -159,7 +159,6 @@ class DelegateTaskTool(Tool):
         agent_type: str = DEFAULT_SUBAGENT_PROFILE,
         context: str = "",
         reason: str = "",
-        active_skill_context: str = "",
         **_: Any,
     ) -> str:
         profile = get_subagent_profile(agent_type)
@@ -173,8 +172,7 @@ class DelegateTaskTool(Tool):
             tool_registry=child_registry,
             max_iterations=profile.max_iterations or self.max_iterations,
         )
-        merged_context = _merge_context(context, active_skill_context)
-        result = await runner.run(task=task, agent_type=profile.name, context=merged_context)
+        result = await runner.run(task=task, agent_type=profile.name, context=context)
         return _format_subagent_result(profile.name, task, result, task_id)
 
 
@@ -228,9 +226,5 @@ def _format_subagent_result(
         f"{result}"
     )
 
-
-def _merge_context(context: str, active_skill_context: str) -> str:
-    parts = [part.strip() for part in (context, active_skill_context) if part.strip()]
-    return "\n\n".join(parts)
 
 
