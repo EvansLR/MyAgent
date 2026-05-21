@@ -292,15 +292,13 @@ async def run_gateway(
 
 
 def _make_cli_approval_callback(bus: MessageBus):
-    async def approve(prompt: str, route: ApprovalRoute | None = None) -> bool:
+    async def approve(prompt: str, route: ApprovalRoute) -> bool:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[bool] = loop.create_future()
-        channel = route.channel if route is not None else "cli"
-        chat_id = route.chat_id if route is not None else DEFAULT_CHAT_ID
         await bus.publish_outbound(
             OutboundMessage(
-                channel=channel,
-                chat_id=chat_id,
+                channel=route.channel,
+                chat_id=route.chat_id,
                 content=prompt,
                 metadata={
                     "kind": "approval_request",

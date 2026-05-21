@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from myagent.tools.context import ToolExecutionContext
 from myagent.tools.shell import ShellCommandTool
 from myagent.tools.shell_risk import ShellRisk, classify_shell_command
 
@@ -13,6 +14,16 @@ from myagent.tools.shell_risk import ShellRisk, classify_shell_command
 @pytest.fixture
 def tool():
     return ShellCommandTool(workspace=Path(".").resolve())
+
+
+def make_context(approval_callback):
+    return ToolExecutionContext(
+        session_key="test:default",
+        turn_id="turn-1",
+        channel="cli",
+        chat_id="default",
+        approval_callback=approval_callback,
+    )
 
 
 class TestShellCommandTool:
@@ -28,9 +39,9 @@ class TestShellCommandTool:
 
     @pytest.mark.asyncio
     async def test_dangerous_prefix_requires_approval(self, tool):
-        tool.approval_callback = AsyncMock(return_value=True)
-        result = await tool.execute("rm file.txt")
-        tool.approval_callback.assert_awaited_once()
+        approve = AsyncMock(return_value=True)
+        result = await tool.execute("rm file.txt", _context=make_context(approve))
+        approve.assert_awaited_once()
         assert "Exit code:" in result or "Error:" in result
 
     @pytest.mark.asyncio
@@ -40,15 +51,15 @@ class TestShellCommandTool:
 
     @pytest.mark.asyncio
     async def test_operator_requires_approval(self, tool):
-        tool.approval_callback = AsyncMock(return_value=True)
-        result = await tool.execute("echo hello && echo world")
-        tool.approval_callback.assert_awaited_once()
+        approve = AsyncMock(return_value=True)
+        result = await tool.execute("echo hello && echo world", _context=make_context(approve))
+        approve.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_unsafe_pipe_requires_approval(self, tool):
-        tool.approval_callback = AsyncMock(return_value=False)
-        result = await tool.execute("echo hello | Out-File result.txt")
-        tool.approval_callback.assert_awaited_once()
+        approve = AsyncMock(return_value=False)
+        result = await tool.execute("echo hello | Out-File result.txt", _context=make_context(approve))
+        approve.assert_awaited_once()
         assert "User denied" in result
 
     @pytest.mark.asyncio
@@ -67,11 +78,12 @@ class TestShellCommandTool:
     async def test_no_callback_returns_error(self, tool):
         result = await tool.execute("unknown-build-tool --list")
         assert "requires user approval" in result
+        assert "tool execution context" in result
 
     @pytest.mark.asyncio
     async def test_user_denied_returns_error(self, tool):
-        tool.approval_callback = AsyncMock(return_value=False)
-        result = await tool.execute("unknown-build-tool --list")
+        approve = AsyncMock(return_value=False)
+        result = await tool.execute("unknown-build-tool --list", _context=make_context(approve))
         assert "User denied" in result
 
     @pytest.mark.asyncio
@@ -81,26 +93,30 @@ class TestShellCommandTool:
 
     @pytest.mark.asyncio
     async def test_timeout(self, tool):
-        tool.approval_callback = AsyncMock(return_value=True)
+        approve = AsyncMock(return_value=True)
         result = await tool.execute(
-            "python -c \"import time; time.sleep(5)\"", timeout=0.1
+            "python -c \"import time; time.sleep(5)\"",
+            timeout=0.1,
+            _context=make_context(approve),
         )
         assert "timed out" in result
 
     @pytest.mark.asyncio
     async def test_output_truncation(self, tool):
-        tool.approval_callback = AsyncMock(return_value=True)
+        approve = AsyncMock(return_value=True)
         result = await tool.execute(
-            "python -c \"print('x' * 10000)\""
+            "python -c \"print('x' * 10000)\"",
+            _context=make_context(approve),
         )
         assert "truncated" in result
         assert len(result) <= 8200
 
     @pytest.mark.asyncio
     async def test_stderr_included(self, tool):
-        tool.approval_callback = AsyncMock(return_value=True)
+        approve = AsyncMock(return_value=True)
         result = await tool.execute(
-            "python -c \"import sys; sys.stderr.write('error msg')\""
+            "python -c \"import sys; sys.stderr.write('error msg')\"",
+            _context=make_context(approve),
         )
         assert "[stderr]" in result
         assert "error msg" in result

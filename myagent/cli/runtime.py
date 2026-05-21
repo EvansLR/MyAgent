@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable
 
 import typer
 
@@ -15,8 +14,7 @@ from myagent.mcp import HttpMcpClient, StdioMcpClient
 from myagent.mcp.registry import register_mcp_tools_with_summary
 from myagent.providers import create_provider
 from myagent.tools import ToolRegistry, create_default_registry
-
-ApprovalCallback = Callable[[str], Awaitable[bool]]
+from myagent.tools.context import ApprovalCallback
 
 
 @dataclass(slots=True)
@@ -37,7 +35,7 @@ async def create_agent_runtime(
     start_cron: bool,
 ) -> AgentRuntime:
     """Create the common provider, tool, MCP, and agent runtime."""
-    registry = create_default_registry(workspace_root, approval_callback=approval_callback)
+    registry = create_default_registry(workspace_root)
     mcp_clients = await connect_mcp_servers(settings, registry)
     agent = AgentLoop(
         bus,
@@ -45,6 +43,7 @@ async def create_agent_runtime(
         tool_registry=registry,
         workspace_root=workspace_root,
         start_cron=start_cron,
+        approval_callback=approval_callback,
     )
     return AgentRuntime(
         agent=agent,

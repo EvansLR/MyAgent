@@ -17,6 +17,7 @@ from myagent.memory.extractor import MemoryExtractor
 from myagent.providers import BaseProvider, create_provider
 from myagent.profile import ProfileLoader
 from myagent.skills import SkillRegistry
+from myagent.tools.context import ApprovalCallback
 from myagent.tools import (
     ToolRegistry,
     create_default_registry,
@@ -46,6 +47,7 @@ class AgentLoop:
         conversation_summary_config: ConversationSummaryConfig | None = None,
         cron_service: "CronService | None" = None,
         start_cron: bool = True,
+        approval_callback: ApprovalCallback | None = None,
     ) -> None:
         self.bus = bus
         self.provider = provider or create_provider()
@@ -76,6 +78,7 @@ class AgentLoop:
         self.session_history = self.context_runtime.session_history
         self.context_builder = self.context_runtime.builder
         self.tool_registry = tool_registry or create_default_registry()
+        self.approval_callback = approval_callback
         self._register_runtime_tools()
         if not self.tool_registry.has("delegate_task"):
             self.tool_registry.register(DelegateTaskTool(self.provider, self.tool_registry))
@@ -92,6 +95,7 @@ class AgentLoop:
             self.tool_registry,
             self.bus,
             self.max_tool_iterations,
+            approval_callback=self.approval_callback,
         )
         self.turn_processor = AgentTurnProcessor(
             bus=self.bus,

@@ -1,7 +1,9 @@
 from pathlib import Path
 import shutil
+from unittest.mock import AsyncMock
 
 from myagent.tools import create_default_registry
+from myagent.tools.context import ToolExecutionContext
 from myagent.tools.filesystem import CopyFileTool, EditFileTool, ListDirTool, MoveFileTool, ReadFileTool, WriteFileTool
 
 
@@ -19,6 +21,16 @@ def make_external_root(workspace: Path, name: str) -> Path:
         shutil.rmtree(root)
     root.mkdir()
     return root
+
+
+def make_context(approval_callback):
+    return ToolExecutionContext(
+        session_key="test:default",
+        turn_id="turn-1",
+        channel="cli",
+        chat_id="default",
+        approval_callback=approval_callback,
+    )
 
 
 async def test_list_dir_lists_workspace_files() -> None:
@@ -261,19 +273,14 @@ async def test_copy_file_copies_inside_workspace_without_external_prompt() -> No
     source = workspace / "note.txt"
     destination = workspace / "copies" / "note.txt"
     source.write_text("hello", encoding="utf-8")
-    approvals: list[str] = []
-
-    async def approve(prompt: str) -> bool:
-        approvals.append(prompt)
-        return True
-
-    tool = CopyFileTool(workspace, approval_callback=approve)
+    approve = AsyncMock(return_value=True)
+    tool = CopyFileTool(workspace)
 
     result = await tool.execute("note.txt", "copies/note.txt")
 
     assert "Copied" in result
     assert destination.read_text(encoding="utf-8") == "hello"
-    assert approvals == []
+    approve.assert_not_awaited()
 
 
 async def test_copy_file_can_copy_to_allowed_external_root() -> None:
@@ -304,8 +311,28 @@ async def test_copy_file_denies_disallowed_external_destination() -> None:
     result = await tool.execute("note.txt", str(outside.resolve()))
 
     assert "requires user approval" in result
-    assert "no approval callback" in result
+    assert "tool execution context" in result
     assert not outside.exists()
+
+
+async def test_copy_file_can_copy_external_destination_with_context_approval() -> None:
+    workspace = make_workspace("copy-approved")
+    outside_root = make_external_root(workspace, "outside-approved")
+    outside = outside_root / "note.txt"
+    source = workspace / "note.txt"
+    source.write_text("hello", encoding="utf-8")
+    approve = AsyncMock(return_value=True)
+    tool = CopyFileTool(workspace, allowed_roots=[])
+
+    result = await tool.execute(
+        "note.txt",
+        str(outside.resolve()),
+        _context=make_context(approve),
+    )
+
+    assert "Copied" in result
+    assert outside.read_text(encoding="utf-8") == "hello"
+    approve.assert_awaited_once()
 
 
 async def test_copy_file_refuses_existing_destination_without_overwrite() -> None:
@@ -371,7 +398,7 @@ async def test_move_file_refuses_disallowed_external_destination() -> None:
     result = await tool.execute("note.txt", str(outside.resolve()))
 
     assert "requires user approval" in result
-    assert "no approval callback" in result
+    assert "tool execution context" in result
     assert source.exists()
     assert not outside.exists()
 

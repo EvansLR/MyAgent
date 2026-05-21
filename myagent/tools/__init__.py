@@ -3,7 +3,6 @@
 from pathlib import Path
 
 from myagent.tools.attachments import AttachFileTool
-from myagent.tools.context import ApprovalCallback
 from myagent.tools.filesystem import (
     CopyFileTool,
     EditFileTool,
@@ -29,21 +28,20 @@ from myagent.tools.web import WebFetchTool, WebSearchTool
 
 def create_default_registry(
     workspace: Path | str | None = None,
-    approval_callback: ApprovalCallback | None = None,
 ) -> ToolRegistry:
     """Create a registry with first-stage built-in tools."""
     root = Path(workspace or ".").resolve()
-    registry = ToolRegistry(approval_callback=approval_callback)
-    registry.register(ListDirTool(root, approval_callback=approval_callback))
-    registry.register(ReadFileTool(root, approval_callback=approval_callback))
-    registry.register(WriteFileTool(root, approval_callback=approval_callback))
-    registry.register(EditFileTool(root, approval_callback=approval_callback))
-    registry.register(CopyFileTool(root, approval_callback=approval_callback))
-    registry.register(MoveFileTool(root, approval_callback=approval_callback))
+    registry = ToolRegistry()
+    registry.register(ListDirTool(root))
+    registry.register(ReadFileTool(root))
+    registry.register(WriteFileTool(root))
+    registry.register(EditFileTool(root))
+    registry.register(CopyFileTool(root))
+    registry.register(MoveFileTool(root))
     registry.register(AttachFileTool(root))
     registry.register(WebSearchTool())
     registry.register(WebFetchTool())
-    registry.register(ShellCommandTool(root, approval_callback=approval_callback))
+    registry.register(ShellCommandTool(root))
     return registry
 
 

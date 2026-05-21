@@ -2,6 +2,7 @@ from pathlib import Path
 import shutil
 
 from myagent.agent import AgentLoop, ContextBudget, ContextBuilder, ConversationSummaryConfig
+from myagent.approval import ApprovalRoute
 from myagent.bus import InboundMessage, MessageBus
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.providers import EchoProvider
@@ -193,6 +194,52 @@ async def test_agent_loop_attaches_files_to_final_reply() -> None:
     assert final == outbound
     assert outbound.content == "I attached the image."
     assert outbound.media == [str(image.resolve())]
+
+
+class ApprovalToolCallingProvider(ToolCallingProvider):
+    async def generate_response(self, messages, tools=None) -> ProviderResponse:
+        self.calls += 1
+        self.seen_tools = tools
+        self.seen_messages.append(messages)
+        if self.calls == 1:
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="call-approval",
+                        name="execute_command",
+                        arguments={"command": "unknown-build-tool --list"},
+                    )
+                ]
+            )
+        return ProviderResponse(content="Done.")
+
+
+async def test_agent_loop_routes_tool_approval_through_execution_context() -> None:
+    workspace = make_workspace("tool-approval-context")
+    bus = MessageBus()
+    provider = ApprovalToolCallingProvider()
+    approvals: list[tuple[str, ApprovalRoute]] = []
+
+    async def approve(prompt: str, route: ApprovalRoute) -> bool:
+        approvals.append((prompt, route))
+        return False
+
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        tool_registry=create_default_registry(workspace),
+        approval_callback=approve,
+    )
+
+    await bus.publish_inbound(make_message("run risky command"))
+    await agent.process_next()
+
+    assert len(approvals) == 1
+    prompt, route = approvals[0]
+    assert "unknown-build-tool --list" in prompt
+    assert route == ApprovalRoute("cli", "default")
+    tool_message = provider.seen_messages[1][-1]
+    assert "User denied" in tool_message["content"]
 
 
 class LargeToolResultProvider(ToolCallingProvider):

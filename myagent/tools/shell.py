@@ -10,11 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from myagent.tools.base import Tool
-from myagent.tools.context import (
-    ApprovalCallback,
-    ToolExecutionContext,
-    call_approval_callback,
-)
+from myagent.tools.context import ToolExecutionContext
 from myagent.tools.shell_risk import ShellRisk, classify_shell_command
 
 
@@ -33,11 +29,9 @@ class ShellCommandTool(Tool):
     def __init__(
         self,
         workspace: Path | str | None = None,
-        approval_callback: ApprovalCallback | None = None,
     ) -> None:
         self.workspace = Path(workspace or ".").resolve()
         self.cwd = self.workspace
-        self.approval_callback = approval_callback
 
     @property
     def name(self) -> str:
@@ -93,17 +87,13 @@ class ShellCommandTool(Tool):
         if risk == ShellRisk.DENY:
             return "Error: Command denied by safety policy."
         if risk == ShellRisk.CONFIRM:
-            if _context is None and self.approval_callback is None:
+            if _context is None:
                 return (
                     "Error: This command requires user approval, "
-                    "but no approval callback is configured."
+                    "but no tool execution context is configured."
                 )
             prompt = f"Execute shell command:\n{command}"
-            approved = (
-                await _context.request_approval(prompt)
-                if _context is not None
-                else await call_approval_callback(self.approval_callback, prompt, None)
-            )
+            approved = await _context.request_approval(prompt)
             if not approved:
                 return "Error: User denied command execution."
 

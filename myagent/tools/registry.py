@@ -3,15 +3,14 @@
 from typing import Any
 
 from myagent.tools.base import Tool
-from myagent.tools.context import ApprovalCallback, ToolExecutionContext
+from myagent.tools.context import ToolExecutionContext
 
 
 class ToolRegistry:
     """Register, describe, validate, and execute tools."""
 
-    def __init__(self, approval_callback: ApprovalCallback | None = None) -> None:
+    def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
-        self.approval_callback = approval_callback
 
     def register(self, tool: Tool) -> None:
         """Register or replace one tool."""

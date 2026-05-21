@@ -11,7 +11,7 @@ from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.providers import BaseProvider
 from myagent.providers.base import ToolCall
 from myagent.tools import ToolRegistry
-from myagent.tools.context import ToolExecutionContext
+from myagent.tools.context import ApprovalCallback, ToolExecutionContext
 
 MAX_REPEATED_TOOL_CALLS = 2
 
@@ -62,11 +62,13 @@ class AgentToolLoop:
         tool_registry: ToolRegistry,
         bus: MessageBus,
         max_iterations: int,
+        approval_callback: ApprovalCallback | None = None,
     ) -> None:
         self.provider = provider
         self.tool_registry = tool_registry
         self.bus = bus
         self.max_iterations = max_iterations
+        self.approval_callback = approval_callback
 
     async def generate(
         self,
@@ -120,7 +122,7 @@ class AgentToolLoop:
             turn_id=turn_id,
             channel=channel,
             chat_id=chat_id,
-            approval_callback=self.tool_registry.approval_callback,
+            approval_callback=self.approval_callback,
             attachments=turn_state.attachments if turn_state is not None else [],
         )
         try:

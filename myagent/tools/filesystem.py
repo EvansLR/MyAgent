@@ -5,11 +5,7 @@ import shutil
 from typing import Any
 
 from myagent.tools.base import Tool
-from myagent.tools.context import (
-    ApprovalCallback,
-    ToolExecutionContext,
-    call_approval_callback,
-)
+from myagent.tools.context import ToolExecutionContext
 
 
 _IGNORE_DIRS = {
@@ -31,11 +27,9 @@ class FilesystemTool(Tool):
     def __init__(
         self,
         workspace: Path,
-        approval_callback: ApprovalCallback | None = None,
         allowed_roots: list[Path] | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
-        self.approval_callback = approval_callback
         self.allowed_roots = [path.resolve() for path in (allowed_roots or [])]
 
     def resolve_path(self, path: str) -> Path:
@@ -67,11 +61,9 @@ class FilesystemTool(Tool):
         context: ToolExecutionContext | None = None,
     ) -> bool:
         """Ask the current channel to approve a higher-risk operation."""
-        if context is not None:
-            return await context.request_approval(prompt)
-        if self.approval_callback is None:
+        if context is None:
             return False
-        return await call_approval_callback(self.approval_callback, prompt, None)
+        return await context.request_approval(prompt)
 
     async def require_path_access(
         self,
@@ -83,10 +75,10 @@ class FilesystemTool(Tool):
         disallowed_paths = [(label, path) for label, path in paths if not self.is_allowed_path(path)]
         if not disallowed_paths:
             return None
-        if context is None and self.approval_callback is None:
+        if context is None:
             return (
                 f"Error: {action} outside the workspace requires user approval, "
-                "but no approval callback is configured."
+                "but no tool execution context is configured."
             )
         lines = [
             f"Action: {action}",
