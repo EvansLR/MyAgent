@@ -136,24 +136,12 @@ class AgentToolLoop:
         tool_call: ToolCall,
         context: ToolExecutionContext,
     ) -> str:
-        """Run one tool, adding runtime context for special tools when needed."""
-        arguments = self._tool_arguments(tool_call, context)
+        """Run one tool with explicit per-turn runtime context."""
         return await self.tool_registry.execute(
             tool_call.name,
-            arguments,
+            dict(tool_call.arguments),
             context=context,
         )
-
-    def _tool_arguments(
-        self,
-        tool_call: ToolCall,
-        context: ToolExecutionContext,
-    ) -> dict[str, object]:
-        arguments = dict(tool_call.arguments)
-        if tool_call.name == "cron" and context.channel:
-            arguments["_channel"] = context.channel
-            arguments["_chat_id"] = context.chat_id
-        return arguments
 
     async def _publish_tool_status(self, inbound: InboundMessage, tool_call: ToolCall) -> None:
         """Publish a user-visible status message before running a tool."""

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from myagent.cron.service import CronService
+from myagent.tools.context import ToolExecutionContext
 from myagent.tools.cron import CronTool
 
 
@@ -30,6 +31,28 @@ class TestAdd:
         )
         assert "Created at job" in result
         assert "meeting" in result
+
+    @pytest.mark.asyncio
+    async def test_add_uses_execution_context_route(self, tmp_path: Path) -> None:
+        svc = CronService(store_path=tmp_path / "jobs.json")
+        tool = CronTool(svc)
+        context = ToolExecutionContext(
+            session_key="cli:default",
+            turn_id="turn-1",
+            channel="cli",
+            chat_id="default",
+        )
+
+        await tool.execute(
+            action="add",
+            message="drink water",
+            every_seconds=1200,
+            _context=context,
+        )
+
+        job = svc.list_jobs()[0]
+        assert job.payload.channel == "cli"
+        assert job.payload.chat_id == "default"
 
     @pytest.mark.asyncio
     async def test_add_missing_message(self, cron_tool: CronTool) -> None:

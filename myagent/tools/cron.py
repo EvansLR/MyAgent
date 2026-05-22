@@ -6,6 +6,7 @@ from typing import Any
 from myagent.cron.service import CronService
 from myagent.cron.types import CronSchedule
 from myagent.tools.base import Tool
+from myagent.tools.context import ToolExecutionContext
 
 
 class CronTool(Tool):
@@ -83,12 +84,13 @@ class CronTool(Tool):
         at: str | None = None,
         once: bool = False,
         job_id: str | None = None,
-        _channel: str = "",
-        _chat_id: str = "",
+        _context: ToolExecutionContext | None = None,
         **kwargs: Any,
     ) -> str:
         if action == "add":
-            return self._add_job(message, every_seconds, at, once, _channel, _chat_id)
+            channel = _context.channel if _context is not None else ""
+            chat_id = _context.chat_id if _context is not None else ""
+            return self._add_job(message, every_seconds, at, once, channel, chat_id)
         if action == "list":
             return self._list_jobs()
         if action == "remove":
