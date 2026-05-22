@@ -140,7 +140,6 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
 
     assert "User prefers documentation-first implementation." in archive_text
     assert state is not None
-    assert state.summarized_message_count == 0
     assert agent.context_runtime.session_history.raw["cli:default"] == [
         {"role": "user", "content": "recent question"},
         {"role": "assistant", "content": "recent answer"},

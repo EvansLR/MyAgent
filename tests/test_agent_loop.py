@@ -368,7 +368,6 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
 
     state = agent.context_runtime.session_history.summaries.get("cli:default")
     assert state is not None
-    assert state.summarized_message_count == 0
     assert provider.summary_prompts
     assert agent.context_runtime.session_history.raw["cli:default"] == [
         {"role": "user", "content": "second"},
@@ -422,7 +421,6 @@ async def test_agent_loop_compacts_history_to_target_tokens() -> None:
 
     state = agent.context_runtime.session_history.summaries.get("cli:default")
     assert state is not None
-    assert state.summarized_message_count == 0
     assert provider.summary_prompts
     raw_history = provider.seen_messages[0][1:-1]
     raw_history_tokens = sum(len(message["content"]) for message in raw_history)

@@ -38,7 +38,6 @@ class ConversationSummaryState:
 
     session_key: str
     content: str
-    summarized_message_count: int
     source_message_count: int
     revision: int
     updated_at: str
@@ -52,7 +51,6 @@ class ConversationSummaryDecision:
     should_update: bool
     reason: str
     eligible_end: int
-    new_message_count: int
 
 
 class ConversationSummarizer:
@@ -77,36 +75,27 @@ class ConversationSummarizer:
     ) -> ConversationSummaryDecision:
         """Return a summary decision that aims to fit raw history under a target."""
         if not self.config.enabled:
-            return ConversationSummaryDecision(False, "disabled", 0, 0)
+            return ConversationSummaryDecision(False, "disabled", 0)
 
         history_count = len(history)
         keep_recent = max(self.config.keep_recent_messages, 0)
         max_eligible_end = max(history_count - keep_recent, 0)
-        summarized_count = state.summarized_message_count if state else 0
-        start = min(max(summarized_count, 0), history_count)
-        if max_eligible_end <= start:
-            return ConversationSummaryDecision(False, "no_eligible_history", max_eligible_end, 0)
+        if max_eligible_end <= 0:
+            return ConversationSummaryDecision(False, "no_eligible_history", max_eligible_end)
 
         target = max(target_history_tokens, 0)
         eligible_end = max_eligible_end
-        for index in range(start + 1, max_eligible_end + 1):
+        for index in range(1, max_eligible_end + 1):
             if self.estimate_messages_tokens(history[index:]) <= target:
                 eligible_end = index
                 break
 
-        new_message_count = max(eligible_end - start, 0)
-        if new_message_count <= 0:
-            return ConversationSummaryDecision(
-                False,
-                "no_eligible_history",
-                eligible_end,
-                new_message_count,
-            )
+        if eligible_end <= 0:
+            return ConversationSummaryDecision(False, "no_eligible_history", eligible_end)
         return ConversationSummaryDecision(
             True,
             "budget_pressure",
             eligible_end,
-            new_message_count,
         )
 
     async def summarize(
@@ -117,8 +106,7 @@ class ConversationSummarizer:
         decision: ConversationSummaryDecision,
     ) -> ConversationSummaryState:
         """Fold eligible old messages into the running summary."""
-        start = state.summarized_message_count if state else 0
-        new_messages = history[start:decision.eligible_end]
+        new_messages = history[:decision.eligible_end]
         prompt = _build_summary_prompt(state.content if state else "", new_messages)
         content = await self.provider.generate(
             [
@@ -133,7 +121,6 @@ class ConversationSummarizer:
         return ConversationSummaryState(
             session_key=session_key,
             content=content,
-            summarized_message_count=decision.eligible_end,
             source_message_count=len(history),
             revision=revision,
             updated_at=datetime.now(timezone.utc).isoformat(),
@@ -162,7 +149,6 @@ class ConversationSummarizer:
         return ConversationSummaryState(
             session_key=state.session_key,
             content=result.text,
-            summarized_message_count=state.summarized_message_count,
             source_message_count=state.source_message_count,
             revision=state.revision + 1,
             updated_at=datetime.now(timezone.utc).isoformat(),

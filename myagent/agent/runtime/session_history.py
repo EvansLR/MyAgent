@@ -42,12 +42,8 @@ class AgentSessionHistory:
         session_key: str,
         history: list[Message],
     ) -> list[Message]:
-        """Return raw history not already covered by the session summary."""
-        state = self.summaries.get(session_key)
-        if state is None:
-            return history
-        start = min(max(state.summarized_message_count, 0), len(history))
-        return history[start:]
+        """Return raw history that has not been pruned into the session summary."""
+        return history
 
     def current_summary_context(self) -> str:
         """Return the current session summary as model-visible background."""
@@ -89,11 +85,10 @@ class AgentSessionHistory:
         if not decision.should_update:
             return False
 
-        start = state.summarized_message_count if state else 0
         await self._flush_memory_before_summary(
             session_key,
             turn_id,
-            history[start:decision.eligible_end],
+            history[:decision.eligible_end],
         )
         try:
             updated = await self.summarizer.summarize(
@@ -106,18 +101,7 @@ class AgentSessionHistory:
             return False
 
         self.summaries[session_key] = updated
-        pruned_count = self._prune_summarized_history(history, updated.summarized_message_count)
-        if pruned_count:
-            updated = ConversationSummaryState(
-                session_key=updated.session_key,
-                content=updated.content,
-                summarized_message_count=0,
-                source_message_count=updated.source_message_count,
-                revision=updated.revision,
-                updated_at=updated.updated_at,
-                estimated_tokens=updated.estimated_tokens,
-            )
-            self.summaries[session_key] = updated
+        self._prune_summarized_history(history, decision.eligible_end)
         updated = await self._compress_summary_if_needed(
             session_key,
             turn_id,
