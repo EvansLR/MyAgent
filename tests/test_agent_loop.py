@@ -4,6 +4,7 @@ import shutil
 from myagent.agent import AgentLoop, ContextBudget, ContextBuilder, ConversationSummaryConfig
 from myagent.approval import ApprovalRoute
 from myagent.bus import InboundMessage, MessageBus
+from myagent.cron import CronService
 from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.providers import EchoProvider
 from myagent.tools import create_default_registry
@@ -354,8 +355,8 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
         ),
         start_cron=False,
     )
-    agent.session_history.memory_extractor = None
-    agent.session_history.raw["cli:default"] = [
+    agent.context_runtime.session_history.memory_extractor = None
+    agent.context_runtime.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 40)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
         {"role": "user", "content": "second"},
@@ -365,11 +366,11 @@ async def test_agent_loop_updates_summary_before_context_when_history_would_trim
     await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
-    state = agent.session_history.summaries.get("cli:default")
+    state = agent.context_runtime.session_history.summaries.get("cli:default")
     assert state is not None
     assert state.summarized_message_count == 0
     assert provider.summary_prompts
-    assert agent.session_history.raw["cli:default"] == [
+    assert agent.context_runtime.session_history.raw["cli:default"] == [
         {"role": "user", "content": "second"},
         {"role": "assistant", "content": "answer 2"},
         {"role": "user", "content": "third"},
@@ -408,8 +409,8 @@ async def test_agent_loop_compacts_history_to_target_tokens() -> None:
         ),
         start_cron=False,
     )
-    agent.session_history.memory_extractor = None
-    agent.session_history.raw["cli:default"] = [
+    agent.context_runtime.session_history.memory_extractor = None
+    agent.context_runtime.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 40)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 40)},
         {"role": "user", "content": "second"},
@@ -419,7 +420,7 @@ async def test_agent_loop_compacts_history_to_target_tokens() -> None:
     await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
-    state = agent.session_history.summaries.get("cli:default")
+    state = agent.context_runtime.session_history.summaries.get("cli:default")
     assert state is not None
     assert state.summarized_message_count == 0
     assert provider.summary_prompts
@@ -452,8 +453,8 @@ async def test_agent_loop_compresses_summary_when_it_exceeds_limit() -> None:
         ),
         start_cron=False,
     )
-    agent.session_history.memory_extractor = None
-    agent.session_history.raw["cli:default"] = [
+    agent.context_runtime.session_history.memory_extractor = None
+    agent.context_runtime.session_history.raw["cli:default"] = [
         {"role": "user", "content": "first " + ("large " * 20)},
         {"role": "assistant", "content": "answer 1 " + ("large " * 20)},
         {"role": "user", "content": "second"},
@@ -463,7 +464,7 @@ async def test_agent_loop_compresses_summary_when_it_exceeds_limit() -> None:
     await bus.publish_inbound(make_message("third"))
     await agent.process_next()
 
-    state = agent.session_history.summaries.get("cli:default")
+    state = agent.context_runtime.session_history.summaries.get("cli:default")
     assert state is not None
     assert state.content == "- Compact summary."
     assert state.estimated_tokens <= 40
@@ -483,3 +484,16 @@ def test_agent_loop_stop_marks_not_running() -> None:
     agent.stop()
 
     assert agent.running is False
+
+
+def test_agent_loop_registers_cron_tool_when_service_is_injected(tmp_path: Path) -> None:
+    cron_service = CronService(tmp_path / "jobs.json")
+    agent = AgentLoop(
+        MessageBus(),
+        provider=EchoProvider(),
+        cron_service=cron_service,
+        start_cron=False,
+    )
+
+    assert agent.cron_service is cron_service
+    assert agent.tool_registry.has("cron")

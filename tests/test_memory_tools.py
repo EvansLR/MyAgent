@@ -2,14 +2,40 @@
 import shutil
 
 from myagent.memory import MarkdownMemoryStore
+from myagent.memory.consolidator import MemoryConsolidator
+from myagent.providers.base import ProviderResponse, ToolCall
 from myagent.tools.memory import (
     MemoryArchiveTool,
+    MemoryConsolidateTool,
     MemoryForgetTool,
     MemoryGetTool,
     MemoryProposeTool,
     MemoryRememberTool,
     MemorySearchTool,
 )
+
+
+class ConsolidationProvider:
+    def __init__(self, memory_markdown: str) -> None:
+        self.memory_markdown = memory_markdown
+
+    async def generate(self, messages: list[dict]) -> str:
+        return self.memory_markdown
+
+    async def generate_response(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> ProviderResponse:
+        return ProviderResponse(
+            tool_calls=[
+                ToolCall(
+                    id="save-memory-1",
+                    name="save_memory",
+                    arguments={"memory_markdown": self.memory_markdown},
+                )
+            ]
+        )
 
 
 def make_workspace(name: str) -> Path:
@@ -125,6 +151,42 @@ async def test_memory_tool_can_create_proposal() -> None:
     assert "User may be preparing for a Java backend interview." in proposals
     assert "section_hint: Now" in proposals
     assert "User may be preparing for a Java backend interview." not in memory
+
+
+async def test_memory_consolidate_tool_merges_pending_proposals() -> None:
+    store = MarkdownMemoryStore(make_workspace("consolidate-tool"))
+    store.propose_memory(
+        content="User prefers short engineering explanations.",
+        section_hint="Always",
+        tags=["preference"],
+        importance=4,
+    )
+    provider = ConsolidationProvider(
+        "# Memory\n\n"
+        "## Always\n\n"
+        "- User prefers short engineering explanations.\n\n"
+        "## Now\n\n"
+    )
+    tool = MemoryConsolidateTool(MemoryConsolidator(provider, store))
+
+    result = await tool.execute()
+
+    assert "Consolidated pending memory proposals" in result
+    assert "short engineering explanations" in store.memory_path.read_text(
+        encoding="utf-8"
+    )
+    assert store.proposals_path.read_text(encoding="utf-8").strip() == "# Memory Proposals"
+
+
+async def test_memory_consolidate_tool_reports_no_pending_proposals() -> None:
+    store = MarkdownMemoryStore(make_workspace("consolidate-empty"))
+    tool = MemoryConsolidateTool(
+        MemoryConsolidator(ConsolidationProvider("# Memory\n\n## Always\n\n## Now\n\n"), store)
+    )
+
+    result = await tool.execute()
+
+    assert result == "No pending memory proposals to consolidate."
 
 
 async def test_memory_tool_forgets_matching_memory() -> None:

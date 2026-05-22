@@ -3,45 +3,17 @@
 from __future__ import annotations
 
 from myagent.bus import InboundMessage, MessageBus
-from myagent.cron.types import CronJob, CronSchedule
-from myagent.memory import MemoryConsolidator
+from myagent.cron.types import CronJob
 
 
 class AgentCronBridge:
-    """Connect cron jobs to memory maintenance and inbound agent messages."""
+    """Connect cron jobs to inbound agent messages."""
 
-    def __init__(
-        self,
-        bus: MessageBus,
-        memory_consolidator: MemoryConsolidator,
-    ) -> None:
+    def __init__(self, bus: MessageBus) -> None:
         self.bus = bus
-        self.memory_consolidator = memory_consolidator
-
-    def register_memory_consolidation_job(self, cron_service) -> None:
-        """Register the periodic memory consolidation system job."""
-        for job in cron_service.list_jobs(include_disabled=True):
-            if job.name == "memory_consolidation" and job.payload.job_type == "system":
-                return
-        cron_service.add_job(
-            name="memory_consolidation",
-            schedule=CronSchedule(kind="every", every=24 * 3600),
-            message="consolidate memory",
-            channel="",
-            chat_id="",
-            delete_after_run=False,
-            job_type="system",
-        )
 
     async def on_job(self, job: CronJob) -> None:
         """Handle one cron job firing."""
-        if job.payload.job_type == "system":
-            if job.name == "memory_consolidation":
-                try:
-                    await self.memory_consolidator.consolidate()
-                except Exception:
-                    pass
-            return
         await self.bus.publish_inbound(self._message_for_user_job(job))
 
     def _message_for_user_job(self, job: CronJob) -> InboundMessage:

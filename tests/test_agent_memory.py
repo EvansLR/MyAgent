@@ -123,7 +123,7 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
         ),
         start_cron=False,
     )
-    agent.session_history.raw["cli:default"] = [
+    agent.context_runtime.session_history.raw["cli:default"] = [
         {"role": "user", "content": "old preference " + ("docs first " * 8)},
         {"role": "assistant", "content": "old answer " + ("implementation notes " * 8)},
         {"role": "user", "content": "recent question"},
@@ -135,13 +135,13 @@ async def test_agent_loop_flushes_memory_before_pre_context_summary() -> None:
 
     archive_files = list((root / "memory" / "archive").glob("*.md"))
     archive_text = archive_files[0].read_text(encoding="utf-8")
-    state = agent.session_history.summaries.get("cli:default")
+    state = agent.context_runtime.session_history.summaries.get("cli:default")
     final_history = provider.response_messages[-1][1:-1]
 
     assert "User prefers documentation-first implementation." in archive_text
     assert state is not None
     assert state.summarized_message_count == 0
-    assert agent.session_history.raw["cli:default"] == [
+    assert agent.context_runtime.session_history.raw["cli:default"] == [
         {"role": "user", "content": "recent question"},
         {"role": "assistant", "content": "recent answer"},
         {"role": "user", "content": "continue"},

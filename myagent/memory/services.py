@@ -50,6 +50,7 @@ class AgentMemoryServices:
         """Expose memory tools without leaking concrete tool classes to AgentLoop."""
         from myagent.tools import (
             MemoryArchiveTool,
+            MemoryConsolidateTool,
             MemoryForgetTool,
             MemoryGetTool,
             MemoryProposeTool,
@@ -61,6 +62,7 @@ class AgentMemoryServices:
             MemoryRememberTool(self.store),
             MemoryProposeTool(self.store),
             MemoryArchiveTool(self.store),
+            MemoryConsolidateTool(self.consolidator),
             MemorySearchTool(self.store),
             MemoryGetTool(self.store),
             MemoryForgetTool(self.store),

@@ -8,7 +8,6 @@ from myagent.agent.context import ContextBuilder
 from myagent.agent.context.runtime import AgentContextRuntime
 from myagent.agent.delegation.subagent import DelegateTaskTool
 from myagent.agent.context.summary import ConversationSummaryConfig
-from myagent.agent.runtime.cron_bridge import AgentCronBridge
 from myagent.agent.runtime.tool_loop import AgentToolLoop
 from myagent.agent.runtime.turn_processor import AgentTurnProcessor
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
@@ -56,11 +55,6 @@ class AgentLoop:
             store=markdown_memory_store,
             extractor=memory_extractor,
         )
-        self.markdown_memory_store = self.memory_services.store
-        self.memory_extractor = self.memory_services.extractor
-        self.memory_consolidator = self.memory_services.consolidator
-        self.memory_compressor = self.memory_services.compressor
-        self.cron_bridge = AgentCronBridge(self.bus, self.memory_consolidator)
         self.context_runtime = AgentContextRuntime.create(
             self.provider,
             memory=self.memory_services,
@@ -70,23 +64,13 @@ class AgentLoop:
             profile_loader=profile_loader,
             summary_config=conversation_summary_config,
         )
-        self.skill_registry = self.context_runtime.skill_registry
-        self.profile_loader = self.context_runtime.profile_loader
-        self.conversation_summary_config = self.context_runtime.summary_config
-        self.conversation_summarizer = self.context_runtime.summarizer
-        self.skill_state = self.context_runtime.skill_state
-        self.session_history = self.context_runtime.session_history
-        self.context_builder = self.context_runtime.builder
         self.tool_registry = tool_registry or create_default_registry()
-        self.approval_callback = approval_callback
         self._register_runtime_tools()
         if not self.tool_registry.has("delegate_task"):
             self.tool_registry.register(DelegateTaskTool(self.provider, self.tool_registry))
-        self.cron_service = cron_service or self._create_default_cron_service()
-        if cron_service is not None:
-            self.cron_service.on_job = self.cron_bridge.on_job
+        self.cron_service = cron_service
         self._start_cron = start_cron
-        if not self.tool_registry.has("cron"):
+        if self.cron_service is not None and not self.tool_registry.has("cron"):
             from myagent.tools.cron import CronTool
             self.tool_registry.register(CronTool(self.cron_service))
         self.max_tool_iterations = max_tool_iterations
@@ -95,14 +79,14 @@ class AgentLoop:
             self.tool_registry,
             self.bus,
             self.max_tool_iterations,
-            approval_callback=self.approval_callback,
+            approval_callback=approval_callback,
         )
         self.turn_processor = AgentTurnProcessor(
             bus=self.bus,
-            context_builder=self.context_builder,
-            session_history=self.session_history,
-            memory_compressor=self.memory_compressor,
-            skill_state=self.skill_state,
+            context_builder=self.context_runtime.builder,
+            session_history=self.context_runtime.session_history,
+            memory_compressor=self.memory_services.compressor,
+            skill_state=self.context_runtime.skill_state,
             tool_loop=self.tool_loop,
             max_tool_iterations=self.max_tool_iterations,
         )
@@ -134,27 +118,18 @@ class AgentLoop:
     async def run_until_stopped(self) -> None:
         """Keep processing messages until stopped or cancelled."""
         self._running = True
-        if self._start_cron:
+        if self._start_cron and self.cron_service is not None:
             await self.cron_service.start()
-            self.cron_bridge.register_memory_consolidation_job(self.cron_service)
         try:
             while self._running:
                 await self.process_next()
         finally:
-            if self._start_cron:
+            if self._start_cron and self.cron_service is not None:
                 self.cron_service.stop()
 
     def stop(self) -> None:
         """Request the processing loop to stop."""
         self._running = False
-
-    def _create_default_cron_service(self):
-        from myagent.cron.service import CronService
-        store_path = Path.home() / ".myagent" / "runtime" / "cron" / "jobs.json"
-        return CronService(
-            store_path=store_path,
-            on_job=self.cron_bridge.on_job,
-        )
 
     def _register_runtime_tools(self) -> None:
         """Expose module-owned tools to the main agent."""

@@ -1,9 +1,15 @@
 """Memory tools exposed to the main agent."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 from typing import Any
 
 from myagent.memory.markdown import MarkdownMemoryStore
 from myagent.tools.base import Tool
+
+if TYPE_CHECKING:
+    from myagent.memory.consolidator import MemoryConsolidator
 
 
 class MemoryArchiveTool(Tool):
@@ -50,6 +56,39 @@ class MemoryArchiveTool(Tool):
     ) -> str:
         record = self.store.append_archive(note=note, tags=tags, importance=importance)
         return f"Archived memory note {record.id} in {record.source}."
+
+
+class MemoryConsolidateTool(Tool):
+    """Merge pending memory proposals into visible memory."""
+
+    def __init__(self, consolidator: MemoryConsolidator) -> None:
+        self.consolidator = consolidator
+
+    @property
+    def name(self) -> str:
+        return "memory_consolidate"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Review pending memory proposals and merge useful ones into MEMORY.md. "
+            "Use when the user asks to tidy, consolidate, or process memory proposals, "
+            "or when a scheduled maintenance task asks you to organize memory."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+
+    async def execute(self, **_: Any) -> str:
+        changed = await self.consolidator.consolidate()
+        if changed:
+            return "Consolidated pending memory proposals into MEMORY.md."
+        return "No pending memory proposals to consolidate."
 
 
 class MemoryRememberTool(Tool):

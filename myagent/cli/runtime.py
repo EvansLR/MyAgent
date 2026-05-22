@@ -8,8 +8,10 @@ from pathlib import Path
 import typer
 
 from myagent.agent import AgentLoop
+from myagent.agent.runtime.cron_bridge import AgentCronBridge
 from myagent.bus import MessageBus
 from myagent.config import Settings
+from myagent.cron import CronService
 from myagent.mcp import HttpMcpClient, StdioMcpClient
 from myagent.mcp.registry import register_mcp_tools_with_summary
 from myagent.providers import create_provider
@@ -37,11 +39,13 @@ async def create_agent_runtime(
     """Create the common provider, tool, MCP, and agent runtime."""
     registry = create_default_registry(workspace_root)
     mcp_clients = await connect_mcp_servers(settings, registry)
+    cron_service = create_cron_service(bus)
     agent = AgentLoop(
         bus,
         provider=create_provider(settings),
         tool_registry=registry,
         workspace_root=workspace_root,
+        cron_service=cron_service,
         start_cron=start_cron,
         approval_callback=approval_callback,
     )
@@ -49,6 +53,16 @@ async def create_agent_runtime(
         agent=agent,
         registry=registry,
         mcp_clients=mcp_clients,
+    )
+
+
+def create_cron_service(bus: MessageBus) -> CronService:
+    """Create the scheduled-task runtime for CLI and gateway entrypoints."""
+    bridge = AgentCronBridge(bus)
+    store_path = Path.home() / ".myagent" / "runtime" / "cron" / "jobs.json"
+    return CronService(
+        store_path=store_path,
+        on_job=bridge.on_job,
     )
 
 

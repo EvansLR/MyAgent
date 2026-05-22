@@ -13,6 +13,7 @@ from myagent.tools.filesystem import (
 )
 from myagent.tools.memory import (
     MemoryArchiveTool,
+    MemoryConsolidateTool,
     MemoryForgetTool,
     MemoryGetTool,
     MemoryProposeTool,
@@ -53,6 +54,7 @@ __all__ = [
     "ListDirTool",
     "MoveFileTool",
     "MemoryArchiveTool",
+    "MemoryConsolidateTool",
     "MemoryForgetTool",
     "MemoryGetTool",
     "MemoryProposeTool",
