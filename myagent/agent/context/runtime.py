@@ -71,8 +71,13 @@ class AgentContextRuntime:
             skill_registry=skills,
             profile_loader=profile,
         )
-        summarizer.chars_per_token = context_builder.budget.chars_per_token
-        memory.apply_chars_per_token(context_builder.budget.chars_per_token)
+        budget = context_builder.budget
+        summarizer.chars_per_token = budget.chars_per_token
+        memory.apply_compression_budget(
+            token_limit=budget.memory_token_limit,
+            max_rounds=budget.max_compression_rounds,
+            chars_per_token=budget.chars_per_token,
+        )
         return cls(
             builder=context_builder,
             session_history=session_history,

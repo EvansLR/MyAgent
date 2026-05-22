@@ -31,7 +31,7 @@ RULES:
 4. RESOLVE CONFLICTS: when proposals contradict each other, keep the most accurate/recent one. Discard outdated or wrong information.
 5. DISCARD low-quality proposals (importance < 2, vague, or irrelevant).
 6. Keep Always and Now within their prompt budgets. Bullet points are preferred.
-7. Call the save_memory tool with the complete new MEMORY.md content. No free-text reply.
+7. Call the save_memory tool with the complete rewritten Always and Now sections. No free-text reply.
 
 WHEN A VISIBLE SECTION IS TOO LARGE:
 1. Merge duplicates and near-duplicates.
@@ -69,12 +69,18 @@ SAVE_MEMORY_TOOL = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "memory_markdown": {
-                        "type": "string",
-                        "description": "The complete updated MEMORY.md markdown with # Memory, ## Always, and ## Now.",
+                    "always": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Stable high-signal memory bullets for the Always section.",
+                    },
+                    "now": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Current project state and active open loops for the Now section.",
                     },
                 },
-                "required": ["memory_markdown"],
+                "required": ["always", "now"],
             },
         },
     }
@@ -138,25 +144,29 @@ class MemoryConsolidator:
             "## Pending Proposals",
             proposals_text,
             "",
-            "Please call save_memory with the complete new MEMORY.md content.",
+            "Please call save_memory with the complete rewritten Always and Now sections.",
         ]
         return "\n".join(parts)
 
 
 def memory_markdown_from_tool_calls(tool_calls: list[Any]) -> str:
-    """Extract and normalize MEMORY.md content from a save_memory tool call."""
+    """Extract and render MEMORY.md content from a save_memory tool call."""
     if not tool_calls:
         return ""
-    call = tool_calls[0]
-    if getattr(call, "name", "") != "save_memory":
-        return ""
-    arguments = _normalize_arguments(getattr(call, "arguments", {}))
+    arguments = None
+    for call in tool_calls:
+        if getattr(call, "name", "") != "save_memory":
+            continue
+        arguments = _normalize_arguments(getattr(call, "arguments", {}))
+        if arguments is not None:
+            break
     if arguments is None:
         return ""
-    markdown = arguments.get("memory_markdown")
-    if markdown is None:
+    always = _normalize_section_items(arguments.get("always"))
+    now = _normalize_section_items(arguments.get("now"))
+    if always is None or now is None:
         return ""
-    return _normalize_memory_markdown(_ensure_text(markdown))
+    return _render_memory_markdown(always, now)
 
 
 def _normalize_arguments(arguments: object) -> dict[str, object] | None:
@@ -170,38 +180,38 @@ def _normalize_arguments(arguments: object) -> dict[str, object] | None:
     return arguments if isinstance(arguments, dict) else None
 
 
-def _ensure_text(value: object) -> str:
-    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+def _normalize_section_items(value: object) -> list[str] | None:
+    if isinstance(value, str):
+        items: list[str] = []
+        for line in value.splitlines():
+            clean = _strip_bullet_prefix(line.strip())
+            if clean:
+                items.append(clean)
+        return items
+    if isinstance(value, list):
+        items: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                return None
+            clean = _strip_bullet_prefix(item.strip())
+            if clean:
+                items.append(clean)
+        return items
+    return None
 
 
-def _normalize_memory_markdown(markdown: str) -> str:
-    """Keep MEMORY.md in the small canonical shape this project expects."""
-    sections = _parse_visible_sections(markdown)
-    if not sections:
-        return ""
-    always = sections.get("Always")
-    now = sections.get("Now")
-    if always is None or now is None:
-        return ""
+def _strip_bullet_prefix(text: str) -> str:
+    for prefix in ("- ", "* "):
+        if text.startswith(prefix):
+            return text[len(prefix):].strip()
+    return text
+
+
+def _render_memory_markdown(always: list[str], now: list[str]) -> str:
+    always_text = "\n".join(f"- {item}" for item in always)
+    now_text = "\n".join(f"- {item}" for item in now)
     return (
         f"{MEMORY_HEADER}\n\n"
-        f"## Always\n\n{always.strip()}\n\n"
-        f"## Now\n\n{now.strip()}"
+        f"## Always\n\n{always_text}\n\n"
+        f"## Now\n\n{now_text}"
     ).rstrip()
-
-
-def _parse_visible_sections(markdown: str) -> dict[str, str] | None:
-    lines = markdown.strip().splitlines()
-    if not lines or lines[0].strip() != MEMORY_HEADER:
-        return None
-    sections: dict[str, list[str]] = {}
-    current: str | None = None
-    for line in lines[1:]:
-        clean = line.strip()
-        if clean.startswith("## "):
-            current = clean.removeprefix("## ").strip()
-            sections.setdefault(current, [])
-            continue
-        if current in {"Always", "Now"}:
-            sections[current].append(line)
-    return {name: "\n".join(section_lines).strip() for name, section_lines in sections.items()}

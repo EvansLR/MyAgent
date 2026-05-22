@@ -96,11 +96,7 @@ class AgentTurnProcessor:
 
     async def _compress_visible_memory_before_context(self) -> None:
         """Keep visible memory within its prompt-time token limit."""
-        budget = self.context_builder.budget
         try:
-            await self.memory_compressor.compress_if_needed(
-                token_limit=budget.memory_token_limit,
-                max_rounds=budget.max_compression_rounds,
-            )
+            await self.memory_compressor.compress_if_needed()
         except Exception:
             return

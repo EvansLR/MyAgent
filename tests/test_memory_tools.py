@@ -16,11 +16,17 @@ from myagent.tools.memory import (
 
 
 class ConsolidationProvider:
-    def __init__(self, memory_markdown: str) -> None:
-        self.memory_markdown = memory_markdown
+    def __init__(
+        self,
+        *,
+        always: list[str] | None = None,
+        now: list[str] | None = None,
+    ) -> None:
+        self.always = always or []
+        self.now = now or []
 
     async def generate(self, messages: list[dict]) -> str:
-        return self.memory_markdown
+        return ""
 
     async def generate_response(
         self,
@@ -32,7 +38,7 @@ class ConsolidationProvider:
                 ToolCall(
                     id="save-memory-1",
                     name="save_memory",
-                    arguments={"memory_markdown": self.memory_markdown},
+                    arguments={"always": self.always, "now": self.now},
                 )
             ]
         )
@@ -162,10 +168,7 @@ async def test_memory_consolidate_tool_merges_pending_proposals() -> None:
         importance=4,
     )
     provider = ConsolidationProvider(
-        "# Memory\n\n"
-        "## Always\n\n"
-        "- User prefers short engineering explanations.\n\n"
-        "## Now\n\n"
+        always=["User prefers short engineering explanations."]
     )
     tool = MemoryConsolidateTool(MemoryConsolidator(provider, store))
 
@@ -181,7 +184,7 @@ async def test_memory_consolidate_tool_merges_pending_proposals() -> None:
 async def test_memory_consolidate_tool_reports_no_pending_proposals() -> None:
     store = MarkdownMemoryStore(make_workspace("consolidate-empty"))
     tool = MemoryConsolidateTool(
-        MemoryConsolidator(ConsolidationProvider("# Memory\n\n## Always\n\n## Now\n\n"), store)
+        MemoryConsolidator(ConsolidationProvider(), store)
     )
 
     result = await tool.execute()

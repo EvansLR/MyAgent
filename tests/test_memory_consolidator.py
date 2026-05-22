@@ -9,9 +9,20 @@ from myagent.providers.base import ProviderResponse, ToolCall
 class FakeProvider:
     """A test provider that returns a fixed consolidation response."""
 
-    def __init__(self, response: str, *, use_tool: bool = True) -> None:
+    def __init__(
+        self,
+        response: str = "",
+        *,
+        always: list[str] | None = None,
+        now: list[str] | None = None,
+        use_tool: bool = True,
+        arguments: object | None = None,
+    ) -> None:
         self.response = response
+        self.always = always or []
+        self.now = now or []
         self.use_tool = use_tool
+        self.arguments = arguments
         self.messages: list[list[dict]] = []
         self.tools: list[list[dict] | None] = []
 
@@ -28,12 +39,15 @@ class FakeProvider:
         self.tools.append(tools)
         if not self.use_tool:
             return ProviderResponse(content=self.response)
+        arguments = self.arguments
+        if arguments is None:
+            arguments = {"always": self.always, "now": self.now}
         return ProviderResponse(
             tool_calls=[
                 ToolCall(
                     id="save-memory-1",
                     name="save_memory",
-                    arguments={"memory_markdown": self.response},
+                    arguments=arguments,
                 )
             ]
         )
@@ -45,10 +59,6 @@ def make_workspace(name: str) -> Path:
         shutil.rmtree(root)
     root.mkdir(parents=True)
     return root
-
-
-def memory_text(*, always: str = "", now: str = "") -> str:
-    return f"# Memory\n\n## Always\n\n{always}\n\n## Now\n\n{now}".rstrip()
 
 
 async def test_consolidator_noop_when_proposals_empty() -> None:
@@ -87,7 +97,7 @@ async def test_consolidator_merges_proposals_into_memory() -> None:
         importance=5,
     )
 
-    provider = FakeProvider(memory_text(always="- User's name is Lin."))
+    provider = FakeProvider(always=["User's name is Lin."])
     consolidator = MemoryConsolidator(provider, store)
 
     result = await consolidator.consolidate()
@@ -110,7 +120,7 @@ async def test_consolidator_archives_proposals() -> None:
         importance=3,
     )
 
-    provider = FakeProvider(memory_text(always="- User prefers Python."))
+    provider = FakeProvider(always=["User prefers Python."])
     consolidator = MemoryConsolidator(provider, store)
 
     await consolidator.consolidate()
@@ -133,7 +143,7 @@ async def test_consolidator_clears_proposals_after_merge() -> None:
         importance=4,
     )
 
-    provider = FakeProvider(memory_text(now="- User is preparing for interviews."))
+    provider = FakeProvider(now=["User is preparing for interviews."])
     consolidator = MemoryConsolidator(provider, store)
 
     await consolidator.consolidate()
@@ -174,7 +184,7 @@ async def test_consolidator_prompt_uses_budgets_instead_of_hard_counts() -> None
         importance=4,
     )
 
-    provider = FakeProvider(memory_text(always="- User prefers concise engineering explanations."))
+    provider = FakeProvider(always=["User prefers concise engineering explanations."])
     consolidator = MemoryConsolidator(provider, store)
 
     await consolidator.consolidate()
@@ -198,7 +208,7 @@ async def test_consolidator_returns_false_when_tool_payload_has_bad_markdown() -
         importance=3,
     )
 
-    provider = FakeProvider("# Memory\n\n## Something Else\n\n- bad")
+    provider = FakeProvider(arguments={"always": "not a valid section", "now": 123})
     consolidator = MemoryConsolidator(provider, store)
 
     result = await consolidator.consolidate()
@@ -208,7 +218,7 @@ async def test_consolidator_returns_false_when_tool_payload_has_bad_markdown() -
     assert "User prefers Python." in proposals_text
 
 
-async def test_consolidator_normalizes_memory_markdown_shape() -> None:
+async def test_consolidator_renders_structured_sections_to_memory_markdown() -> None:
     root = make_workspace("normalize")
     store = MarkdownMemoryStore(root)
     store.ensure_layout()
@@ -220,14 +230,8 @@ async def test_consolidator_normalizes_memory_markdown_shape() -> None:
     )
 
     provider = FakeProvider(
-        "# Memory\n\n"
-        "extra ignored text\n\n"
-        "## Always\n\n"
-        "- User prefers Python.\n\n"
-        "## Now\n\n"
-        "- Current project is MyAgent.\n\n"
-        "## Extra\n\n"
-        "- should not survive"
+        always=["- User prefers Python."],
+        now=["* Current project is MyAgent."],
     )
     consolidator = MemoryConsolidator(provider, store)
 

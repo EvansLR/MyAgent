@@ -194,13 +194,8 @@ class MemoryCompressionProvider:
                         id="save-memory-1",
                         name="save_memory",
                         arguments={
-                            "memory_markdown": (
-                                "# Memory\n\n"
-                                "## Always\n\n"
-                                "- Compact preference.\n\n"
-                                "## Now\n\n"
-                                "- Compact project state."
-                            )
+                            "always": ["Compact preference."],
+                            "now": ["Compact project state."],
                         },
                     )
                 ]

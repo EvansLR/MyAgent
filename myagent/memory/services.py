@@ -42,8 +42,16 @@ class AgentMemoryServices:
             ),
         )
 
-    def apply_chars_per_token(self, chars_per_token: int) -> None:
-        """Align prompt-time memory compression with the active context estimate."""
+    def apply_compression_budget(
+        self,
+        *,
+        token_limit: int,
+        max_rounds: int,
+        chars_per_token: int,
+    ) -> None:
+        """Align visible-memory compression with the active context budget."""
+        self.compressor.token_limit = token_limit
+        self.compressor.max_rounds = max_rounds
         self.compressor.chars_per_token = chars_per_token
 
     def register_tools(self, registry: ToolRegistry) -> None:
