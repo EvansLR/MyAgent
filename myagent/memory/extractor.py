@@ -9,6 +9,54 @@ from myagent.memory.markdown import MarkdownMemoryStore
 from myagent.providers.base import BaseProvider
 
 
+SAVE_EXTRACTED_MEMORY_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "save_extracted_memory",
+            "description": "Return candidate memories extracted from a conversation chunk.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "description": "Short standalone memory candidate.",
+                                },
+                                "target": {
+                                    "type": "string",
+                                    "enum": ["archive", "long_term"],
+                                    "description": "archive for episodic notes, long_term for durable memory proposals.",
+                                },
+                                "section": {
+                                    "type": "string",
+                                    "enum": ["Always", "Now"],
+                                    "description": "Visible memory section when target is long_term.",
+                                },
+                                "importance": {
+                                    "type": "integer",
+                                    "description": "Importance from 1 to 5.",
+                                },
+                                "tags": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                },
+                            },
+                            "required": ["content", "target"],
+                        },
+                    },
+                },
+                "required": ["items"],
+            },
+        },
+    }
+]
+
+
 class MemoryExtractor:
     """Ask the model to extract candidate memory from a history chunk."""
 
@@ -23,13 +71,14 @@ class MemoryExtractor:
         source: str = "pre_context_compaction",
     ) -> list[str]:
         """Extract candidate memories and write them to proposals or archive."""
-        response = await self.provider.generate(
+        response = await self.provider.generate_response(
             [
                 {"role": "system", "content": _EXTRACTOR_SYSTEM_PROMPT},
                 {"role": "user", "content": _build_messages_prompt(messages)},
-            ]
+            ],
+            tools=SAVE_EXTRACTED_MEMORY_TOOL,
         )
-        items = _parse_items(response)
+        items = memory_items_from_tool_calls(response.tool_calls)
         written_ids: list[str] = []
         for item in items:
             content = str(item.get("content", "")).strip()
@@ -60,9 +109,8 @@ class MemoryExtractor:
 
 _EXTRACTOR_SYSTEM_PROMPT = """You are MyAgent's memory extractor.
 Extract only information that is likely to help MyAgent serve the user in future turns.
-Return strict JSON only:
-{"items":[{"content":"short standalone memory","target":"archive|long_term","section":"Now","importance":1,"tags":["tag"]}]}
-If there is nothing worth remembering, return {"items":[]}.
+Call save_extracted_memory with extracted memory candidates.
+If there is nothing worth remembering, call save_extracted_memory with {"items":[]}.
 
 Be conservative. Do not record:
 - short acknowledgements, approvals, or conversational filler
@@ -90,12 +138,28 @@ def _build_messages_prompt(messages: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
-def _parse_items(response: str) -> list[dict[str, Any]]:
-    try:
-        data = json.loads(response)
-    except json.JSONDecodeError:
-        return []
-    items = data.get("items", [])
+def memory_items_from_tool_calls(tool_calls: list[Any]) -> list[dict[str, Any]]:
+    """Extract memory candidate items from a save_extracted_memory tool call."""
+    for call in tool_calls:
+        if getattr(call, "name", "") != "save_extracted_memory":
+            continue
+        arguments = _normalize_arguments(getattr(call, "arguments", {}))
+        if arguments is None:
+            continue
+        return _normalize_items(arguments.get("items", []))
+    return []
+
+
+def _normalize_arguments(arguments: object) -> dict[str, object] | None:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return None
+    return arguments if isinstance(arguments, dict) else None
+
+
+def _normalize_items(items: object) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         return []
     return [item for item in items if isinstance(item, dict)]

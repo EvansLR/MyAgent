@@ -78,23 +78,29 @@ class PreContextExtractingProvider:
 
     async def generate_response(self, messages, tools=None) -> ProviderResponse:
         self.response_messages.append(messages)
+        if tools and tools[0]["function"]["name"] == "save_extracted_memory":
+            return ProviderResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="extract-memory-1",
+                        name="save_extracted_memory",
+                        arguments={
+                            "items": [
+                                {
+                                    "content": "User prefers documentation-first implementation.",
+                                    "target": "archive",
+                                    "importance": 3,
+                                    "tags": ["workflow"],
+                                }
+                            ]
+                        },
+                    )
+                ]
+            )
         return ProviderResponse(content="ok")
 
     async def generate(self, messages):
         self.generate_calls.append(messages)
-        if "memory extractor" in messages[0]["content"]:
-            return json.dumps(
-                {
-                    "items": [
-                        {
-                            "content": "User prefers documentation-first implementation.",
-                            "target": "archive",
-                            "importance": 3,
-                            "tags": ["workflow"],
-                        }
-                    ]
-                }
-            )
         return "- Earlier context: user prefers documentation-first implementation."
 
 
