@@ -35,6 +35,17 @@ def test_context_builder_builds_system_message() -> None:
     assert "MyAgent" in prompt
 
 
+def test_context_budget_defaults_are_long_context_friendly() -> None:
+    budget = ContextBudget()
+
+    assert budget.max_prompt_tokens == 128_000
+    assert budget.raw_history_token_limit == 128_000
+    assert budget.raw_history_target_tokens == 80_000
+    assert budget.summary_token_limit == 8_000
+    assert budget.memory_token_limit == 16_000
+    assert budget.raw_history_target_tokens < budget.raw_history_token_limit
+
+
 def test_context_builder_builds_messages_with_history() -> None:
     builder = ContextBuilder(identity="Test identity.", delegation_policy=None)
     history = [

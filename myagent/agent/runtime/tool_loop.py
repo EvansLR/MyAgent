@@ -6,7 +6,11 @@ import json
 from dataclasses import dataclass, field
 
 from myagent.agent.context.types import Message
-from myagent.agent.runtime.messages import assistant_tool_call_message, tool_result_message
+from myagent.agent.runtime.messages import (
+    assistant_message,
+    assistant_tool_call_message,
+    tool_result_message,
+)
 from myagent.bus import InboundMessage, MessageBus, OutboundMessage
 from myagent.providers import BaseProvider
 from myagent.providers.base import ToolCall
@@ -14,6 +18,7 @@ from myagent.tools import ToolRegistry
 from myagent.tools.context import ApprovalCallback, ToolExecutionContext
 
 MAX_REPEATED_TOOL_CALLS = 2
+MAX_PERSISTED_TOOL_RESULT_CHARS = 16_000
 
 
 @dataclass(slots=True)
@@ -29,6 +34,7 @@ class AgentTurnState:
     stop_reason: str = ""
     warnings: list[str] = field(default_factory=list)
     attachments: list[str] = field(default_factory=list)
+    history_messages: list[Message] = field(default_factory=list)
     _tool_call_counts: dict[str, int] = field(default_factory=dict)
 
     def record_tool_result(self, tool_call: ToolCall, result: str) -> None:
@@ -80,10 +86,18 @@ class AgentToolLoop:
         tools = self.tool_registry.get_definitions()
 
         working_messages = list(messages)
+        turn_start = max(len(messages) - 1, 0)
         for iteration in range(1, self.max_iterations + 1):
             turn_state.iteration = iteration
-            response = await self.provider.generate_response(working_messages, tools=tools)
+            response = await self.provider.generate_response(
+                _copy_messages(working_messages),
+                tools=tools,
+            )
             if not response.tool_calls:
+                working_messages.append(assistant_message(response))
+                turn_state.history_messages = _messages_for_history(
+                    working_messages[turn_start:]
+                )
                 turn_state.stop_reason = "final_output"
                 return response.content
 
@@ -100,6 +114,9 @@ class AgentToolLoop:
                 )
                 turn_state.record_tool_result(tool_call, result)
                 working_messages.append(tool_result_message(tool_call, result))
+                turn_state.history_messages = _messages_for_history(
+                    working_messages[turn_start:]
+                )
 
         turn_state.stop_reason = "max_tool_iterations"
         return (
@@ -181,3 +198,27 @@ def _tool_call_signature(tool_call: ToolCall) -> str:
     """Return a stable signature for repeated tool-call diagnostics."""
     arguments = json.dumps(tool_call.arguments, sort_keys=True, ensure_ascii=False)
     return f"{tool_call.name}:{arguments}"
+
+
+def _messages_for_history(messages: list[Message]) -> list[Message]:
+    """Copy turn messages for session history, truncating oversized tool output."""
+    return [_message_for_history(message) for message in messages]
+
+
+def _copy_messages(messages: list[Message]) -> list[Message]:
+    return [dict(message) for message in messages]
+
+
+def _message_for_history(message: Message) -> Message:
+    entry = dict(message)
+    content = entry.get("content")
+    if (
+        entry.get("role") == "tool"
+        and isinstance(content, str)
+        and len(content) > MAX_PERSISTED_TOOL_RESULT_CHARS
+    ):
+        entry["content"] = (
+            content[:MAX_PERSISTED_TOOL_RESULT_CHARS]
+            + f"\n... (truncated, total {len(content)} chars)"
+        )
+    return entry

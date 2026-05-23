@@ -116,6 +116,17 @@ async def test_agent_loop_executes_tool_calls() -> None:
     second_call_messages = provider.seen_messages[1]
     assert second_call_messages[-1]["role"] == "tool"
     assert "hello from tool" in second_call_messages[-1]["content"]
+    history = agent.context_runtime.session_history.raw["cli:default"]
+    assert [message["role"] for message in history] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert history[1]["tool_calls"][0]["id"] == "call-1"
+    assert history[2]["tool_call_id"] == "call-1"
+    assert "hello from tool" in history[2]["content"]
+    assert history[3]["content"] == "The file says hello."
 
 
 class ReasoningToolCallingProvider(ToolCallingProvider):
@@ -287,6 +298,28 @@ async def test_agent_loop_keeps_tool_result_visible_before_next_model_call() -> 
     assert tool_message["tool_call_id"] == "call-large"
     assert "x" * 200 in tool_message["content"]
     assert "[Tool result compacted]" not in tool_message["content"]
+
+
+async def test_agent_loop_truncates_large_tool_result_in_saved_history() -> None:
+    workspace = make_workspace("persist-large-tool-result")
+    (workspace / "large.txt").write_text("x" * 20_000, encoding="utf-8")
+    bus = MessageBus()
+    provider = LargeToolResultProvider()
+    agent = AgentLoop(
+        bus,
+        provider=provider,
+        tool_registry=create_default_registry(workspace),
+    )
+
+    await bus.publish_inbound(make_message("read large file"))
+    await agent.process_next()
+
+    second_call_tool_message = provider.seen_messages[1][-1]
+    assert "x" * 20_000 in second_call_tool_message["content"]
+    history_tool_message = agent.context_runtime.session_history.raw["cli:default"][2]
+    assert history_tool_message["role"] == "tool"
+    assert len(history_tool_message["content"]) < len(second_call_tool_message["content"])
+    assert "... (truncated, total" in history_tool_message["content"]
 
 
 class FailingProvider:

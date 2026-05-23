@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from myagent.budget import (
+    DEFAULT_CHARS_PER_TOKEN,
+    DEFAULT_MAX_COMPRESSION_ROUNDS,
+    DEFAULT_MEMORY_TOKEN_LIMIT,
+)
 from myagent.memory.consolidator import SAVE_MEMORY_TOOL, memory_markdown_from_tool_calls
 from myagent.memory.markdown import MarkdownMemoryStore
 from myagent.providers.base import BaseProvider
@@ -28,9 +33,9 @@ class VisibleMemoryCompressor:
         provider: BaseProvider,
         store: MarkdownMemoryStore,
         *,
-        token_limit: int = 6000,
-        max_rounds: int = 2,
-        chars_per_token: int = 4,
+        token_limit: int = DEFAULT_MEMORY_TOKEN_LIMIT,
+        max_rounds: int = DEFAULT_MAX_COMPRESSION_ROUNDS,
+        chars_per_token: int = DEFAULT_CHARS_PER_TOKEN,
     ) -> None:
         self.provider = provider
         self.store = store

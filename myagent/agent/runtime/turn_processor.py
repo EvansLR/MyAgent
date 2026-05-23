@@ -63,12 +63,7 @@ class AgentTurnProcessor:
             content = f"Error: {exc}"
 
         outbound = await self._publish_final_reply(inbound, content, turn_state)
-        history.extend(
-            [
-                {"role": "user", "content": inbound.content},
-                {"role": "assistant", "content": content},
-            ]
-        )
+        history.extend(_turn_history_messages(inbound, content, turn_state))
         self.skill_state.end_turn(inbound.session_key, turn_id)
         self.session_history.clear_current_summary_session()
         return outbound
@@ -96,3 +91,20 @@ class AgentTurnProcessor:
             await self.memory_compressor.compress_if_needed()
         except Exception:
             return
+
+
+def _turn_history_messages(
+    inbound: InboundMessage,
+    content: str,
+    turn_state: AgentTurnState,
+) -> list[dict[str, object]]:
+    """Return the completed turn messages to keep in session history."""
+    if turn_state.history_messages:
+        messages = [dict(message) for message in turn_state.history_messages]
+        if messages[-1].get("role") != "assistant":
+            messages.append({"role": "assistant", "content": content})
+        return messages
+    return [
+        {"role": "user", "content": inbound.content},
+        {"role": "assistant", "content": content},
+    ]

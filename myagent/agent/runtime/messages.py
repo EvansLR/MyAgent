@@ -8,6 +8,16 @@ from myagent.agent.context.types import Message
 from myagent.providers.base import ProviderResponse, ToolCall
 
 
+def assistant_message(response: ProviderResponse) -> Message:
+    """Build a plain assistant message for final provider responses."""
+    message: Message = {
+        "role": "assistant",
+        "content": response.content,
+    }
+    message.update(response.extra_message_fields)
+    return message
+
+
 def assistant_tool_call_message(response: ProviderResponse) -> Message:
     """Build an assistant message containing tool calls for chat completions."""
     message: Message = {

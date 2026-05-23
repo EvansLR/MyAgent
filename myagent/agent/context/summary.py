@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from myagent.budget import (
+    DEFAULT_KEEP_RECENT_MESSAGES,
+    DEFAULT_MAX_COMPRESSION_ROUNDS,
+    DEFAULT_SUMMARY_TOKEN_LIMIT,
+)
 from myagent.agent.context.types import Message
 from myagent.providers.base import BaseProvider
 from myagent.text.compression import compress_until_within_limit
@@ -26,9 +31,9 @@ class ConversationSummaryConfig:
     """Configuration for in-memory conversation summary updates."""
 
     enabled: bool = True
-    keep_recent_messages: int = 12
-    summary_token_limit: int = 2000
-    max_compression_rounds: int = 2
+    keep_recent_messages: int = DEFAULT_KEEP_RECENT_MESSAGES
+    summary_token_limit: int = DEFAULT_SUMMARY_TOKEN_LIMIT
+    max_compression_rounds: int = DEFAULT_MAX_COMPRESSION_ROUNDS
 
 
 @dataclass(frozen=True, slots=True)
