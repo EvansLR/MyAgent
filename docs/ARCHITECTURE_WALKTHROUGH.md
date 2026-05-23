@@ -247,7 +247,7 @@ Files:
 
 ### 8. ToolExecutionContext
 
-Status: current topic.
+Status: covered.
 
 Key idea:
 
@@ -278,6 +278,242 @@ Files:
 - `myagent/tools/attachments.py`
 - `myagent/tools/shell.py`
 - `myagent/tools/filesystem.py`
+
+### 9. Provider Layer
+
+Status: covered.
+
+Key idea:
+
+- The runtime should not depend on raw SDK response objects.
+- Providers normalize backend responses into `ProviderResponse`.
+- Tool-capable responses are represented by `ToolCall`.
+
+The runtime-facing provider contract is:
+
+```text
+generate(messages) -> str
+generate_response(messages, tools=None) -> ProviderResponse
+```
+
+`generate()` is the simple text-only path.
+`generate_response()` is the structured path used by `ToolLoop`.
+
+Files:
+
+- `myagent/providers/base.py`
+- `myagent/providers/openai_compatible.py`
+- `myagent/providers/echo.py`
+- `myagent/providers/__init__.py`
+
+### 10. MCP Adapter Internals
+
+Status: covered.
+
+Key idea:
+
+- MCP servers expose external tool definitions.
+- MyAgent wraps each MCP tool in `McpToolAdapter`.
+- `McpToolAdapter` implements the normal internal `Tool` contract.
+- After registration, `ToolLoop` and `ToolRegistry` do not need to know whether
+  a tool is local or MCP-backed.
+
+Runtime shape:
+
+```text
+MCP server tool definition
+  -> McpToolDefinition
+  -> McpToolAdapter
+  -> ToolRegistry.register(adapter)
+  -> ToolLoop executes it like any other Tool
+  -> adapter calls client.call_tool(original_mcp_name, arguments)
+```
+
+Files:
+
+- `myagent/mcp/types.py`
+- `myagent/mcp/adapter.py`
+- `myagent/mcp/registry.py`
+- `myagent/cli/runtime.py`
+- `tests/test_mcp_registry.py`
+
+### 11. Channel Layer and MessageBus Delivery
+
+Status: covered.
+
+Key idea:
+
+- Channels adapt external platforms to MyAgent's internal message model.
+- `MessageBus` decouples channels from `AgentLoop`.
+- `AgentLoop` consumes `InboundMessage` and publishes `OutboundMessage`.
+- Channels decide how to render and deliver outbound messages for their
+  platform.
+
+Runtime shape:
+
+```text
+External user/platform event
+  -> Channel adapter
+  -> InboundMessage
+  -> MessageBus.publish_inbound
+  -> AgentLoop consumes inbound
+  -> AgentLoop publishes OutboundMessage
+  -> MessageBus.consume_outbound
+  -> ChannelManager routes by msg.channel
+  -> Channel sends platform-specific response
+```
+
+Files:
+
+- `myagent/bus/events.py`
+- `myagent/bus/queue.py`
+- `myagent/channels/base.py`
+- `myagent/channels/manager.py`
+- `myagent/cli/commands.py`
+- `myagent/channels/feishu.py`
+
+### 12. Configuration and Runtime Assembly
+
+Status: covered.
+
+Key idea:
+
+- Entry points should not manually assemble every dependency inline.
+- `Settings` loads config/env values.
+- `create_agent_runtime()` builds the shared provider/tool/MCP/cron/agent
+  runtime used by CLI and gateway modes.
+- CLI mode and gateway mode differ mainly in how channels are started and
+  whether cron starts automatically.
+
+Runtime assembly shape:
+
+```text
+Settings.from_sources()
+  -> MessageBus()
+  -> create_default_registry(workspace_root)
+  -> connect_mcp_servers(settings, registry)
+  -> create_cron_service(bus)
+  -> create_provider(settings)
+  -> AgentLoop(...)
+  -> AgentRuntime(agent, registry, mcp_clients)
+```
+
+Files:
+
+- `myagent/__main__.py`
+- `myagent/cli/commands.py`
+- `myagent/cli/runtime.py`
+- `myagent/config/settings.py`
+- `myagent/agent/loop.py`
+
+### 13. Feishu Rendering, Approval Cards, and Media
+
+Status: covered.
+
+Key idea:
+
+- Feishu is a channel adapter, not part of agent reasoning.
+- It translates `OutboundMessage` into Feishu-specific message types.
+- Approval requests become interactive cards.
+- Markdown-ish text becomes either plain `text` or Feishu `post`.
+- `OutboundMessage.media` files are uploaded and sent before text content.
+
+Outbound handling shape:
+
+```text
+OutboundMessage
+  -> metadata.kind == approval_request ? interactive card
+  -> media files ? upload image/file/audio/video
+  -> content ? render text or post
+  -> Feishu HTTP send API
+```
+
+Inbound handling shape:
+
+```text
+Feishu WebSocket event
+  -> extract text, sender, chat_id
+  -> BaseChannel._handle_message(...)
+  -> InboundMessage
+  -> MessageBus
+```
+
+Files:
+
+- `myagent/channels/feishu.py`
+- `myagent/channels/feishu_rendering.py`
+- `tests/test_channels_feishu.py`
+
+### 14. Testing and Verification Strategy
+
+Status: current topic.
+
+Key idea:
+
+- The project uses focused tests around module boundaries.
+- Core runtime behavior is tested with fake providers, fake clients, and local
+  test workspaces.
+- External services are not required for normal automated verification.
+- Full test suite is the final safety net after focused tests pass.
+
+Focused verification map:
+
+```text
+Agent runtime:
+  tests/test_agent_loop.py
+
+Context:
+  tests/test_context_builder.py
+  tests/test_agent_loop.py
+
+Memory:
+  tests/test_agent_memory.py
+  tests/test_memory_tools.py
+  tests/test_memory_consolidator.py
+  tests/test_memory_compressor.py
+
+Tools:
+  tests/test_tool_registry.py
+  tests/test_filesystem_tools.py
+  tests/test_shell_tool.py
+  tests/test_web_tool.py
+
+Channels:
+  tests/test_cli_channel.py
+  tests/test_channels_base.py
+  tests/test_channels_manager.py
+  tests/test_channels_feishu.py
+
+MCP:
+  tests/test_mcp_config.py
+  tests/test_mcp_adapter.py
+  tests/test_mcp_registry.py
+  tests/test_mcp_stdio.py
+  tests/test_mcp_http.py
+
+Cron:
+  tests/test_cron_store.py
+  tests/test_cron_service.py
+  tests/test_cron_tool.py
+  tests/test_cron_bridge.py
+
+Provider:
+  tests/test_llm_provider.py
+
+Skills/Subagent/Profile:
+  tests/test_skills.py
+  tests/test_skill_tools.py
+  tests/test_agent_skills.py
+  tests/test_subagent.py
+  tests/test_profile.py
+```
+
+Final verification:
+
+```text
+python -m compileall -q myagent
+python -m pytest
+```
 
 ## Current Chapter Notes
 
@@ -369,6 +605,249 @@ The key boundary is:
 ```text
 LLM arguments: what the model requested.
 ToolExecutionContext: what the runtime knows about this turn.
+```
+
+### Provider Normalization Boundary
+
+`BaseProvider` defines the interface that the agent runtime consumes. Concrete
+providers can talk to OpenAI-compatible APIs, fake local providers, or future
+backends, but the runtime only sees:
+
+```text
+ProviderResponse(
+    content: str,
+    tool_calls: list[ToolCall],
+    extra_message_fields: dict[str, object],
+)
+```
+
+`ToolCall` is intentionally small:
+
+```text
+id
+name
+arguments
+```
+
+This keeps provider-specific SDK objects out of `ToolLoop`. It also lets the
+runtime preserve provider-specific assistant fields, such as `reasoning_content`,
+without hard-coding them into the core message model.
+
+### MCP Adapter Boundary
+
+MCP integration uses the adapter pattern. The remote MCP server owns the real
+tool implementation, but MyAgent exposes a local wrapper that satisfies the
+same `Tool` interface as built-in tools.
+
+`McpToolAdapter` maps:
+
+```text
+Tool.name        -> safe prefixed MCP tool name
+Tool.description -> MCP description plus server source
+Tool.parameters  -> MCP input schema
+Tool.execute     -> client.call_tool(original_mcp_tool_name, kwargs)
+```
+
+Tool names are prefixed and normalized:
+
+```text
+server: github
+tool: Search Issues
+registered name: mcp_github_search_issues
+```
+
+This prevents collisions with built-in tools and with tools from other MCP
+servers. Filtering can match either the original MCP name or the registered
+MyAgent name.
+
+### Channel Boundary
+
+The channel layer owns platform-specific input/output details. The agent runtime
+only sees:
+
+```text
+InboundMessage(channel, sender_id, chat_id, content, metadata)
+OutboundMessage(channel, chat_id, content, metadata, media)
+```
+
+The `MessageBus` is two async queues:
+
+```text
+inbound:  Channel -> AgentLoop
+outbound: AgentLoop -> Channel
+```
+
+CLI and Feishu share the same internal message model even though their external
+transport is very different:
+
+- CLI reads terminal input and prints/renders terminal output.
+- Feishu receives WebSocket events, sends HTTP messages, uploads media, and
+  renders approval cards.
+
+`ChannelManager` consumes outbound messages and routes them to the channel named
+by `OutboundMessage.channel`.
+
+### Runtime Assembly Boundary
+
+Runtime assembly is split so CLI and gateway modes can share the same agent core.
+
+`Settings` owns configuration loading:
+
+```text
+myagent.json
+environment variables
+defaults
+```
+
+`create_agent_runtime()` owns common runtime construction:
+
+```text
+default registry
+MCP clients and MCP tool registration
+cron service
+provider
+AgentLoop
+```
+
+CLI mode starts:
+
+```text
+AgentLoop.run_until_stopped()
+run_chat()
+```
+
+Gateway mode starts:
+
+```text
+AgentLoop.run_until_stopped()
+ChannelManager.start_all()
+CronService through AgentLoop
+```
+
+This keeps CLI and Feishu/gateway behavior on the same runtime path instead of
+creating two separate agents.
+
+### Feishu Channel Boundary
+
+Feishu-specific code owns platform rendering and delivery details:
+
+- WebSocket event parsing.
+- Tenant access token refresh.
+- Text/post message rendering.
+- Interactive approval card rendering.
+- Image/file/audio/video upload.
+- Card-action callbacks that resolve pending approval futures.
+
+The agent core still only publishes `OutboundMessage`. The Feishu channel
+decides how that message becomes Feishu API calls.
+
+Feishu call scenarios:
+
+```mermaid
+flowchart TD
+    subgraph Inbound["Inbound: Feishu user message"]
+        FEvent["Feishu WebSocket event"]
+        Extract["_event_to_text + sender/chat_id"]
+        Handle["BaseChannel._handle_message"]
+        InMsg["InboundMessage(channel=feishu)"]
+        InBus["MessageBus.publish_inbound"]
+        Agent["AgentLoop"]
+        FEvent --> Extract --> Handle --> InMsg --> InBus --> Agent
+    end
+
+    subgraph OutboundText["Outbound: text or rich text reply"]
+        AgentOut["AgentLoop publishes OutboundMessage"]
+        OutBus["MessageBus.consume_outbound"]
+        Manager["ChannelManager"]
+        Send["FeishuChannel.send"]
+        Render["_render_text_message"]
+        Plain["Feishu text"]
+        Post["Feishu post"]
+        AgentOut --> OutBus --> Manager --> Send --> Render
+        Render --> Plain
+        Render --> Post
+    end
+
+    subgraph Approval["Approval request"]
+        ToolApproval["ToolExecutionContext.request_approval"]
+        ApprovalMsg["OutboundMessage(kind=approval_request, future)"]
+        Card["_approval_card"]
+        Interactive["Feishu interactive card"]
+        CardAction["card action callback"]
+        Future["future.set_result(True/False)"]
+        ToolApproval --> ApprovalMsg --> Send --> Card --> Interactive --> CardAction --> Future
+    end
+
+    subgraph Media["Media reply"]
+        MediaMsg["OutboundMessage(media=[...])"]
+        Upload["upload image/file/audio/video"]
+        MediaSend["Feishu media message"]
+        OptionalText["optional text/post content"]
+        MediaMsg --> Send --> Upload --> MediaSend
+        Send --> OptionalText
+    end
+```
+
+```text
+Inbound user text:
+  Feishu WebSocket event -> _event_to_text -> BaseChannel._handle_message
+  -> InboundMessage(channel="feishu", sender_id, chat_id, content)
+
+Plain final reply:
+  OutboundMessage(content="short text")
+  -> FeishuChannel.send
+  -> _render_text_message returns ("text", {"text": ...})
+  -> im/v1/messages
+
+Markdown-ish final reply:
+  OutboundMessage(content="# Title\n\n- item")
+  -> _render_text_message returns ("post", post_content)
+  -> _markdown_to_post_content
+  -> im/v1/messages
+
+Approval request:
+  OutboundMessage(metadata.kind="approval_request", future=...)
+  -> _send_approval_request
+  -> _approval_card
+  -> Feishu interactive message
+  -> card action callback resolves the future
+
+Media reply:
+  OutboundMessage(media=[...], content="optional text")
+  -> upload image/file/audio/video
+  -> send media message(s)
+  -> render and send optional text
+```
+
+### Testing Boundary
+
+Tests are organized around architecture boundaries rather than only individual
+functions. The normal refactor workflow should be:
+
+```text
+Run focused tests for the touched module.
+Run nearby integration tests if the module is on the main runtime path.
+Run compileall for syntax/import safety.
+Run full pytest before reporting the work as ready.
+```
+
+Examples:
+
+```text
+Changing ToolLoop:
+  python -m pytest tests/test_agent_loop.py tests/test_tool_registry.py
+
+Changing ContextBuilder:
+  python -m pytest tests/test_context_builder.py tests/test_agent_loop.py
+
+Changing Feishu:
+  python -m pytest tests/test_channels_feishu.py tests/test_channels_manager.py
+
+Changing MCP:
+  python -m pytest tests/test_mcp_config.py tests/test_mcp_adapter.py tests/test_mcp_registry.py
+
+Changing Memory:
+  python -m pytest tests/test_agent_memory.py tests/test_memory_tools.py tests/test_memory_consolidator.py tests/test_memory_compressor.py
 ```
 
 ## Next Topics
@@ -464,16 +943,103 @@ These topics were mentioned, but not fully walked through from code to runtime:
 
 Recommended next chapters, in order:
 
-1. Provider layer.
-2. MCP adapter internals.
-3. Channel layer and MessageBus delivery.
-4. Configuration/runtime assembly if needed.
+1. Optional: commit the walkthrough updates.
+2. Optional: continue with a specific module if the user wants deeper detail.
 
 Recommended immediate next topic:
 
 ```text
-Provider layer: how model-specific responses become ProviderResponse and ToolCall.
+Optional next: review/commit walkthrough updates, or continue with a specific
+module if the user wants deeper detail.
 ```
+
+## Architecture Summary
+
+MyAgent is a local-first lightweight agent runtime. Its core value is not any
+single tool, but a clear and explainable runtime loop:
+
+```text
+message in
+  -> context assembly
+  -> model decision
+  -> optional tool execution
+  -> tool result back to model
+  -> final reply
+  -> history and memory persistence
+  -> message out
+```
+
+High-level architecture:
+
+```mermaid
+flowchart TD
+    User["User / CLI / Feishu"]
+    Channel["Channel Layer"]
+    Bus["MessageBus"]
+    Loop["AgentLoop"]
+    Turn["AgentTurnProcessor"]
+    History["AgentSessionHistory"]
+    Context["ContextBuilder"]
+    Provider["Provider Layer"]
+    ToolLoop["AgentToolLoop"]
+    Registry["ToolRegistry"]
+    Tools["Built-in / Memory / Cron / Skill / MCP / SubAgent Tools"]
+    Out["OutboundMessage"]
+
+    User --> Channel
+    Channel --> Bus
+    Bus --> Loop
+    Loop --> Turn
+    Turn --> History
+    Turn --> Context
+    Context --> Provider
+    Turn --> ToolLoop
+    ToolLoop --> Provider
+    ToolLoop --> Registry
+    Registry --> Tools
+    Tools --> ToolLoop
+    ToolLoop --> Turn
+    Turn --> Out
+    Out --> Bus
+    Bus --> Channel
+    Channel --> User
+```
+
+Interview explanation:
+
+```text
+MyAgent separates channel adaptation, message transport, context construction,
+provider normalization, model-tool iteration, tool execution, and persistence.
+The main runtime stays small because each extension point owns its own state:
+Memory owns memory tools, Context owns skill context, Cron owns scheduled jobs,
+MCP owns external adapters, and Channel owns platform-specific rendering.
+```
+
+Core design choices:
+
+- `InboundMessage` and `OutboundMessage` isolate external channels from agent
+  runtime logic.
+- `MessageBus` decouples channels from `AgentLoop`.
+- `ContextBuilder` dynamically assembles the current model input and does not
+  own history or persistence.
+- System prompt is not saved into raw history; raw history stores real
+  conversation/tool messages.
+- Long context is managed through raw history, conversation summary, and memory.
+- Provider implementations normalize backend-specific responses into
+  `ProviderResponse` and `ToolCall`.
+- `ToolLoop` owns the model/tool/final-answer cycle.
+- `ToolRegistry` owns tool lookup, schemas, validation, and execution.
+- Module-owned tools are registered by the modules that own their dependencies.
+- MCP tools are adapted into the same `Tool` interface as local tools.
+- Channels own platform protocol details such as Feishu cards, media upload, and
+  rich-text rendering.
+- Tests are organized by architecture boundary, which makes refactoring safer.
+
+Current stopping point:
+
+The walkthrough has covered the main runtime path and the major extension
+points. Future deep dives should be module-specific rather than restarting from
+the top.
 
 ## Maintenance Rule
 
