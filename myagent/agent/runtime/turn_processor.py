@@ -51,13 +51,9 @@ class AgentTurnProcessor:
             history,
             self.context_builder.budget,
         )
-        visible_history = self.session_history.visible_history_for_context(
-            inbound.session_key,
-            history,
-        )
         messages = self.context_builder.build_messages(
             inbound,
-            visible_history,
+            history,
         )
         self.skill_state.start_turn(inbound.session_key, turn_id)
         try:

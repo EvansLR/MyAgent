@@ -37,14 +37,6 @@ class AgentSessionHistory:
     def clear_current_summary_session(self) -> None:
         self.current_summary_session_key = None
 
-    def visible_history_for_context(
-        self,
-        session_key: str,
-        history: list[Message],
-    ) -> list[Message]:
-        """Return raw history that has not been pruned into the session summary."""
-        return history
-
     def current_summary_context(self) -> str:
         """Return the current session summary as model-visible background."""
         if not self.current_summary_session_key:
@@ -67,13 +59,12 @@ class AgentSessionHistory:
         budget: ContextBudget,
     ) -> bool:
         """Flush and summarize older history before building model context."""
-        visible_history = self.visible_history_for_context(session_key, history)
         history_limit = budget.raw_history_token_limit
-        if history_limit <= 0 or not visible_history:
+        if history_limit <= 0 or not history:
             return False
 
-        visible_tokens = self.summarizer.estimate_messages_tokens(visible_history)
-        if visible_tokens <= history_limit:
+        history_tokens = self.summarizer.estimate_messages_tokens(history)
+        if history_tokens <= history_limit:
             return False
 
         state = self.summaries.get(session_key)
