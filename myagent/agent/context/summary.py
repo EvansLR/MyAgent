@@ -27,7 +27,6 @@ class ConversationSummaryConfig:
 
     enabled: bool = True
     keep_recent_messages: int = 12
-    max_summary_chars: int = 4000
     summary_token_limit: int = 2000
     max_compression_rounds: int = 2
 
@@ -114,7 +113,7 @@ class ConversationSummarizer:
                 {"role": "user", "content": prompt},
             ]
         )
-        content = _trim_summary(content.strip(), self.config.max_summary_chars)
+        content = content.strip()
         if not content:
             raise ValueError("conversation summary provider returned empty content")
         revision = (state.revision + 1) if state else 1
@@ -196,13 +195,6 @@ def _format_message(message: Message) -> str:
     if not isinstance(content, str):
         content = repr(content)
     return f"[{role}] {content}"
-
-
-def _trim_summary(content: str, max_chars: int) -> str:
-    if max_chars <= 0 or len(content) <= max_chars:
-        return content
-    marker = "\n\n[Summary truncated to fit budget]"
-    return content[: max(max_chars - len(marker), 1)].rstrip() + marker
 
 
 def _estimate_tokens(text: str, chars_per_token: int) -> int:
