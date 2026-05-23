@@ -47,11 +47,9 @@ class ContextBudget:
     """Budget knobs for first-stage context selection."""
 
     max_prompt_tokens: int | None = 6000
-    max_history_messages: int | None = None
     chars_per_token: int = 4
     memory_token_limit: int = 6000
     summary_token_limit: int = 2000
     raw_history_token_limit: int = 12000
     raw_history_target_tokens: int = 6000
     max_compression_rounds: int = 2
-

@@ -125,29 +125,6 @@ def test_context_builder_omits_empty_conversation_summary() -> None:
     assert "# Conversation Summary" not in messages[0]["content"]
 
 
-def test_context_builder_can_apply_optional_history_message_cap() -> None:
-    builder = ContextBuilder(
-        identity="Test identity.",
-        delegation_policy=None,
-        budget=ContextBudget(max_prompt_tokens=200, max_history_messages=2, chars_per_token=4),
-    )
-    history = [
-        {"role": "user", "content": "first"},
-        {"role": "assistant", "content": "second"},
-        {"role": "user", "content": "third"},
-        {"role": "assistant", "content": "fourth"},
-    ]
-
-    messages = builder.build_messages(make_message("fifth"), history)
-
-    assert messages == [
-        {"role": "system", "content": "# Identity\n\nTest identity."},
-        {"role": "user", "content": "third"},
-        {"role": "assistant", "content": "fourth"},
-        {"role": "user", "content": "fifth"},
-    ]
-
-
 def test_context_builder_includes_available_skills() -> None:
     skill_registry = SkillRegistry(
         [
@@ -208,7 +185,6 @@ def test_context_builder_keeps_history_when_over_budget() -> None:
         delegation_policy=None,
         budget=ContextBudget(
             max_prompt_tokens=30,
-            max_history_messages=10,
             chars_per_token=1,
         ),
     )

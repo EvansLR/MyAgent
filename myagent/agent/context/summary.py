@@ -83,8 +83,11 @@ class ConversationSummarizer:
             return ConversationSummaryDecision(False, "no_eligible_history", max_eligible_end)
 
         target = max(target_history_tokens, 0)
-        eligible_end = max_eligible_end
-        for index in range(1, max_eligible_end + 1):
+        legal_indexes = _legal_prune_indexes(history, max_eligible_end)
+        if not legal_indexes:
+            return ConversationSummaryDecision(False, "no_eligible_history", max_eligible_end)
+        eligible_end = legal_indexes[-1]
+        for index in legal_indexes:
             if self.estimate_messages_tokens(history[index:]) <= target:
                 eligible_end = index
                 break
@@ -195,6 +198,14 @@ def _format_message(message: Message) -> str:
     if not isinstance(content, str):
         content = repr(content)
     return f"[{role}] {content}"
+
+
+def _legal_prune_indexes(history: list[Message], max_eligible_end: int) -> list[int]:
+    return [
+        index
+        for index in range(1, max_eligible_end + 1)
+        if index >= len(history) or history[index].get("role") == "user"
+    ]
 
 
 def _estimate_tokens(text: str, chars_per_token: int) -> int:

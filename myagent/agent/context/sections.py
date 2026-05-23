@@ -12,6 +12,15 @@ from myagent.agent.context.types import (
 from myagent.skills import SkillRegistry
 
 
+def render_system_prompt(sections: list[ContextSection]) -> str:
+    """Render non-empty system sections into one system prompt."""
+    return "\n\n---\n\n".join(
+        f"# {section.name}\n\n{section.content.strip()}"
+        for section in sections
+        if section.content.strip()
+    )
+
+
 class ContextSectionBuilder:
     """Build ordered model-facing system prompt sections."""
 

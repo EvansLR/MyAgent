@@ -2,12 +2,9 @@
 
 from typing import Any, Callable
 
-from myagent.agent.context.sections import ContextSectionBuilder
-from myagent.agent.context.selection import (
-    drop_invalid_leading_history,
-    estimate_tokens,
+from myagent.agent.context.sections import (
+    ContextSectionBuilder,
     render_system_prompt,
-    select_history as select_context_history,
 )
 from myagent.agent.context.types import ContextBudget, ContextSection, Message
 from myagent.bus import InboundMessage
@@ -43,37 +40,27 @@ class ContextBuilder:
         budget: ContextBudget | None = None,
         profile_provider: Any | None = None,
     ) -> None:
-        self.identity = identity or (
+        resolved_identity = identity or (
             "You are MyAgent, a lightweight ReAct agent runtime for learning "
             "and interview practice. Be concise, helpful, and honest about "
             "current limitations."
         )
-        self.runtime_environment = runtime_environment
-        self.runtime_environment_provider = runtime_environment_provider
-        self.delegation_policy = delegation_policy
-        self.always_memory_provider = always_memory_provider
-        self.now_memory_provider = now_memory_provider
-        self.conversation_summary_provider = conversation_summary_provider
-        self.active_skills_provider = active_skills_provider
-        self.skill_registry = skill_registry
         self.budget = budget or ContextBudget()
-        self.profile_provider = profile_provider
         self.section_builder = ContextSectionBuilder(
-            identity=self.identity,
-            runtime_environment=self.runtime_environment,
-            runtime_environment_provider=self.runtime_environment_provider,
-            delegation_policy=self.delegation_policy,
-            always_memory_provider=self.always_memory_provider,
-            now_memory_provider=self.now_memory_provider,
-            conversation_summary_provider=self.conversation_summary_provider,
-            active_skills_provider=self.active_skills_provider,
-            skill_registry=self.skill_registry,
-            profile_provider=self.profile_provider,
+            identity=resolved_identity,
+            runtime_environment=runtime_environment,
+            runtime_environment_provider=runtime_environment_provider,
+            delegation_policy=delegation_policy,
+            always_memory_provider=always_memory_provider,
+            now_memory_provider=now_memory_provider,
+            conversation_summary_provider=conversation_summary_provider,
+            active_skills_provider=active_skills_provider,
+            skill_registry=skill_registry,
+            profile_provider=profile_provider,
         )
 
     def build_sections(self) -> list[ContextSection]:
         """Return system prompt sections in their model-facing order."""
-        self._sync_section_builder()
         return self.section_builder.build_sections()
 
     def build_messages(
@@ -82,38 +69,92 @@ class ContextBuilder:
         history: list[Message] | None = None,
     ) -> list[Message]:
         """Build model messages for one provider call."""
-        selected_history = self.select_history(history or [])
         system_prompt = render_system_prompt(self.build_sections())
         return [
             {"role": "system", "content": system_prompt},
-            *selected_history,
+            *(history or []),
             {"role": "user", "content": current_message.content},
         ]
 
-    def select_history(
-        self,
-        history: list[Message],
-        max_history_tokens: int | None = None,
-    ) -> list[Message]:
-        """Select the history slice visible to the current model call."""
-        return select_context_history(
-            history,
-            self.budget,
-            max_history_tokens=max_history_tokens,
-        )
+    @property
+    def identity(self) -> str:
+        return self.section_builder.identity
 
-    def _sync_section_builder(self) -> None:
-        """Keep delegated section assembly aligned with public provider attrs."""
-        self.section_builder.identity = self.identity
-        self.section_builder.runtime_environment = self.runtime_environment
-        self.section_builder.runtime_environment_provider = self.runtime_environment_provider
-        self.section_builder.delegation_policy = self.delegation_policy
-        self.section_builder.always_memory_provider = self.always_memory_provider
-        self.section_builder.now_memory_provider = self.now_memory_provider
-        self.section_builder.conversation_summary_provider = self.conversation_summary_provider
-        self.section_builder.active_skills_provider = self.active_skills_provider
-        self.section_builder.skill_registry = self.skill_registry
-        self.section_builder.profile_provider = self.profile_provider
+    @identity.setter
+    def identity(self, value: str) -> None:
+        self.section_builder.identity = value
+
+    @property
+    def runtime_environment(self) -> str | None:
+        return self.section_builder.runtime_environment
+
+    @runtime_environment.setter
+    def runtime_environment(self, value: str | None) -> None:
+        self.section_builder.runtime_environment = value
+
+    @property
+    def runtime_environment_provider(self) -> Callable[[], str] | None:
+        return self.section_builder.runtime_environment_provider
+
+    @runtime_environment_provider.setter
+    def runtime_environment_provider(self, value: Callable[[], str] | None) -> None:
+        self.section_builder.runtime_environment_provider = value
+
+    @property
+    def delegation_policy(self) -> str | None:
+        return self.section_builder.delegation_policy
+
+    @delegation_policy.setter
+    def delegation_policy(self, value: str | None) -> None:
+        self.section_builder.delegation_policy = value
+
+    @property
+    def always_memory_provider(self) -> Callable[[], str] | None:
+        return self.section_builder.always_memory_provider
+
+    @always_memory_provider.setter
+    def always_memory_provider(self, value: Callable[[], str] | None) -> None:
+        self.section_builder.always_memory_provider = value
+
+    @property
+    def now_memory_provider(self) -> Callable[[], str] | None:
+        return self.section_builder.now_memory_provider
+
+    @now_memory_provider.setter
+    def now_memory_provider(self, value: Callable[[], str] | None) -> None:
+        self.section_builder.now_memory_provider = value
+
+    @property
+    def conversation_summary_provider(self) -> Callable[[], str] | None:
+        return self.section_builder.conversation_summary_provider
+
+    @conversation_summary_provider.setter
+    def conversation_summary_provider(self, value: Callable[[], str] | None) -> None:
+        self.section_builder.conversation_summary_provider = value
+
+    @property
+    def active_skills_provider(self) -> Callable[[], str] | None:
+        return self.section_builder.active_skills_provider
+
+    @active_skills_provider.setter
+    def active_skills_provider(self, value: Callable[[], str] | None) -> None:
+        self.section_builder.active_skills_provider = value
+
+    @property
+    def skill_registry(self) -> SkillRegistry | None:
+        return self.section_builder.skill_registry
+
+    @skill_registry.setter
+    def skill_registry(self, value: SkillRegistry | None) -> None:
+        self.section_builder.skill_registry = value
+
+    @property
+    def profile_provider(self) -> Any | None:
+        return self.section_builder.profile_provider
+
+    @profile_provider.setter
+    def profile_provider(self, value: Any | None) -> None:
+        self.section_builder.profile_provider = value
 
     def read_runtime_environment(self) -> str:
         """Read current runtime facts for the system prompt."""
@@ -138,11 +179,3 @@ class ContextBuilder:
     def format_skills(self) -> str:
         """Format available skills for the system prompt."""
         return self.section_builder.format_skills()
-
-
-_estimate_tokens = estimate_tokens
-
-
-def _drop_invalid_leading_history(history: list[Message]) -> list[Message]:
-    """Keep selected chat history in a valid user-starting shape."""
-    return drop_invalid_leading_history(history)
